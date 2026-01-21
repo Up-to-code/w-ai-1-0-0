@@ -1,0 +1,83 @@
+/* eslint-disable */
+/**
+ * Generated `api` utility.
+ *
+ * THIS CODE IS AUTOMATICALLY GENERATED.
+ *
+ * To regenerate, run `npx convex dev`.
+ * @module
+ */
+
+import type * as ai from "../ai.js";
+import type * as auth from "../auth.js";
+import type * as campaigns from "../campaigns.js";
+import type * as chat from "../chat.js";
+import type * as contacts from "../contacts.js";
+import type * as files from "../files.js";
+import type * as http from "../http.js";
+import type * as integrations from "../integrations.js";
+import type * as messages from "../messages.js";
+import type * as orders from "../orders.js";
+import type * as salla from "../salla.js";
+import type * as seed from "../seed.js";
+import type * as stats from "../stats.js";
+import type * as templates from "../templates.js";
+import type * as users from "../users.js";
+import type * as webhookEvents from "../webhookEvents.js";
+import type * as whatsapp from "../whatsapp.js";
+import type * as workflows from "../workflows.js";
+
+import type {
+  ApiFromModules,
+  FilterApi,
+  FunctionReference,
+} from "convex/server";
+
+declare const fullApi: ApiFromModules<{
+  ai: typeof ai;
+  auth: typeof auth;
+  campaigns: typeof campaigns;
+  chat: typeof chat;
+  contacts: typeof contacts;
+  files: typeof files;
+  http: typeof http;
+  integrations: typeof integrations;
+  messages: typeof messages;
+  orders: typeof orders;
+  salla: typeof salla;
+  seed: typeof seed;
+  stats: typeof stats;
+  templates: typeof templates;
+  users: typeof users;
+  webhookEvents: typeof webhookEvents;
+  whatsapp: typeof whatsapp;
+  workflows: typeof workflows;
+}>;
+
+/**
+ * A utility for referencing Convex functions in your app's public API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = api.myModule.myFunction;
+ * ```
+ */
+export declare const api: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "public">
+>;
+
+/**
+ * A utility for referencing Convex functions in your app's internal API.
+ *
+ * Usage:
+ * ```js
+ * const myFunctionReference = internal.myModule.myFunction;
+ * ```
+ */
+export declare const internal: FilterApi<
+  typeof fullApi,
+  FunctionReference<any, "internal">
+>;
+
+export declare const components: {};

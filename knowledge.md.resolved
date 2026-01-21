@@ -1,0 +1,94 @@
+# W-AI Project Knowledge Base
+
+## 1. Project Overview & Architecture
+**Name**: W-AI
+**Purpose**: Comprehensive WhatsApp Marketing & Automation Platform for E-commerce (Salla integration).
+**Tech Stack**:
+-   **Frontend**: Next.js 14 (App Router), React, TailwindCSS, Shadcn UI.
+-   **Backend**: Convex (Real-time Database, Server Functions, Scheduling).
+-   **Integrations**: WhatsApp Business API (Meta), Salla (OAuth & Data Sync).
+
+### Key Architectural Patterns
+-   **Async Webhook Handling**:
+    -   **Ingestion**: [convex/http.ts](file:///Users/ahmedmansour/Documents/GitHub/w-ai/convex/http.ts) accepts webhooks and returns 200 OK immediately ("Fire-and-forget").
+    -   **Dispatch**: `dispatchWebhook` mutation schedules the heavy lifting.
+    -   **Processing**: `processWebhookAction` in [convex/whatsapp.ts](file:///Users/ahmedmansour/Documents/GitHub/w-ai/convex/whatsapp.ts) handles events with **retry logic** (up to 3 attempts) to handle race conditions (e.g., Read receipt arriving before Message save).
+    -   **Robustness**: "Hardened Logging" is implemented to trace every payload from HTTP -> Action -> DB.
+-   **Real-time Dashboard**: Uses Convex's reactive queries to update stats (Delivery Rate, Read Rate) instantly without polling.
+-   **Campaign System**: Scalable design using `campaigns` table and background scheduler (pending full scale testing) to send bulk messages.
+
+## 2. Database Schema
+(Source: [convex/schema.ts](file:///Users/ahmedmansour/Documents/GitHub/w-ai/convex/schema.ts))
+
+| Table | Description | Key Fields |
+| :--- | :--- | :--- |
+| **`users`** | App users/agents | `role`, `email`, `phone` |
+| **`contacts`** | Customers (synced from Salla/WA) | `phone`, `name`, `tags`, `isSubscribed` |
+| **`chats`** | Conversation threads | `contactId`, `lastMessageTime`, `unreadCount` |
+| **`messages`** | Chat history | `chatId`, `direction`, `type`, `status` (sent/delivered/read), `metaMessageId` (linked to WA) |
+| **`templates`** | WhatsApp Templates | `name`, `status`, `components` (synced with Meta) |
+| **`campaigns`** | Marketing campaigns | `templateId`, `status`, `stats` (sent/read counts) |
+| **`workflows`** | Automation rules | `trigger` (e.g., keyword), `action` (e.g., send message) |
+| **`sallaIntegrations`** | OAuth tokens | `accessToken`, `merchantId` |
+
+## 3. Feature Implementation Status
+
+### Dashboard (`/`)
+-   [x] Real-time aggregation of Message Volume & Campaign performance.
+-   [x] "Recent Activity" feed.
+-   [x] Removal of mock data; fully wired to [convex/stats.ts](file:///Users/ahmedmansour/Documents/GitHub/w-ai/convex/stats.ts).
+
+### Chat (`/chat`)
+-   [x] Real-time messaging with WhatsApp.
+-   [x] **Read Receipts**: Opening a chat triggers "Mark as Read" on WhatsApp.
+-   [x] **Contact Autosave**: Incoming messages from unknown numbers automatically create Contacts.
+-   [x] Media handling (Images/Video) supported in DB structure.
+
+### Campaigns (`/campaigns`)
+-   [x] Consolidated "Broadcasts" into "Campaigns".
+-   [x] Multi-step Wizard for creating campaigns:
+    1.  Details (Name)
+    2.  Audience (Segments/Tags)
+    3.  Content (Template selection)
+    4.  Review & Send
+
+### Workflows (`/workflows`)
+-   [x] CRUD functionality for automation rules.
+-   [x] UI for enabling/disabling workflows.
+
+### Integrations (`/integrations`)
+-   [x] Salla OAuth flow (Authorization Code Grant).
+-   [x] Token storage in `sallaIntegrations`.
+
+## 4. Work History & Conversation Log
+
+### Recent Critical Tasks
+1.  **Debugging Message Sending**:
+    -   **Issue**: Messages sent but no status updates.
+    -   **Fix**: Modified [whatsapp.ts](file:///Users/ahmedmansour/Documents/GitHub/w-ai/convex/whatsapp.ts) to capture `wamid` from Meta response and update local DB (`updateMessageMetaId`).
+2.  **Webhook Refactoring**:
+    -   **Issue**: Silent failures and timeouts.
+    -   **Fix**: Implemented Async pattern (HTTP -> Dispatch -> Action) with raw logging.
+3.  **UI Polish**:
+    -   Fixed global padding issues on Dashboard, Campaigns, Templates, and Customers pages to ensure edge-to-edge design consistency.
+
+### Conversation History Summary
+-   **Count Lines of Code**: Utility task.
+-   **Refine Auth UI**: Polished login screens (validation, styling).
+-   **Implementing Dashboard**: Built out core pages (Bookings, Profile - *Note: Provider app features*).
+-   **Address Management**: User address CRUD.
+-   **Variant Media**: Enhanced product variant management.
+-   **Backend Auth Guide**: Documentation for Better Auth.
+-   **Home Screen Redesign**: Major UI overhaul for the mobile app aspect.
+-   **API Route Implementation**: Robust backend endpoints.
+-   **Design System**: Standardization of UI tokens (colors, typography).
+
+*(Note: Some history items appear to be related to a mobile app project sharing this workspace or context, confirming a broader scope involving React Native/Expo as well as this Next.js dashboard.)*
+
+## 5. Technical Rules & Constraints
+-   **User Rules**: None explicitly defined in `user_rules`.
+-   **Preferences**:
+    -   **Concise Artifacts**.
+    -   **Shadcn UI** for components.
+    -   **Convex** for all backend logic. 
+    -   **Visual Excellence**: Premium, modern design aesthetics.
