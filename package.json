@@ -38,6 +38,7 @@
     "react-hook-form": "^7.71.1",
     "react-virtualized-auto-sizer": "^2.0.2",
     "react-window": "^1.8.10",
+    "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
     "zod": "^4.3.5"
   },

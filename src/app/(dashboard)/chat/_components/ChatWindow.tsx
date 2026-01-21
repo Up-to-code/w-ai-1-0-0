@@ -29,6 +29,7 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)
   const uploadMediaToMeta = useAction(api.whatsapp.uploadMedia)
+  const saveExternalImage = useAction(api.files.saveExternalImage)
 
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
@@ -190,33 +191,17 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
         return
       }
 
-      // 3. Process Image
-      const response = await fetch(product.image)
-      const blob = await response.blob()
-      const file = new File([blob], "product.jpg", { type: blob.type || "image/jpeg" })
-
-      // Upload to Convex
-      const postUrl = await generateUploadUrl()
-      const uploadResult = await fetch(postUrl, {
-        method: "POST",
-        headers: { "Content-Type": file.type },
-        body: file,
-      })
-      const { storageId } = await uploadResult.json()
-
-      // Save metadata
-      await saveFile({
-        storageId,
-        name: product.name,
-        mimeType: file.type,
-        size: file.size,
-        category: "product",
+      // 3. Process Image (Server-Side to avoid CORS)
+      const fileName = `${product.name.replace(/\s+/g, '_')}.jpg`
+      const { storageId, mimeType } = await saveExternalImage({
+        url: product.image,
+        name: fileName,
       })
 
       // Upload to Meta
       const mediaId = await uploadMediaToMeta({
         storageId: storageId,
-        type: file.type,
+        type: mimeType,
       })
 
       // 4. Send as Image with Formatted Caption

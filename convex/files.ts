@@ -1,9 +1,12 @@
-import { mutation, query } from "./_generated/server";
+import { mutation, query, action, internalMutation } from "./_generated/server";
+import { api, internal } from "./_generated/api";
 import { v } from "convex/values";
+import { Id } from "./_generated/dataModel";
 
 export const generateUploadUrl = mutation(async (ctx) => {
   return await ctx.storage.generateUploadUrl();
 });
+
 
 export const saveFile = mutation({
   args: {
@@ -13,28 +16,8 @@ export const saveFile = mutation({
     size: v.number(),
     category: v.optional(v.string())
   },
-  handler: async (ctx, args) => {
-    // Get URL
-    const url = await ctx.storage.getUrl(args.storageId);
-    if (!url) throw new Error("Could not get URL for storage ID");
-
-    // Get Current User (Mock for now, or implement auth)
-    // const user = await ctx.auth.getUserIdentity();
-    // if (!user) throw new Error("Unauthorized");
-    const user = (await ctx.db.query("users").first()) ?? (await ctx.db.insert("users", { name: "System", role: "admin" }) && await ctx.db.query("users").first());
-
-    const fileId = await ctx.db.insert("files", {
-      storageId: args.storageId,
-      url,
-      name: args.name,
-      mimeType: args.mimeType,
-      size: args.size,
-      category: args.category || "general",
-      uploadedBy: user!._id,
-      createdAt: Date.now()
-    });
-
-    return { fileId, url };
+  handler: async (ctx, args): Promise<{ fileId: Id<"files">; url: string | null }> => {
+    return await ctx.runMutation((internal as any).filesInternal.saveFileRecord, args);
   },
 });
 
@@ -52,4 +35,33 @@ export const list = query({
     }
     return await ctx.db.query("files").order("desc").collect();
   }
+});
+
+export const saveExternalImage = action({
+  args: {
+    url: v.string(),
+    name: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ storageId: string; fileId: Id<"files">; mimeType: string }> => {
+    // 1. Fetch the image
+    const response = await fetch(args.url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.statusText}`);
+    }
+    const blob = await response.blob();
+
+    // 2. Store in Convex Storage
+    const storageId = await ctx.storage.store(blob);
+
+    // 3. Save Metadata via Mutation
+    const { fileId, url } = await ctx.runMutation((internal as any).filesInternal.saveFileRecord, {
+      storageId,
+      name: args.name,
+      mimeType: blob.type || "image/jpeg",
+      size: blob.size,
+      category: "product",
+    });
+
+    return { storageId, fileId, mimeType: blob.type || "image/jpeg" };
+  },
 });

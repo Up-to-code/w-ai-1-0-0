@@ -24,6 +24,9 @@ import {
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
 import { DashboardHeaderProvider, useDashboardHeader } from "@/components/DashboardHeaderContext"
+import { Toaster } from "sonner"
+import { GlobalNotification } from "@/components/GlobalNotification"
+import { Suspense } from "react"
 
 // Sidebar Content Component
 function SidebarContent({ pathname }: { pathname: string }) {
@@ -194,6 +197,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
           <main className="flex-1 overflow-auto bg-background">{children}</main>
         </div>
+
+        {/* Global Notifications */}
+        <Toaster position="top-right" expand={true} richColors visibleToasts={4} />
+        <Suspense fallback={null}>
+          <GlobalNotification />
+        </Suspense>
       </div>
     </DashboardHeaderProvider>
   )

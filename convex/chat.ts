@@ -3,6 +3,32 @@ import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
 import { paginationOptsValidator } from "convex/server";
 
+export const getLatestGlobalMessage = query({
+  handler: async (ctx) => {
+    // Get the absolute latest message inserted into the DB
+    const message = await ctx.db.query("messages").order("desc").first();
+
+    if (!message) return null;
+
+    // Only interested if it's inbound (someone sent it to us)
+    if (message.direction !== "inbound") return null;
+
+    // Fetch sender details
+    const chat = await ctx.db.get(message.chatId);
+    if (!chat) return null;
+
+    return {
+      messageId: message._id,
+      chatId: chat._id,
+      contactName: chat.contactName,
+      contactPhone: chat.contactPhone,
+      content: message.content, // Text or Caption
+      type: message.type,
+      timestamp: message._creationTime, // Use insertion time for notification sync
+    };
+  }
+});
+
 // Public Query for UI
 export const listChats = query({
   handler: async (ctx) => {
@@ -178,15 +204,15 @@ export const saveIncomingMessage = internalMutation({
       });
     }
 
-      if (args.mediaId && !args.storageId) {
-       // Schedule media hydration
-       // We can't use runAfter inside a mutation if we don't have the ID yet, 
-       // but we do insert it below. 
-       // We'll handle scheduling AFTER insertion.
-      }
-  
-      // 4. Insert Message
-      const messageId = await ctx.db.insert("messages", {
+    if (args.mediaId && !args.storageId) {
+      // Schedule media hydration
+      // We can't use runAfter inside a mutation if we don't have the ID yet, 
+      // but we do insert it below. 
+      // We'll handle scheduling AFTER insertion.
+    }
+
+    // 4. Insert Message
+    const messageId = await ctx.db.insert("messages", {
       chatId,
       direction: "inbound",
       type: args.messageType as any,
@@ -202,10 +228,10 @@ export const saveIncomingMessage = internalMutation({
     // but runAfter arguments are serialized. 
     // Let's create a separate action for hydration that takes the messageId.
     if (args.mediaId && !args.storageId) {
-       await ctx.scheduler.runAfter(0, internal.chat.hydrateMedia, {
-         messageId,
-         mediaId: args.mediaId
-       });
+      await ctx.scheduler.runAfter(0, internal.chat.hydrateMedia, {
+        messageId,
+        mediaId: args.mediaId
+      });
     }
   },
 });
@@ -216,14 +242,14 @@ export const hydrateMedia = internalAction({
     try {
       // 1. Get Download URL from Meta
       const url = await ctx.runAction(api.whatsapp.getMediaUrl, { mediaId: args.mediaId });
-      
+
       // 2. Download File
       const response = await fetch(url);
       const blob = await response.blob();
-      
+
       // 3. Upload to Convex Storage
       const storageId = await ctx.storage.store(blob);
-      
+
       // 4. Update Message with Storage ID
       await ctx.runMutation(internal.chat.updateMessageStorageId, {
         messageId: args.messageId,

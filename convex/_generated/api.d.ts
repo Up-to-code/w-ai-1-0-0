@@ -14,6 +14,7 @@ import type * as campaigns from "../campaigns.js";
 import type * as chat from "../chat.js";
 import type * as contacts from "../contacts.js";
 import type * as files from "../files.js";
+import type * as filesInternal from "../filesInternal.js";
 import type * as http from "../http.js";
 import type * as integrations from "../integrations.js";
 import type * as messages from "../messages.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   chat: typeof chat;
   contacts: typeof contacts;
   files: typeof files;
+  filesInternal: typeof filesInternal;
   http: typeof http;
   integrations: typeof integrations;
   messages: typeof messages;
