@@ -18,7 +18,6 @@ interface MessageBubbleProps {
 }
 
 function renderTextWithLinks(text: string) {
-  // Regex to match URLs and *Bold* text
   const regex = /((?:https?:\/\/[^\s]+|www\.[^\s]+))|(\*[^*]+\*)/g
   const parts: Array<{ type: "text" | "link" | "bold"; value: string }> = []
   let lastIndex = 0
@@ -30,10 +29,10 @@ function renderTextWithLinks(text: string) {
     }
 
     const fullMatch = match[0]
-    if (match[1]) { // URL Group
+    if (match[1]) {
       parts.push({ type: "link", value: fullMatch })
-    } else if (match[2]) { // Bold Group
-      parts.push({ type: "bold", value: fullMatch.slice(1, -1) }) // Strip asterisks
+    } else if (match[2]) {
+      parts.push({ type: "bold", value: fullMatch.slice(1, -1) })
     }
 
     lastIndex = index + fullMatch.length
@@ -52,14 +51,14 @@ function renderTextWithLinks(text: string) {
           href={href}
           target="_blank"
           rel="noreferrer"
-          className="text-blue-600 dark:text-blue-400 underline break-all"
+          className="text-[#027eb5] dark:text-[#53bdeb] underline break-all hover:opacity-80"
         >
           {p.value}
         </a>
       )
     }
     if (p.type === "bold") {
-      return <strong key={idx} className="font-bold">{p.value}</strong>
+      return <strong key={idx} className="font-semibold">{p.value}</strong>
     }
     return <span key={idx}>{p.value}</span>
   })
@@ -75,85 +74,115 @@ export function MessageBubble({ message }: MessageBubbleProps) {
         : ""
 
   return (
-    <div className={cn("flex w-full mb-1", isOutbound ? "justify-end" : "justify-start")}>
+    <div className="flex w-full mb-0.5 px-2">
       <div
         className={cn(
-          "relative max-w-[65%] rounded-lg p-2 shadow-sm",
+          "relative max-w-[75%] rounded-[8px]",
           isOutbound
-            ? "bg-[#d9fdd3] dark:bg-[#005c4b] rounded-tr-none text-[#111b21] dark:text-[#e9edef]"
-            : "bg-white dark:bg-[#202c33] rounded-tl-none text-[#111b21] dark:text-[#e9edef]"
+            ? "me-auto bg-[#d9fdd3] dark:bg-[#005c4b] text-[#111b21] dark:text-[#e9edef]"
+            : "ms-auto bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef]"
         )}
       >
-        {/* Media Rendering */}
-        {message.type === "image" && message.mediaUrl && (
-          <div className="mb-1 rounded-lg overflow-hidden bg-black/10 min-h-[100px] min-w-[200px]">
-            <img src={message.mediaUrl} alt="Image" className="w-full h-auto object-cover max-h-[400px]" loading="lazy" />
-          </div>
-        )}
-
-        {message.type === "video" && message.mediaUrl && (
-          <div className="mb-1 rounded-lg overflow-hidden min-w-[250px]">
-            <video controls className="w-full rounded-lg bg-black">
-              <source src={message.mediaUrl} />
-            </video>
-          </div>
-        )}
-
-        {message.type === "audio" && message.mediaUrl && (
-          <div className="min-w-[280px] p-1">
-            <AudioPlayer src={message.mediaUrl} isOutbound={isOutbound} />
-          </div>
-        )}
-
-        {message.type === "template" && (
-          <div className="text-xs font-medium text-muted-foreground px-1 pb-1">
-            قالب: {message.content || "Template"}
-          </div>
-        )}
-
-        {message.type === "document" && (
-          <div className="px-1 pb-1">
-            {message.mediaUrl ? (
-              <a
-                href={message.mediaUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-sm underline break-all"
-              >
-                فتح المستند
-              </a>
-            ) : (
-              <span className="text-sm text-muted-foreground">مستند</span>
+        {/* WhatsApp-style bubble tail */}
+        <div
+          className={cn(
+            "absolute top-0 w-3 h-3 overflow-hidden",
+            isOutbound ? "-left-2" : "-right-2"
+          )}
+        >
+          <div
+            className={cn(
+              "absolute w-3 h-3 rotate-45 transform",
+              isOutbound
+                ? "bg-[#d9fdd3] dark:bg-[#005c4b] -right-1.5 top-0"
+                : "bg-white dark:bg-[#202c33] -left-1.5 top-0"
             )}
-          </div>
-        )}
+          />
+        </div>
 
-        {caption && (
-          <p className="whitespace-pre-wrap break-words text-[14.2px] leading-[19px] px-1 pb-1">
-            {renderTextWithLinks(caption)}
-          </p>
-        )}
+        {/* Content wrapper with padding */}
+        <div className="p-1.5 pb-0">
+          {/* Media Rendering */}
+          {message.type === "image" && message.mediaUrl && (
+            <div className="mb-1 rounded-md overflow-hidden bg-black/5 min-h-[100px] min-w-[200px]">
+              <img
+                src={message.mediaUrl}
+                alt="صورة"
+                className="w-full h-auto object-cover max-h-[350px] cursor-pointer hover:opacity-95 transition-opacity"
+                loading="lazy"
+              />
+            </div>
+          )}
 
-        {/* Timestamp & Status */}
-        <div className={cn(
-          "flex items-center justify-end gap-1 text-[11px] h-4",
-          isOutbound ? "text-[#54656f] dark:text-[#8696a0]" : "text-[#54656f] dark:text-[#8696a0]"
-        )}>
-          <span>
-            {new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          {message.type === "video" && message.mediaUrl && (
+            <div className="mb-1 rounded-md overflow-hidden min-w-[250px] bg-black">
+              <video controls className="w-full rounded-md">
+                <source src={message.mediaUrl} />
+              </video>
+            </div>
+          )}
+
+          {message.type === "audio" && message.mediaUrl && (
+            <div className="min-w-[280px] py-1">
+              <AudioPlayer src={message.mediaUrl} isOutbound={isOutbound} />
+            </div>
+          )}
+
+          {message.type === "template" && (
+            <div className="text-xs font-medium opacity-70 px-1 pb-1 italic">
+              📋 قالب: {message.content || "Template"}
+            </div>
+          )}
+
+          {message.type === "document" && (
+            <div className="px-1 pb-1">
+              {message.mediaUrl ? (
+                <a
+                  href={message.mediaUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-sm text-[#027eb5] dark:text-[#53bdeb] underline break-all hover:opacity-80 flex items-center gap-1"
+                >
+                  📄 فتح المستند
+                </a>
+              ) : (
+                <span className="text-sm opacity-60">📄 مستند</span>
+              )}
+            </div>
+          )}
+
+          {caption && (
+            <p className="whitespace-pre-wrap break-words text-[14.5px] leading-[20px] px-1.5 py-1">
+              {renderTextWithLinks(caption)}
+            </p>
+          )}
+        </div>
+
+        {/* Timestamp & Status - WhatsApp style */}
+        <div className="flex items-center justify-end gap-1 text-[11px] px-2 pb-1.5 -mt-1">
+          <span className={cn(
+            isOutbound
+              ? "text-[#667781] dark:text-[#8696a0]"
+              : "text-[#667781] dark:text-[#8696a0]"
+          )}>
+            {new Date(message.timestamp).toLocaleTimeString("ar-EG", {
+              hour: "2-digit",
+              minute: "2-digit",
+              hour12: false
+            })}
           </span>
           {isOutbound && (
             <span className={cn(
               message.status === "read" ? "text-[#53bdeb]" : "text-[#8696a0]"
             )}>
-              {message.status === "read" ? <CheckCheck className="h-4 w-4" /> :
-                message.status === "delivered" ? <CheckCheck className="h-4 w-4" /> :
-                  <Check className="h-3 w-3" />}
+              {message.status === "read" || message.status === "delivered" ? (
+                <CheckCheck className="h-[18px] w-[18px]" />
+              ) : (
+                <Check className="h-[16px] w-[16px]" />
+              )}
             </span>
           )}
         </div>
-
-        {/* Tail SVG (Optional polish) */}
       </div>
     </div>
   )

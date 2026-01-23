@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import { useQuery, useAction } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
@@ -21,38 +21,89 @@ import {
     RefreshCw,
     Link2,
     ShoppingBag,
-    ExternalLink,
-    Tag,
     Info,
-    CheckCircle2,
-    XCircle,
-    ArrowRight
-} from "lucide-react"
+    } from "lucide-react"
 
 export default function ProductsPage() {
     const connection = useQuery(api.salla.getConnection)
     const fetchProducts = useAction(api.salla.fetchProducts)
 
-    const [products, setProducts] = useState<any[]>([])
+    type Product = {
+        id: string | number
+        name: string
+        sku: string
+        price: number
+        originalPrice: number
+        currency: string
+        stock: number
+        image?: string | null
+        inStock: boolean
+        description?: string
+        url?: string
+        status?: string
+        options?: unknown[]
+        images?: unknown[]
+    }
+
+    const [products, setProducts] = useState<Product[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [hasFetched, setHasFetched] = useState(false)
     const [search, setSearch] = useState("")
-    const [selectedProduct, setSelectedProduct] = useState<any | null>(null)
+    const [selectedProduct, setSelectedProduct] = useState<Product | null>(null)
+    const [page, setPage] = useState(1)
+    const [totalPages, setTotalPages] = useState(1)
+    const [isLoadingMore, setIsLoadingMore] = useState(false)
+    const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-    const handleFetchProducts = async () => {
-        setIsLoading(true)
-        try {
-            const result = await fetchProducts({ page: 1, perPage: 50 })
-            if (result.connected) {
-                setProducts(result.products)
+    const handleFetchProducts = useCallback(async (initial?: boolean) => {
+        if (initial) {
+            setIsLoading(true)
+            try {
+                const result = await fetchProducts({ page: 1, perPage: 50 })
+                if (result.connected) {
+                    setProducts(result.products)
+                    setPage(result.pagination?.currentPage || 1)
+                    setTotalPages(result.pagination?.totalPages || 1)
+                }
+                setHasFetched(true)
+            } finally {
+                setIsLoading(false)
             }
-            setHasFetched(true)
-        } catch (error) {
-            console.error("Failed to fetch products:", error)
-        } finally {
-            setIsLoading(false)
+            return
         }
-    }
+        if (isLoadingMore || page >= totalPages) return
+        setIsLoadingMore(true)
+        try {
+            const nextPage = page + 1
+            const result = await fetchProducts({ page: nextPage, perPage: 50 })
+            if (result.connected) {
+                setProducts(prev => [...prev, ...result.products])
+                setPage(result.pagination?.currentPage || nextPage)
+                setTotalPages(result.pagination?.totalPages || totalPages)
+            }
+        } finally {
+            setIsLoadingMore(false)
+        }
+    }, [fetchProducts, isLoadingMore, page, totalPages])
+
+    useEffect(() => {
+        if (connection && !hasFetched && !isLoading) {
+            handleFetchProducts(true)
+        }
+    }, [connection, hasFetched, isLoading, handleFetchProducts])
+
+    useEffect(() => {
+        const el = sentinelRef.current
+        if (!el || !hasFetched) return
+        const observer = new IntersectionObserver((entries) => {
+            const [entry] = entries
+            if (entry.isIntersecting && !isLoading && !isLoadingMore && search.trim() === "") {
+                handleFetchProducts(false)
+            }
+        }, { rootMargin: "200px" })
+        observer.observe(el)
+        return () => observer.disconnect()
+    }, [hasFetched, isLoading, isLoadingMore, search, page, totalPages, handleFetchProducts])
 
     const filteredProducts = products.filter(p =>
         p.name?.includes(search) || p.sku?.includes(search)
@@ -96,31 +147,16 @@ export default function ProductsPage() {
                 </div>
 
                 <Card className="max-w-lg mx-auto">
-                    <CardContent className="pt-6 text-center space-y-4">
-                        <Package className="h-16 w-16 mx-auto text-muted-foreground/50" />
-                        <div>
-                            <h3 className="font-semibold text-lg">جلب المنتجات</h3>
-                            <p className="text-muted-foreground text-sm mt-1">
-                                اضغط الزر لجلب المنتجات من متجر سلة
-                            </p>
+                    <CardContent className="pt-6 space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                            {[...Array(4)].map((_, i) => (
+                                <div key={i} className="rounded-xl border bg-muted/30 animate-pulse h-28" />
+                            ))}
                         </div>
-                        <Button
-                            onClick={handleFetchProducts}
-                            disabled={isLoading}
-                            className="gap-2 bg-[#004D3D] hover:bg-[#003D2D]"
-                        >
-                            {isLoading ? (
-                                <>
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                    جاري الجلب...
-                                </>
-                            ) : (
-                                <>
-                                    <RefreshCw className="h-4 w-4" />
-                                    جلب المنتجات
-                                </>
-                            )}
-                        </Button>
+                        <div className="flex items-center justify-center gap-2 text-muted-foreground">
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            جاري التحميل...
+                        </div>
                     </CardContent>
                 </Card>
             </div>
@@ -128,7 +164,7 @@ export default function ProductsPage() {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 m-16">
             {/* Header */}
             <div className="flex justify-between items-center">
                 <div className="flex items-center gap-3">
@@ -144,7 +180,7 @@ export default function ProductsPage() {
                 </div>
                 <Button
                     variant="outline"
-                    onClick={handleFetchProducts}
+                    onClick={() => handleFetchProducts(true)}
                     disabled={isLoading}
                     className="gap-2"
                 >
@@ -167,7 +203,13 @@ export default function ProductsPage() {
             </div>
 
             {/* Products Grid */}
-            {filteredProducts.length === 0 ? (
+            {isLoading && products.length === 0 ? (
+                <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    {[...Array(8)].map((_, i) => (
+                        <div key={i} className="rounded-xl border bg-muted/30 animate-pulse h-64" />
+                    ))}
+                </div>
+            ) : filteredProducts.length === 0 ? (
                 <Card className="border-dashed shadow-none">
                     <CardContent className="py-12 text-center">
                         <Package className="h-12 w-12 mx-auto text-muted-foreground/50 mb-4" />
@@ -216,6 +258,7 @@ export default function ProductsPage() {
                             </div>
                         </div>
                     ))}
+                    <div ref={sentinelRef} />
                 </div>
             )}
 

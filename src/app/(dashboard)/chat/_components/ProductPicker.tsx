@@ -8,7 +8,6 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { ShoppingBag, Search, Loader2 } from "lucide-react"
-import { Loader } from "lucide-react"
 
 interface Product {
     id: string
@@ -17,6 +16,7 @@ interface Product {
     currency: string
     image: string
     sku: string
+    url?: string
 }
 
 interface ProductPickerProps {
@@ -100,7 +100,7 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                                         onSelect(product)
                                         setIsOpen(false)
                                     }}
-                                    className="bg-card rounded-xl overflow-hidden shadow-sm border border-border/10 cursor-pointer hover:border-primary hover:shadow-md transition-all group flex flex-col"
+                                    className="bg-card rounded-xl overflow-hidden border border-border/10 cursor-pointer hover:border-primary transition-all group flex flex-col"
                                 >
                                     <div className="aspect-[4/3] bg-muted relative overflow-hidden">
                                         {product.image ? (
@@ -110,7 +110,7 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                                                 <ShoppingBag className="h-10 w-10" />
                                             </div>
                                         )}
-                                        <div className="absolute top-2 left-2 bg-black/60 backdrop-blur-md text-white px-2 py-0.5 rounded-full text-xs font-medium">
+                                        <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-md text-white px-2 py-0.5 rounded-full text-xs font-medium">
                                             {product.sku}
                                         </div>
                                     </div>
@@ -139,7 +139,7 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                                 className="w-full text-xs"
                             >
                                 {isLoading ? (
-                                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                    <Loader2 className="h-4 w-4 animate-spin ml-2" />
                                 ) : (
                                     "تحميل المزيد"
                                 )}

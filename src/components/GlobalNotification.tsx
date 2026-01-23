@@ -1,25 +1,26 @@
 "use client"
 
 import { useEffect, useRef } from "react"
-import { useQuery } from "convex/react"
+import { useQuery, useMutation } from "convex/react"
 import { api } from "../../convex/_generated/api"
-import { useSearchParams, usePathname } from "next/navigation"
+import { useSearchParams, usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { MessageSquare } from "lucide-react"
+import { MessageSquare, Bell } from "lucide-react"
 
-// Simple "Ting" Sound (Base64 MP3)
-const NOTIFICATION_SOUND = "data:audio/mp3;base64,//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq//NExAAAAANIAAAAAExBTUUzLjEwMKqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
-// Note: The above is a dummy placeholder. I will replace it with a real short bell sound link or a valid base64 in the actual file if user provided, 
-// for now using a standard verified sound URL is safer than a broken base64 string.
-// iOS-like "Note" Sound (Short & Clean)
-const SOUND_URL = "https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3" // Simple Notification
+const SOUND_URL = "https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3"
 
 export function GlobalNotification() {
     const latestMessage = useQuery(api.chat.getLatestGlobalMessage)
+    const notifications = useQuery(api.notifications.list, { limit: 5 })
+    const markAsRead = useMutation(api.notifications.markAsRead)
+    
     const searchParams = useSearchParams()
     const pathname = usePathname()
+    const router = useRouter()
+    
     const lastMessageIdRef = useRef<string | null>(null)
+    const lastNotificationIdRef = useRef<string | null>(null)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const isFirstRun = useRef(true)
 
@@ -28,6 +29,62 @@ export function GlobalNotification() {
         audioRef.current = new Audio(SOUND_URL)
         audioRef.current.volume = 0.6
     }, [])
+
+    // --- System Notifications Logic ---
+    useEffect(() => {
+        if (!notifications || notifications.length === 0) return
+
+        // Skip initial load
+        if (isFirstRun.current && !lastNotificationIdRef.current) {
+            // Set the ref to the latest one so we don't alert on existing ones
+            if (notifications.length > 0) {
+                 lastNotificationIdRef.current = notifications[0]._id
+            }
+            // We don't return here because we might want to handle chat messages below
+            // But we should flag that we processed notifications
+        }
+
+        // Find the latest unread notification that is NEW (different ID from last seen)
+        // We assume the list is ordered by desc createdAt
+        const latest = notifications[0]
+        
+        if (latest && !latest.read && latest._id !== lastNotificationIdRef.current) {
+            // It's a new notification!
+            if (!isFirstRun.current) { // Only play if not first run (double check)
+                audioRef.current?.play().catch(() => {})
+                
+                toast.custom((t) => (
+                    <div
+                       className="w-[360px] cursor-pointer"
+                       onClick={() => {
+                           toast.dismiss(t)
+                           markAsRead({ id: latest._id })
+                           if (latest.link) router.push(latest.link)
+                       }}
+                   >
+                       <div className="relative overflow-hidden rounded-[22px] bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-black/5 dark:border-white/10 p-4 shadow-2xl transition-all hover:scale-[1.02]">
+                           <div className="flex items-start gap-3">
+                               <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
+                                   latest.type === 'error' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' :
+                                   latest.type === 'warning' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' :
+                                   latest.type === 'success' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' :
+                                   'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                               }`}>
+                                   <Bell className="w-5 h-5" />
+                               </div>
+                               <div className="flex-1 min-w-0">
+                                   <h4 className="font-semibold text-sm text-foreground">{latest.title}</h4>
+                                   <p className="text-sm text-muted-foreground line-clamp-2 mt-0.5">{latest.message}</p>
+                                   <p className="text-[10px] text-muted-foreground/60 mt-2">الآن</p>
+                               </div>
+                           </div>
+                       </div>
+                   </div>
+               ), { duration: 6000, position: "top-right" })
+            }
+            lastNotificationIdRef.current = latest._id
+        }
+    }, [notifications, markAsRead, router])
 
     useEffect(() => {
         if (!latestMessage) return
@@ -47,8 +104,8 @@ export function GlobalNotification() {
 
         // 3. Suppression Logic (Active Chat)
         // "If I am in the same chat window, don't make the sound"
-        const activeChatId = searchParams?.get("chatId")
-        const isChatOpen = pathname?.includes("/chat") && activeChatId === latestMessage.chatId
+        const activeChatId = pathname?.startsWith("/chat/") ? pathname.split("/").pop() : null
+        const isChatOpen = pathname?.startsWith("/chat/") && activeChatId === latestMessage.chatId
 
         if (isChatOpen) return
 
@@ -57,20 +114,19 @@ export function GlobalNotification() {
 
         toast.custom((t) => (
             <div
-                className="ios-notification w-[360px] cursor-pointer" // iOS standard width ~360px
+                className="w-[360px] cursor-pointer"
                 onClick={() => {
                     toast.dismiss(t)
-                    window.location.href = `/chat?chatId=${latestMessage.chatId}`
+                    router.push(`/chat/${latestMessage.chatId}`)
                 }}
             >
-                {/* Real iOS Blur & Shadow Specs */}
-                <div className="relative overflow-hidden rounded-[22px] bg-white/75 dark:bg-[#1C1C1E]/80 backdrop-blur-[50px] shadow-sm border border-white/40 dark:border-white/10 p-[14px] transition-all hover:brightness-105 active:scale-[0.98] group">
+                <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-white/60 to-white/40 dark:from-[#1C1C1E]/70 dark:to-[#2C2C2E]/50 backdrop-blur-[80px] border border-white/30 dark:border-white/10 p-[14px] transition-all hover:brightness-105 active:scale-[0.98] group">
 
                     {/* Header: Icon + App Name + Time */}
                     <div className="flex items-center justify-between mb-2.5 pl-0.5">
                         <div className="flex items-center gap-2">
                             {/* iOS Green Message Icon */}
-                            <div className="w-[18px] h-[18px] rounded-[4px] bg-[#4ADE80] flex items-center justify-center shadow-sm">
+                            <div className="w-[18px] h-[18px] rounded-[4px] bg-[#4ADE80] flex items-center justify-center">
                                 <MessageSquare className="w-2.5 h-2.5 text-white fill-current" />
                             </div>
                             <span className="text-[11px] font-semibold tracking-wide text-black/60 dark:text-white/60 uppercase">
@@ -107,7 +163,7 @@ export function GlobalNotification() {
         ), {
             duration: 5000,
             position: "top-right",
-            className: "p-0 bg-transparent border-0 shadow-none !bg-transparent !p-0 !m-0", // Rigid reset
+            className: "p-0 bg-transparent border-0 shadow-none !bg-transparent !p-0 !m-0",
         })
 
     }, [latestMessage, pathname, searchParams])

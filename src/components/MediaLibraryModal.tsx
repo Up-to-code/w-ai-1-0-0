@@ -90,10 +90,10 @@ export function MediaLibraryModal({ children, onSelect, allowedTypes }: MediaLib
                 <Tabs defaultValue="library" className="flex-1 flex flex-col overflow-hidden">
                     <div className="px-4 border-b flex items-center justify-between bg-muted/30">
                         <TabsList className="bg-transparent gap-4">
-                            <TabsTrigger value="library" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary h-12 px-4">
+                            <TabsTrigger value="library" className="data-[state=active]:bg-background rounded-none border-b-2 border-transparent data-[state=active]:border-primary h-12 px-4">
                                 مكتبة الملفات
                             </TabsTrigger>
-                            <TabsTrigger value="upload" className="data-[state=active]:bg-background data-[state=active]:shadow-sm rounded-none border-b-2 border-transparent data-[state=active]:border-primary h-12 px-4">
+                            <TabsTrigger value="upload" className="data-[state=active]:bg-background rounded-none border-b-2 border-transparent data-[state=active]:border-primary h-12 px-4">
                                 رفع جديد
                             </TabsTrigger>
                         </TabsList>

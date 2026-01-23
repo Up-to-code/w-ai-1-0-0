@@ -1,246 +1,454 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
-import Link from "next/link"
-import { useAction } from "convex/react"
+import { useAction, useQuery, useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
 import {
     ArrowRight,
-    Image,
-    Video,
+    LayoutTemplate,
     FileText,
-    Upload,
+    Image as ImageIcon,
+    Video,
+    Type,
+    MousePointerClick,
+    Plus,
     X,
-    Send,
+    CheckCircle2,
     Smartphone,
     Link2,
     Phone,
-    MessageSquare,
+    AlertCircle,
+    Copy,
+    ShoppingBag,
     Layers,
-    Package,
-    RefreshCw,
-    AlertCircle
+    Upload,
+    Loader2
 } from "lucide-react"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+
+import { ProductPicker } from "../../chat/_components/ProductPicker"
+
+interface CarouselCard {
+    headerType: "IMAGE" | "VIDEO"
+    headerHandle?: string // Meta Handle
+    headerUrl?: string // Preview URL
+    bodyText: string
+    buttons: ButtonConfig[]
+}
+
+interface ButtonConfig {
+    type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "COPY_CODE" | "CATALOG"
+    text: string
+    url?: string
+    phone_number?: string
+    example?: string // For COPY_CODE
+}
 
 export default function NewTemplatePage() {
     const router = useRouter()
     const searchParams = useSearchParams()
-    const sallaProductId = searchParams.get("salla_product_id")
+    const editName = searchParams?.get("edit")
+    
+    const createTemplate = useAction(api.templates.createTemplate)
+    const existingTemplate = useQuery(api.templates.getByName, editName ? { name: editName } : "skip")
+    const uploadTemplateMedia = useAction(api.whatsapp.uploadTemplateMedia)
+    const uploadExternalMedia = useAction(api.whatsapp.uploadExternalTemplateMedia)
+    const generateUploadUrl = useMutation(api.files.generateUploadUrl)
 
-    // Convex Actions
-    const fetchSallaProducts = useAction(api.salla.fetchProducts)
-    const getSallaProduct = useAction(api.salla.getProduct)
-
-    // State
-    const [templateType, setTemplateType] = useState<"standard" | "carousel">("standard")
-    const [name, setName] = useState("")
-    const [language, setLanguage] = useState("ar")
-    const [category, setCategory] = useState("")
-    const [mediaType, setMediaType] = useState<string | null>(null)
-    const [content, setContent] = useState("")
-    const [headerText, setHeaderText] = useState("")
-    const [footerText, setFooterText] = useState("")
-    const [buttons, setButtons] = useState<{ type: string; text: string; value?: string }[]>([])
-
-    // Product Integration State
-    const [availableProducts, setAvailableProducts] = useState<any[]>([])
-    const [selectedProductIds, setSelectedProductIds] = useState<string[]>([])
-    const [isLoadingProducts, setIsLoadingProducts] = useState(false)
-    const [isFetchingSingle, setIsFetchingSingle] = useState(false)
-
-    const editTemplateName = searchParams.get("edit")
-    const getTemplate = useAction(api.whatsapp.getTemplate)
-    const [isFetchingTemplate, setIsFetchingTemplate] = useState(false)
-
-    // Initial Load - Fetch Products
-    useEffect(() => {
-        const loadProducts = async () => {
-            setIsLoadingProducts(true)
-            try {
-                // Fetch list for carousel selection
-                const result = await fetchSallaProducts({ page: 1, perPage: 20 })
-                if (result.connected) {
-                    setAvailableProducts(result.products)
-                }
-            } catch (error) {
-                console.error("Failed to fetch products:", error)
-            } finally {
-                setIsLoadingProducts(false)
-            }
-        }
-        loadProducts()
-    }, [fetchSallaProducts])
-
-    // Initial Load - Handle Edit Mode or Salla Product
-    useEffect(() => {
-        const initializeForm = async () => {
-            // Case 1: Edit Mode
-            if (editTemplateName) {
-                setIsFetchingTemplate(true)
-                try {
-                    const template = await getTemplate({ name: editTemplateName })
-                    if (template) {
-                        setName(template.name)
-                        setCategory(template.category)
-                        setLanguage(template.language)
-
-                        const components = template.components || []
-
-                        // Header
-                        const header = components.find((c: any) => c.type === "HEADER")
-                        if (header) {
-                            if (header.format === "TEXT") {
-                                setHeaderText(header.text)
-                            } else {
-                                setMediaType(header.format.toLowerCase())
-                            }
-                        }
-
-                        // Body
-                        const body = components.find((c: any) => c.type === "BODY")
-                        if (body) setContent(body.text)
-
-                        // Footer
-                        const footer = components.find((c: any) => c.type === "FOOTER")
-                        if (footer) setFooterText(footer.text)
-
-                        // Buttons
-                        const buttonsComp = components.find((c: any) => c.type === "BUTTONS")
-                        if (buttonsComp?.buttons) {
-                            setButtons(buttonsComp.buttons.map((b: any) => ({
-                                type: b.type === "QUICK_REPLY" ? "quick_reply" : b.type === "URL" ? "url" : "phone",
-                                text: b.text,
-                                value: b.url || b.phone_number || ""
-                            })))
-                        }
-                    }
-                } catch (error) {
-                    console.error("Failed to fetch template:", error)
-                } finally {
-                    setIsFetchingTemplate(false)
-                }
-            }
-            // Case 2: Salla Product Pre-fill
-            else if (sallaProductId) {
-                setIsFetchingSingle(true)
-                try {
-                    const product = await getSallaProduct({ id: sallaProductId })
-                    if (product) {
-                        setName(`offer_${product.sku}`.toLowerCase().replace(/[^a-z0-9_]/g, '_'))
-                        setCategory("MARKETING")
-                        setHeaderText("🔥 عرض خاص")
-
-                        let message = `مرحباً! 👋\n\n`
-                        message += `تحقق من منتجنا الجديد: *${product.name}*\n\n`
-                        message += `السعر: ${product.price} ${product.currency}\n`
-                        if (product.originalPrice > product.price) {
-                            message += `(بدلاً من ${product.originalPrice} ${product.currency})\n`
-                        }
-                        message += `\n${product.description?.replace(/<[^>]*>/g, '').substring(0, 100)}...\n\n`
-                        message += `اطلب الآن قبل نفاد الكمية! 📦`
-
-                        setContent(message)
-
-                        if (product.url) {
-                            setButtons([{ type: "url", text: "عرض المنتج", value: product.url }])
-                        }
-                        setSelectedProductIds([product.id])
-                    }
-                } catch (error) {
-                    console.error("Failed to fetch pre-selected product:", error)
-                } finally {
-                    setIsFetchingSingle(false)
-                }
-            }
-        }
-
-        initializeForm()
-    }, [editTemplateName, sallaProductId, getTemplate, getSallaProduct])
-
-    const addButton = (type: string) => {
-        if (buttons.length < 3) {
-            setButtons([...buttons, { type, text: "", value: "" }])
-        }
-    }
-
-    const removeButton = (index: number) => {
-        setButtons(buttons.filter((_, i) => i !== index))
-    }
-
-    const updateButton = (index: number, field: string, value: string) => {
-        setButtons(buttons.map((b, i) => i === index ? { ...b, [field]: value } : b))
-    }
-
-    const toggleProduct = (id: string) => {
-        setSelectedProductIds(prev =>
-            prev.includes(id) ? prev.filter(p => p !== id) : [...prev, id]
-        )
-    }
-
-    const createTemplate = useAction(api.whatsapp.createTemplate)
     const [isSubmitting, setIsSubmitting] = useState(false)
+    const [uploadingMedia, setUploadingMedia] = useState(false)
+
+    // Form State
+    const [name, setName] = useState("")
+    const [category, setCategory] = useState("MARKETING")
+    const [language, setLanguage] = useState("ar")
+    const [templateType, setTemplateType] = useState<"STANDARD" | "CAROUSEL">("STANDARD")
+    
+    // Standard Components State
+    const [headerType, setHeaderType] = useState<"NONE" | "TEXT" | "IMAGE" | "VIDEO">("NONE")
+    const [headerText, setHeaderText] = useState("")
+    const [headerHandle, setHeaderHandle] = useState("")
+    const [headerPreviewUrl, setHeaderPreviewUrl] = useState("")
+    
+    const [bodyText, setBodyText] = useState("")
+    const [footerText, setFooterText] = useState("")
+    const [buttons, setButtons] = useState<ButtonConfig[]>([])
+
+    // Carousel State
+    const [carouselHeaderType, setCarouselHeaderType] = useState<"IMAGE" | "VIDEO">("IMAGE")
+    const [carouselCards, setCarouselCards] = useState<CarouselCard[]>([
+        { headerType: "IMAGE", bodyText: "", buttons: [{ type: "URL", text: "View Details", url: "https://example.com" }] },
+        { headerType: "IMAGE", bodyText: "", buttons: [{ type: "URL", text: "View Details", url: "https://example.com" }] }
+    ])
+
+    const fileInputRef = useRef<HTMLInputElement>(null)
+    const [activeUploadField, setActiveUploadField] = useState<"HEADER" | number | null>(null) // HEADER or Card Index
+
+    // Pre-fill form if editing
+    useEffect(() => {
+        if (existingTemplate && !name) { // Only fill once
+            setName(existingTemplate.name + "_copy") // Suggest new name
+            setCategory(existingTemplate.category)
+            setLanguage(existingTemplate.language)
+            
+            const components = existingTemplate.components || []
+            
+            // Detect Type
+            const carousel = components.find((c: any) => c.type === "CAROUSEL")
+            if (carousel) {
+                setTemplateType("CAROUSEL")
+                // TODO: Parse carousel cards
+            } else {
+                setTemplateType("STANDARD")
+                // Header
+                const header = components.find((c: any) => c.type === "HEADER")
+                if (header) {
+                    setHeaderType(header.format)
+                    if (header.format === "TEXT") setHeaderText(header.text || "")
+                    // Note: Handles are not usually retrievable for editing, need re-upload
+                }
+                
+                // Body
+                const body = components.find((c: any) => c.type === "BODY")
+                if (body) setBodyText(body.text || "")
+                
+                // Footer
+                const footer = components.find((c: any) => c.type === "FOOTER")
+                if (footer) setFooterText(footer.text || "")
+                
+                // Buttons
+                const btns = components.find((c: any) => c.type === "BUTTONS")
+                if (btns && btns.buttons) {
+                    setButtons(btns.buttons.map((b: any) => ({
+                        type: b.type,
+                        text: b.text,
+                        url: b.url,
+                        phone_number: b.phone_number,
+                        example: b.example
+                    })))
+                }
+            }
+        }
+    }, [existingTemplate])
+
+    // --- Media Upload Logic ---
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0]
+        if (!file) return
+
+        setUploadingMedia(true)
+        try {
+            // 1. Upload to Convex Storage first (to get a URL for the server to read)
+            const postUrl = await generateUploadUrl()
+            const result = await fetch(postUrl, {
+                method: "POST",
+                headers: { "Content-Type": file.type },
+                body: file,
+            })
+            const { storageId } = await result.json()
+
+            // 2. Upload to Meta via Server Action
+            const handle = await uploadTemplateMedia({
+                storageId,
+                type: file.type
+            })
+
+            const previewUrl = URL.createObjectURL(file)
+
+            if (activeUploadField === "HEADER") {
+                setHeaderHandle(handle)
+                setHeaderPreviewUrl(previewUrl)
+            } else if (typeof activeUploadField === "number") {
+                // Update Carousel Card
+                const newCards = [...carouselCards]
+                newCards[activeUploadField].headerHandle = handle
+                newCards[activeUploadField].headerUrl = previewUrl
+                setCarouselCards(newCards)
+            }
+
+        } catch (error) {
+            console.error("Upload failed:", error)
+            alert("فشل رفع الملف. تأكد من إعدادات Meta.")
+        } finally {
+            setUploadingMedia(false)
+            if (fileInputRef.current) fileInputRef.current.value = ""
+        }
+    }
+
+    const triggerUpload = (field: "HEADER" | number) => {
+        setActiveUploadField(field)
+        fileInputRef.current?.click()
+    }
+
+    const handleSallaProductSelect = async (product: any, field: "HEADER" | number) => {
+        if (!product.image) {
+            alert("هذا المنتج لا يحتوي على صورة")
+            return
+        }
+
+        setUploadingMedia(true)
+        try {
+            // 1. Update Preview Immediately
+            if (field === "HEADER") {
+                setHeaderType("IMAGE")
+                setHeaderPreviewUrl(product.image)
+                if (!bodyText) setBodyText(`${product.name}\n${product.price} ${product.currency}`)
+            } else if (typeof field === "number") {
+                if (carouselHeaderType !== "IMAGE") {
+                     setCarouselHeaderType("IMAGE")
+                     const newCards = carouselCards.map(c => ({ ...c, headerType: "IMAGE" as const }))
+                     setCarouselCards(newCards)
+                }
+                
+                const newCards = [...carouselCards]
+                newCards[field].headerUrl = product.image
+                newCards[field].bodyText = `${product.name}\n${product.price} ${product.currency}`
+                setCarouselCards(newCards)
+            }
+
+            // 2. Upload to Meta (Backend handles fetch -> upload)
+            const handle = await uploadExternalMedia({
+                url: product.image,
+                type: "image/jpeg" // Salla images are usually JPEGs/PNGs
+            })
+
+            // 3. Update Handle
+            if (field === "HEADER") {
+                setHeaderHandle(handle)
+            } else if (typeof field === "number") {
+                const newCards = [...carouselCards]
+                newCards[field].headerHandle = handle
+                // Re-update body/url just in case (though already done)
+                newCards[field].headerUrl = product.image 
+                newCards[field].bodyText = `${product.name}\n${product.price} ${product.currency}`
+                
+                // Add button if missing or update URL
+                if (product.url) {
+                    const hasUrlBtn = newCards[field].buttons.some(b => b.type === "URL")
+                    if (!hasUrlBtn) {
+                        // Check if we can add a button (limit 2 usually for mixed, or just 3)
+                        if (newCards[field].buttons.length < 2) {
+                             newCards[field].buttons.push({
+                                 type: "URL",
+                                 text: "عرض المنتج",
+                                 url: product.url
+                             })
+                        }
+                    } else {
+                        // Update existing URL button? Maybe safer to leave user choice, 
+                        // but let's try to update empty ones
+                        newCards[field].buttons = newCards[field].buttons.map(b => 
+                            b.type === "URL" && (!b.url || b.url === "https://example.com") 
+                                ? { ...b, url: product.url, text: b.text === "View Details" ? "عرض المنتج" : b.text } 
+                                : b
+                        )
+                    }
+                }
+
+                setCarouselCards(newCards)
+            }
+
+        } catch (error) {
+            console.error("Salla import failed:", error)
+            alert("فشل استيراد الصورة من سلة. " + String(error))
+        } finally {
+            setUploadingMedia(false)
+        }
+    }
+
+    // --- Button Logic ---
+    const handleAddButton = (type: ButtonConfig["type"], targetCards?: boolean, cardIndex?: number) => {
+        if (targetCards) {
+             // For Carousel: All cards must have same button structure
+             // We update the schema for ALL cards
+             const newCards = carouselCards.map(card => ({
+                 ...card,
+                 buttons: [...card.buttons, { type, text: "", url: "", phone_number: "" }]
+             }))
+             setCarouselCards(newCards)
+        } else {
+            if (buttons.length >= 3) return // Max 3 for standard mixed, max 10 for quick replies? Meta rules are complex.
+            // Simplified: Max 3 general buttons
+            setButtons([...buttons, { type, text: "", url: "", phone_number: "" }])
+        }
+    }
+
+    const handleRemoveButton = (index: number, targetCards?: boolean) => {
+        if (targetCards) {
+            const newCards = carouselCards.map(card => ({
+                ...card,
+                buttons: card.buttons.filter((_, i) => i !== index)
+            }))
+            setCarouselCards(newCards)
+        } else {
+            setButtons(buttons.filter((_, i) => i !== index))
+        }
+    }
+
+    const handleButtonChange = (index: number, field: string, value: string, targetCards?: boolean) => {
+        if (targetCards) {
+             // Updates validation/schema, but text might be unique per card? 
+             // NO, Meta Carousel buttons must be SAME type, but text can be different?
+             // Actually for Quick Replies yes. For URL/Phone, usually same type.
+             // Meta Rule: "The buttons in each card must be the same type and in the same order."
+             // "Button parameters (text, url, payload) can be different."
+             // So we update ALL cards if it's type change. If text change, only that card?
+             // To simplify UI: We will define the Button Structure globally for the carousel, 
+             // and allow editing text per card.
+             // WAIT: This is getting complex.
+             // Let's implement: "Global Button Definition" for Carousel.
+             // Actually, let's keep it simple: 
+             // Update logic: if changing TYPE, change for all. If changing text, change for all (template default).
+             // User can override text in specific card if needed? 
+             // For now, let's assume buttons are identical across cards for simplicity, 
+             // as most catalogs work that way.
+             
+             const newCards = carouselCards.map(card => {
+                 const newBtns = [...card.buttons]
+                 newBtns[index] = { ...newBtns[index], [field]: value }
+                 return { ...card, buttons: newBtns }
+             })
+             setCarouselCards(newCards)
+        } else {
+            const newButtons = [...buttons]
+            newButtons[index] = { ...newButtons[index], [field]: value }
+            setButtons(newButtons)
+        }
+    }
+
+    // --- Carousel Logic ---
+    const handleCarouselTypeChange = (type: "IMAGE" | "VIDEO") => {
+        setCarouselHeaderType(type)
+        const newCards = carouselCards.map(card => ({ ...card, headerType: type }))
+        setCarouselCards(newCards)
+    }
+
+    const addCard = () => {
+        if (carouselCards.length >= 10) return
+        // Copy structure of first card
+        const templateCard = carouselCards[0]
+        setCarouselCards([...carouselCards, { 
+            headerType: carouselHeaderType, 
+            bodyText: "", 
+            buttons: templateCard.buttons.map(b => ({...b, text: b.text})) 
+        }])
+    }
+
+    const removeCard = (index: number) => {
+        if (carouselCards.length <= 1) return
+        setCarouselCards(carouselCards.filter((_, i) => i !== index))
+    }
+
+    const updateCard = (index: number, field: keyof CarouselCard, value: any) => {
+        const newCards = [...carouselCards]
+        newCards[index] = { ...newCards[index], [field]: value }
+        setCarouselCards(newCards)
+    }
+
 
     const handleSubmit = async () => {
-        if (!name || !category || !content) return
-
+        if (!name) return
+        
         setIsSubmitting(true)
         try {
             const components: any[] = []
 
-            // 1. Header
-            if (headerText || mediaType) {
-                const headerComponent: any = { type: "HEADER" }
-                if (mediaType) {
-                    headerComponent.format = mediaType.toUpperCase()
-                } else {
-                    headerComponent.format = "TEXT"
-                    headerComponent.text = headerText
+            if (templateType === "STANDARD") {
+                // Header
+                if (headerType !== "NONE") {
+                    components.push({
+                        type: "HEADER",
+                        format: headerType,
+                        text: headerType === "TEXT" ? headerText : undefined,
+                        example: (headerType === "IMAGE" || headerType === "VIDEO") && headerHandle ? {
+                            header_handle: [headerHandle]
+                        } : undefined
+                    })
                 }
-                components.push(headerComponent)
-            }
 
-            // 2. Body
-            components.push({
-                type: "BODY",
-                text: content
-            })
+                // Body
+                components.push({ type: "BODY", text: bodyText })
 
-            // 3. Footer
-            if (footerText) {
+                // Footer
+                if (footerText) components.push({ type: "FOOTER", text: footerText })
+
+                // Buttons
+                if (buttons.length > 0) {
+                    components.push({
+                        type: "BUTTONS",
+                        buttons: buttons.map(b => ({
+                            type: b.type,
+                            text: b.text,
+                            url: b.type === "URL" ? b.url : undefined,
+                            phone_number: b.type === "PHONE_NUMBER" ? b.phone_number : undefined,
+                            example: b.type === "COPY_CODE" ? b.example : undefined
+                        }))
+                    })
+                }
+            } else {
+                // CAROUSEL
+                components.push({ type: "BODY", text: bodyText || "Carousel Message" }) // Main body is required? Meta says "Body is required for the message bubble that contains the carousel"
+                
+                const cards = carouselCards.map(card => {
+                    const cardComponents: any[] = [
+                        {
+                            type: "HEADER",
+                            format: card.headerType,
+                            example: card.headerHandle ? { header_handle: [card.headerHandle] } : undefined
+                        },
+                        { type: "BODY", text: card.bodyText }
+                    ]
+
+                    if (card.buttons.length > 0) {
+                        cardComponents.push({
+                            type: "BUTTONS",
+                            buttons: card.buttons.map(b => ({
+                                type: b.type,
+                                text: b.text,
+                                url: b.type === "URL" ? b.url : undefined,
+                                phone_number: b.type === "PHONE_NUMBER" ? b.phone_number : undefined
+                            }))
+                        })
+                    }
+
+                    return {
+                        components: cardComponents
+                    }
+                })
+
                 components.push({
-                    type: "FOOTER",
-                    text: footerText
+                    type: "CAROUSEL",
+                    cards: cards
                 })
             }
 
-            // 4. Buttons
-            if (buttons.length > 0) {
-                const buttonsComponent = {
-                    type: "BUTTONS",
-                    buttons: buttons.map(btn => {
-                        if (btn.type === "quick_reply") {
-                            return { type: "QUICK_REPLY", text: btn.text }
-                        } else if (btn.type === "url") {
-                            return { type: "URL", text: btn.text, url: btn.value }
-                        } else if (btn.type === "phone") {
-                            return { type: "PHONE_NUMBER", text: btn.text, phone_number: btn.value } // Note: API expects phone_number key
-                        }
-                        return null
-                    }).filter(Boolean)
+            if (templateType === "CAROUSEL") {
+                const invalidCardIndex = carouselCards.findIndex(c => c.buttons.length === 0)
+                if (invalidCardIndex !== -1) {
+                    alert(`البطاقة رقم ${invalidCardIndex + 1} يجب أن تحتوي على زر واحد على الأقل.`)
+                    setIsSubmitting(false)
+                    return
                 }
-                components.push(buttonsComponent)
             }
 
             await createTemplate({
-                name,
+                name: name.toLowerCase().replace(/\s+/g, '_'),
                 category,
                 language,
                 components
@@ -249,428 +457,485 @@ export default function NewTemplatePage() {
             router.push("/templates?success=true")
         } catch (error) {
             console.error("Failed to create template:", error)
-            alert("Failed to create template. Check console for details.")
+            alert("فشل إنشاء القالب. " + String(error))
         } finally {
             setIsSubmitting(false)
         }
     }
 
     return (
-        <div className="space-y-6 animate-in fade-in duration-500">
+        <div className="max-w-6xl mx-auto p-6 sm:p-8 animate-in fade-in duration-500">
+            {/* Hidden File Input */}
+            <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                onChange={handleFileUpload} 
+                accept="image/*,video/*"
+            />
+
             {/* Header */}
-            <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <Link href="/templates">
-                        <Button variant="ghost" size="icon">
-                            <ArrowRight className="h-5 w-5" />
-                        </Button>
-                    </Link>
-                    <div>
-                        <h1 className="text-2xl font-bold text-foreground">إنشاء قالب جديد</h1>
-                        <p className="text-muted-foreground text-sm mt-1">
-                            {sallaProductId ? "جاري إنشاء قالب للمنتج المحدد" : "سيتم إرسال القالب لمراجعة Meta"}
-                        </p>
-                    </div>
-                </div>
-                <div className="flex gap-2">
-                    <Button variant="outline" onClick={() => router.push("/templates")}>إلغاء</Button>
-                    <Button
-                        onClick={handleSubmit}
-                        className="gap-2 bg-[#004D3D] hover:bg-[#003D2D]"
-                        disabled={isSubmitting || !name || !category || (!content && templateType === "standard") || (templateType === "carousel" && selectedProductIds.length === 0)}
-                    >
-                        <Send className="h-4 w-4" />
-                        {isSubmitting ? "جاري الإرسال..." : "إرسال للمراجعة"}
-                    </Button>
+            <div className="flex items-center gap-4 mb-8">
+                <Button variant="ghost" size="icon" onClick={() => router.push("/templates")} className="rounded-xl">
+                    <ArrowRight className="h-5 w-5" />
+                </Button>
+                <div>
+                    <h1 className="text-2xl font-bold">{editName ? "نسخ وتعديل قالب" : "إنشاء قالب جديد"}</h1>
+                    <p className="text-muted-foreground">صمم رسالة WhatsApp تفاعلية وجذابة</p>
                 </div>
             </div>
 
-            {/* Template Type Selection */}
-            <Card>
-                <CardHeader>
-                    <CardTitle>نوع القالب</CardTitle>
-                </CardHeader>
-                <CardContent>
-                    <div className="grid grid-cols-2 gap-4">
-                        <div
-                            className={`border-2 rounded-xl p-6 cursor-pointer transition-all ${templateType === 'standard' ? 'border-[#004D3D] bg-[#004D3D]/5' : 'border-border hover:border-[#004D3D]/30'}`}
-                            onClick={() => setTemplateType('standard')}
-                        >
-                            <FileText className="h-8 w-8 mb-3 text-[#004D3D]" />
-                            <p className="font-semibold text-lg">قالب عادي</p>
-                            <p className="text-sm text-muted-foreground mt-1">رسالة نصية مع صورة أو فيديو اختياري</p>
-                        </div>
-                        <div
-                            className={`border-2 rounded-xl p-6 cursor-pointer transition-all ${templateType === 'carousel' ? 'border-[#004D3D] bg-[#004D3D]/5' : 'border-border hover:border-[#004D3D]/30'}`}
-                            onClick={() => setTemplateType('carousel')}
-                        >
-                            <Layers className="h-8 w-8 mb-3 text-success" />
-                            <p className="font-semibold text-lg">كاروسيل منتجات</p>
-                            <p className="text-sm text-muted-foreground mt-1">عرض منتجات متعددة مع أسعار وعروض</p>
-                        </div>
-                    </div>
-                </CardContent>
-            </Card>
-
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Form */}
-                <div className="lg:col-span-2 space-y-6">
-                    {/* Basic Info */}
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>المعلومات الأساسية</CardTitle>
-                        </CardHeader>
-                        <CardContent className="space-y-4">
-                            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+                {/* Editor Column */}
+                <div className="lg:col-span-8 space-y-6">
+                    <Card className="border-none shadow-sm">
+                        <CardContent className="p-6 space-y-8">
+                            {/* Basic Info */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                                 <div className="space-y-2">
-                                    <Label>اسم القالب *</Label>
-                                    <Input
-                                        placeholder="promotional_offer"
+                                    <Label>اسم القالب (بالإنجليزي فقط)</Label>
+                                    <Input 
+                                        placeholder="مثال: welcome_message" 
+                                        value={name} 
+                                        onChange={e => setName(e.target.value.replace(/[^a-zA-Z0-9_]/g, "").toLowerCase())}
                                         className="font-mono"
-                                        value={name}
-                                        onChange={(e) => setName(e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '_'))}
                                     />
+                                    <p className="text-xs text-muted-foreground">يجب أن يكون فريداً، أحرف صغيرة وشرطة سفلية فقط.</p>
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>اللغة *</Label>
-                                    <Select value={language} onValueChange={setLanguage}>
-                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                    <Label>الفئة</Label>
+                                    <Select value={category} onValueChange={setCategory}>
+                                        <SelectTrigger>
+                                            <SelectValue />
+                                        </SelectTrigger>
                                         <SelectContent>
-                                            <SelectItem value="ar">العربية</SelectItem>
-                                            <SelectItem value="en">English</SelectItem>
+                                            <SelectItem value="MARKETING">تسويق (Marketing)</SelectItem>
+                                            <SelectItem value="UTILITY">خدمي (Utility)</SelectItem>
+                                            <SelectItem value="AUTHENTICATION">توثيق (Auth)</SelectItem>
                                         </SelectContent>
                                     </Select>
                                 </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Category */}
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>الفئة *</CardTitle>
-                        </CardHeader>
-                        <CardContent>
-                            <div className="grid grid-cols-3 gap-4">
-                                {[
-                                    { value: "MARKETING", label: "تسويق", desc: "عروض وخصومات", icon: "📢" },
-                                    { value: "UTILITY", label: "خدمي", desc: "تأكيد وتحديثات", icon: "🔔" },
-                                    { value: "AUTHENTICATION", label: "تحقق", desc: "رموز OTP", icon: "🔐" },
-                                ].map(cat => (
-                                    <div
-                                        key={cat.value}
-                                        className={`border-2 rounded-xl p-4 cursor-pointer transition-all ${category === cat.value ? 'border-[#004D3D] bg-[#004D3D]/5' : 'border-border hover:border-[#004D3D]/30'}`}
-                                        onClick={() => setCategory(cat.value)}
-                                    >
-                                        <div className="text-2xl mb-2">{cat.icon}</div>
-                                        <p className="font-semibold">{cat.label}</p>
-                                        <p className="text-xs text-muted-foreground mt-1">{cat.desc}</p>
-                                    </div>
-                                ))}
-                            </div>
-                        </CardContent>
-                    </Card>
-
-                    {/* Standard Template Content */}
-                    {templateType === "standard" && (
-                        <>
-                            {/* Media */}
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>الوسائط (اختياري)</CardTitle>
-                                </CardHeader>
-                                <CardContent>
-                                    <div className="grid grid-cols-4 gap-3 mb-4">
-                                        {[
-                                            { value: null, label: "بدون", icon: FileText },
-                                            { value: "image", label: "صورة", icon: Image },
-                                            { value: "video", label: "فيديو", icon: Video },
-                                            { value: "document", label: "مستند", icon: FileText },
-                                        ].map(media => {
-                                            const Icon = media.icon
-                                            return (
-                                                <div
-                                                    key={media.value || "none"}
-                                                    className={`border-2 rounded-xl p-4 cursor-pointer transition-all text-center ${mediaType === media.value ? 'border-[#004D3D] bg-[#004D3D]/5' : 'border-border hover:border-[#004D3D]/30'}`}
-                                                    onClick={() => setMediaType(media.value)}
-                                                >
-                                                    <Icon className="h-6 w-6 mx-auto mb-2" />
-                                                    <p className="text-sm font-medium">{media.label}</p>
-                                                </div>
-                                            )
-                                        })}
-                                    </div>
-                                    {mediaType && (
-                                        <div className="border-2 border-dashed rounded-xl p-8 text-center hover:border-primary/50 transition-colors cursor-pointer bg-muted/30">
-                                            <Upload className="h-10 w-10 mx-auto text-muted-foreground mb-3" />
-                                            <p className="font-medium">اسحب الملف هنا أو انقر للاختيار</p>
+                                <div className="space-y-2">
+                                    <Label>نوع القالب</Label>
+                                    <div className="flex gap-2">
+                                        <div 
+                                            onClick={() => setTemplateType("STANDARD")}
+                                            className={`flex-1 border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'STANDARD' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                        >
+                                            <FileText className="h-4 w-4" />
+                                            قياسي
                                         </div>
-                                    )}
-                                </CardContent>
-                            </Card>
-
-                            {/* Content */}
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>محتوى الرسالة *</CardTitle>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    {isFetchingSingle && (
-                                        <div className="text-sm text-[#004D3D] flex items-center gap-2 mb-2 animate-pulse">
-                                            <RefreshCw className="h-3 w-3 animate-spin" />
-                                            جاري جلب بيانات المنتج...
+                                        <div 
+                                            onClick={() => setTemplateType("CAROUSEL")}
+                                            className={`flex-1 border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'CAROUSEL' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                        >
+                                            <Layers className="h-4 w-4" />
+                                            كاروسيل (Carousel)
                                         </div>
-                                    )}
-                                    <div className="space-y-2">
-                                        <Label>العنوان (اختياري)</Label>
-                                        <Input value={headerText} onChange={(e) => setHeaderText(e.target.value)} placeholder="عرض خاص!" />
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label>نص الرسالة *</Label>
-                                        <Textarea
-                                            placeholder="مرحباً {{1}}، شكراً لتسجيلك..."
-                                            className="h-32 resize-none"
-                                            value={content}
-                                            onChange={(e) => setContent(e.target.value)}
-                                        />
-                                    </div>
-                                    <div className="space-y-2">
-                                        <Label>التذييل (اختياري)</Label>
-                                        <Input value={footerText} onChange={(e) => setFooterText(e.target.value)} placeholder="شكراً لثقتكم" />
-                                    </div>
-                                </CardContent>
-                            </Card>
+                                </div>
+                            </div>
 
-                            {/* Buttons */}
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>الأزرار (اختياري)</CardTitle>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="flex gap-2 flex-wrap">
-                                        <Button variant="outline" size="sm" onClick={() => addButton("quick_reply")} disabled={buttons.length >= 3}>
-                                            <MessageSquare className="h-4 w-4 mr-2" /> رد سريع
-                                        </Button>
-                                        <Button variant="outline" size="sm" onClick={() => addButton("url")} disabled={buttons.length >= 3}>
-                                            <Link2 className="h-4 w-4 mr-2" /> رابط
-                                        </Button>
-                                        <Button variant="outline" size="sm" onClick={() => addButton("phone")} disabled={buttons.length >= 3}>
-                                            <Phone className="h-4 w-4 mr-2" /> اتصال
-                                        </Button>
-                                    </div>
-                                    {buttons.map((btn, i) => (
-                                        <div key={i} className="flex gap-3 items-start p-3 border rounded-xl bg-muted/30">
-                                            <div className="flex-1 space-y-2">
-                                                <Badge variant="secondary" className="text-xs">
-                                                    {btn.type === "quick_reply" && "رد سريع"}
-                                                    {btn.type === "url" && "رابط"}
-                                                    {btn.type === "phone" && "اتصال"}
-                                                </Badge>
-                                                <Input placeholder="نص الزر" value={btn.text} onChange={(e) => updateButton(i, "text", e.target.value)} />
-                                                {btn.type !== "quick_reply" && (
-                                                    <Input placeholder={btn.type === "url" ? "https://..." : "+966..."} value={btn.value} onChange={(e) => updateButton(i, "value", e.target.value)} />
-                                                )}
+                            <Separator />
+
+                            {templateType === "STANDARD" ? (
+                                // --- STANDARD EDITOR ---
+                                <>
+                                    {/* Header Section */}
+                                    <div className="space-y-4">
+                                        <Label className="flex items-center gap-2">
+                                            <LayoutTemplate className="h-4 w-4" />
+                                            رأس الرسالة (Header) <span className="text-muted-foreground font-normal text-xs">(اختياري)</span>
+                                        </Label>
+                                        <RadioGroup 
+                                            value={headerType} 
+                                            onValueChange={(v: any) => setHeaderType(v)}
+                                            className="flex flex-wrap gap-4"
+                                        >
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${headerType === 'NONE' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="NONE" id="h-none" />
+                                                <Label htmlFor="h-none" className="cursor-pointer">بدون</Label>
                                             </div>
-                                            <Button variant="ghost" size="icon" onClick={() => removeButton(i)}><X className="h-4 w-4" /></Button>
-                                        </div>
-                                    ))}
-                                </CardContent>
-                            </Card>
-                        </>
-                    )}
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${headerType === 'TEXT' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="TEXT" id="h-text" />
+                                                <Label htmlFor="h-text" className="cursor-pointer flex items-center gap-2"><Type className="h-4 w-4" /> نص</Label>
+                                            </div>
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${headerType === 'IMAGE' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="IMAGE" id="h-image" />
+                                                <Label htmlFor="h-image" className="cursor-pointer flex items-center gap-2"><ImageIcon className="h-4 w-4" /> صورة</Label>
+                                            </div>
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${headerType === 'VIDEO' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="VIDEO" id="h-video" />
+                                                <Label htmlFor="h-video" className="cursor-pointer flex items-center gap-2"><Video className="h-4 w-4" /> فيديو</Label>
+                                            </div>
+                                        </RadioGroup>
 
-                    {/* Carousel Template Content */}
-                    {templateType === "carousel" && (
-                        <>
-                            {/* Intro Message */}
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>رسالة المقدمة</CardTitle>
-                                    <CardDescription>النص الذي يظهر قبل كاروسيل المنتجات</CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="space-y-2">
-                                        <Label>العنوان</Label>
-                                        <Input value={headerText} onChange={(e) => setHeaderText(e.target.value)} placeholder="🔥 عروض حصرية!" />
+                                        {headerType === "TEXT" && (
+                                            <Input 
+                                                placeholder="عنوان الرسالة..." 
+                                                value={headerText} 
+                                                onChange={e => setHeaderText(e.target.value)} 
+                                                maxLength={60}
+                                            />
+                                        )}
+
+                                        {(headerType === "IMAGE" || headerType === "VIDEO") && (
+                                            <div className="flex gap-4 items-center border rounded-xl p-4 bg-muted/20">
+                                                <div className="h-20 w-20 bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+                                                    {headerPreviewUrl ? (
+                                                        <img src={headerPreviewUrl} className="h-full w-full object-cover" alt="Preview" />
+                                                    ) : (
+                                                        <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                                    )}
+                                                </div>
+                                                <div className="flex-1">
+                                                    <h4 className="font-medium text-sm mb-1">عينة الوسائط</h4>
+                                                    <p className="text-xs text-muted-foreground mb-3">مطلوب من Meta لمراجعة القالب. لن يتم إرسالها للمستخدمين.</p>
+                                                    <Button size="sm" variant="outline" onClick={() => triggerUpload("HEADER")} disabled={uploadingMedia}>
+                                                        {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+                                                        رفع ملف
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label>الوصف</Label>
-                                        <Textarea
-                                            placeholder="تصفح أفضل منتجاتنا بخصومات تصل إلى 50%..."
-                                            className="h-20 resize-none"
-                                            value={content}
-                                            onChange={(e) => setContent(e.target.value)}
+
+                                    {/* Body Section */}
+                                    <div className="space-y-4">
+                                        <Label className="flex items-center gap-2">
+                                            <FileText className="h-4 w-4" />
+                                            نص الرسالة (Body) <span className="text-red-500">*</span>
+                                        </Label>
+                                        <Textarea 
+                                            placeholder="اكتب محتوى رسالتك هنا... يمكنك استخدام المتغيرات مثل {{1}}"
+                                            value={bodyText}
+                                            onChange={e => setBodyText(e.target.value)}
+                                            className="min-h-[120px] text-base"
+                                        />
+                                        <p className="text-xs text-muted-foreground">استخدم {"{{1}}"}, {"{{2}}"} لإضافة متغيرات ديناميكية.</p>
+                                    </div>
+
+                                    {/* Footer Section */}
+                                    <div className="space-y-4">
+                                        <Label className="flex items-center gap-2">
+                                            <LayoutTemplate className="h-4 w-4 rotate-180" />
+                                            تذييل (Footer) <span className="text-muted-foreground font-normal text-xs">(اختياري)</span>
+                                        </Label>
+                                        <Input 
+                                            placeholder="نص صغير أسفل الرسالة..." 
+                                            value={footerText}
+                                            onChange={e => setFooterText(e.target.value)}
+                                            maxLength={60}
                                         />
                                     </div>
-                                </CardContent>
-                            </Card>
 
-                            {/* Product Selection */}
-                            <Card>
-                                <CardHeader>
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <CardTitle>المنتجات</CardTitle>
-                                            <CardDescription>اختر حتى 10 منتجات للكاروسيل من متجر سلة</CardDescription>
+                                    {/* Buttons Section */}
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="flex items-center gap-2">
+                                                <MousePointerClick className="h-4 w-4" />
+                                                الأزرار (Buttons) <span className="text-muted-foreground font-normal text-xs">(اختياري، حد أقصى 3)</span>
+                                            </Label>
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button variant="outline" size="sm" className="gap-2" disabled={buttons.length >= 3}>
+                                                        <Plus className="h-4 w-4" /> إضافة زر
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent>
+                                                    <DropdownMenuItem onClick={() => handleAddButton("QUICK_REPLY")}>رد سريع</DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleAddButton("URL")}>رابط</DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleAddButton("PHONE_NUMBER")}>اتصال</DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleAddButton("COPY_CODE")}>نسخ كود</DropdownMenuItem>
+                                                    <DropdownMenuItem onClick={() => handleAddButton("CATALOG")}>كاتالوج (منتجات)</DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
                                         </div>
-                                        <Badge variant="secondary">{selectedProductIds.length}/10</Badge>
-                                    </div>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                    {isLoadingProducts ? (
-                                        <div className="flex justify-center py-6">
-                                            <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-                                        </div>
-                                    ) : availableProducts.length === 0 ? (
-                                        <div className="text-center py-6 text-muted-foreground border-2 border-dashed rounded-xl">
-                                            لم يتم العثور على منتجات. تأكد من ربط متجر سلة.
-                                        </div>
-                                    ) : (
-                                        <div className="grid grid-cols-1 gap-2 max-h-[400px] overflow-y-auto pr-2">
-                                            {availableProducts.map(product => (
-                                                <div
-                                                    key={product.id}
-                                                    className={`flex items-center gap-4 p-3 border-2 rounded-xl cursor-pointer transition-all ${selectedProductIds.includes(product.id) ? 'border-[#004D3D] bg-[#004D3D]/5' : 'border-border hover:border-[#004D3D]/30'
-                                                        }`}
-                                                    onClick={() => toggleProduct(product.id)}
-                                                >
-                                                    <div className="w-12 h-12 rounded-lg bg-muted flex items-center justify-center shrink-0 overflow-hidden">
-                                                        {product.image ? (
-                                                            <img src={product.image} alt={product.name} className="w-full h-full object-cover" />
-                                                        ) : (
-                                                            <Package className="h-6 w-6 text-muted-foreground" />
-                                                        )}
-                                                    </div>
-                                                    <div className="flex-1 min-w-0">
-                                                        <p className="font-medium truncate text-sm">{product.name}</p>
-                                                        <div className="flex items-center gap-2 mt-1">
-                                                            <span className="font-bold text-[#004D3D] text-xs">{product.price} {product.currency}</span>
-                                                            {product.originalPrice > product.price && (
-                                                                <Badge className="bg-destructive/10 text-destructive text-[10px] h-5 px-1">
-                                                                    -{Math.round((1 - product.price / product.originalPrice) * 100)}%
-                                                                </Badge>
-                                                            )}
+
+                                        <div className="space-y-3">
+                                            {buttons.map((btn, idx) => (
+                                                <div key={idx} className="flex flex-col gap-3 bg-muted/30 p-3 rounded-xl border animate-in slide-in-from-top-2">
+                                                    <div className="flex gap-3">
+                                                        <div className="flex items-center justify-center w-8 h-8 rounded-full bg-background border text-xs font-bold shrink-0">
+                                                            {idx + 1}
                                                         </div>
+                                                        <Select 
+                                                            value={btn.type} 
+                                                            onValueChange={(v: any) => handleButtonChange(idx, "type", v)}
+                                                            disabled
+                                                        >
+                                                            <SelectTrigger className="w-[140px]">
+                                                                <SelectValue />
+                                                            </SelectTrigger>
+                                                            <SelectContent>
+                                                                <SelectItem value="QUICK_REPLY">رد سريع</SelectItem>
+                                                                <SelectItem value="URL">رابط</SelectItem>
+                                                                <SelectItem value="PHONE_NUMBER">اتصال</SelectItem>
+                                                                <SelectItem value="COPY_CODE">نسخ كود</SelectItem>
+                                                                <SelectItem value="CATALOG">كاتالوج</SelectItem>
+                                                            </SelectContent>
+                                                        </Select>
+                                                        <Input 
+                                                            placeholder="نص الزر" 
+                                                            value={btn.text} 
+                                                            onChange={e => handleButtonChange(idx, "text", e.target.value)}
+                                                            maxLength={25}
+                                                        />
+                                                        <Button variant="ghost" size="icon" onClick={() => handleRemoveButton(idx)} className="text-muted-foreground hover:text-destructive">
+                                                            <X className="h-4 w-4" />
+                                                        </Button>
                                                     </div>
-                                                    {selectedProductIds.includes(product.id) && (
-                                                        <div className="w-6 h-6 rounded-full bg-[#004D3D] flex items-center justify-center shrink-0">
-                                                            <span className="text-xs text-white font-bold">
-                                                                {selectedProductIds.indexOf(product.id) + 1}
-                                                            </span>
-                                                        </div>
+                                                    {btn.type === "URL" && (
+                                                        <Input 
+                                                            placeholder="https://example.com" 
+                                                            value={btn.url} 
+                                                            onChange={e => handleButtonChange(idx, "url", e.target.value)}
+                                                            className="ml-11"
+                                                        />
+                                                    )}
+                                                    {btn.type === "PHONE_NUMBER" && (
+                                                        <Input 
+                                                            placeholder="+966..." 
+                                                            value={btn.phone_number} 
+                                                            onChange={e => handleButtonChange(idx, "phone_number", e.target.value)}
+                                                            className="ml-11"
+                                                        />
+                                                    )}
+                                                    {btn.type === "COPY_CODE" && (
+                                                        <Input 
+                                                            placeholder="مثال للكود: SAVE20" 
+                                                            value={btn.example} 
+                                                            onChange={e => handleButtonChange(idx, "example", e.target.value)}
+                                                            className="ml-11"
+                                                        />
                                                     )}
                                                 </div>
                                             ))}
-                                        </div>
-                                    )}
-                                </CardContent>
-                            </Card>
-
-                            {/* CTA Button */}
-                            <Card>
-                                <CardHeader>
-                                    <CardTitle>زر الإجراء</CardTitle>
-                                </CardHeader>
-                                <CardContent className="space-y-3">
-                                    <div className="space-y-2">
-                                        <Label>نص الزر</Label>
-                                        <Input placeholder="تسوق الآن" defaultValue="عرض التفاصيل" />
-                                    </div>
-                                    <p className="text-xs text-muted-foreground">يظهر هذا الزر أسفل كل منتج في الكاروسيل</p>
-                                </CardContent>
-                            </Card>
-                        </>
-                    )}
-                </div>
-
-                {/* Preview */}
-                <div className="lg:col-span-1">
-                    <div className="sticky top-6">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="flex items-center gap-2">
-                                    <Smartphone className="h-5 w-5" />
-                                    معاينة
-                                </CardTitle>
-                            </CardHeader>
-                            <CardContent>
-                                <div className="bg-[#E5DDD5] rounded-2xl p-4 min-h-[400px]">
-                                    {templateType === "standard" ? (
-                                        <>
-                                            <div className="bg-white rounded-xl p-3 shadow-sm max-w-[85%] space-y-2">
-                                                {mediaType === "image" && (
-                                                    <div className="bg-gray-200 rounded-lg h-32 flex items-center justify-center">
-                                                        <Image className="h-8 w-8 text-gray-400" />
-                                                    </div>
-                                                )}
-                                                {headerText && <p className="font-bold text-sm">{headerText}</p>}
-                                                <p className="text-sm text-gray-800 whitespace-pre-wrap">{content || "محتوى الرسالة..."}</p>
-                                                {footerText && <p className="text-xs text-gray-500">{footerText}</p>}
-                                                <p className="text-[10px] text-gray-400 text-left">12:30 ✓✓</p>
-                                            </div>
-                                            {buttons.length > 0 && (
-                                                <div className="mt-2 space-y-1 max-w-[85%]">
-                                                    {buttons.map((btn, i) => (
-                                                        <div key={i} className="bg-white rounded-lg p-2 text-center text-sm text-[#00a884] font-medium shadow-sm cursor-pointer">
-                                                            {btn.text || "نص الزر"}
-                                                        </div>
-                                                    ))}
+                                            {buttons.length === 0 && (
+                                                <div className="text-center py-4 border-2 border-dashed rounded-xl text-muted-foreground text-sm">
+                                                    لا توجد أزرار مضافة
                                                 </div>
                                             )}
-                                        </>
-                                    ) : (
-                                        <>
-                                            {/* Intro Message */}
-                                            <div className="bg-white rounded-xl p-3 shadow-sm space-y-2 mb-3">
-                                                {headerText && <p className="font-bold text-sm">{headerText}</p>}
-                                                <p className="text-sm text-gray-800 whitespace-pre-wrap">{content || "تصفح منتجاتنا..."}</p>
-                                                <p className="text-[10px] text-gray-400 text-left">12:30 ✓✓</p>
-                                            </div>
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                // --- CAROUSEL EDITOR ---
+                                <div className="space-y-8">
+                                    <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-300">
+                                        تتيح لك قوالب الكاروسيل إرسال حتى 10 بطاقات قابلة للتمرير. يجب أن تحتوي جميع البطاقات على نفس هيكل الأزرار ونوع الوسائط.
+                                    </div>
 
-                                            {/* Product Cards Carousel */}
-                                            <div className="flex gap-2 overflow-x-auto pb-2 -mx-1 px-1">
-                                                {selectedProductIds.length > 0 ? (
-                                                    selectedProductIds.map(id => {
-                                                        const product = availableProducts.find(p => p.id === id) || (sallaProductId === id ? { name: "المنتج المحدد", price: 0 } : null)
-                                                        if (!product) return null
-                                                        return (
-                                                            <div key={id} className="bg-white rounded-xl shadow-sm shrink-0 w-[140px] overflow-hidden flex flex-col">
-                                                                <div className="h-24 bg-gray-200 flex items-center justify-center relative">
-                                                                    {product.image ? (
-                                                                        <img src={product.image} className="w-full h-full object-cover" />
-                                                                    ) : (
-                                                                        <Package className="h-8 w-8 text-gray-400" />
-                                                                    )}
-                                                                </div>
-                                                                <div className="p-2 flex-1 flex flex-col">
-                                                                    <p className="text-xs font-medium truncate mb-1">{product.name}</p>
-                                                                    <p className="text-xs font-bold text-gray-900 mt-auto">{product.price} {product.currency}</p>
-                                                                    <div className="mt-2 text-[#00a884] text-center py-1 border-t text-[10px] font-medium">
-                                                                        عرض التفاصيل
-                                                                    </div>
+                                    <div className="space-y-4">
+                                        <Label>نوع الوسائط في البطاقات</Label>
+                                        <RadioGroup 
+                                            value={carouselHeaderType} 
+                                            onValueChange={(v: "IMAGE" | "VIDEO") => handleCarouselTypeChange(v)}
+                                            className="flex gap-4"
+                                        >
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${carouselHeaderType === 'IMAGE' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="IMAGE" id="c-image" />
+                                                <Label htmlFor="c-image" className="cursor-pointer flex items-center gap-2"><ImageIcon className="h-4 w-4" /> صورة</Label>
+                                            </div>
+                                            <div className={`flex items-center gap-2 border rounded-xl p-3 cursor-pointer transition-all ${carouselHeaderType === 'VIDEO' ? 'border-primary bg-primary/5' : 'hover:bg-muted'}`}>
+                                                <RadioGroupItem value="VIDEO" id="c-video" />
+                                                <Label htmlFor="c-video" className="cursor-pointer flex items-center gap-2"><Video className="h-4 w-4" /> فيديو</Label>
+                                            </div>
+                                        </RadioGroup>
+                                    </div>
+
+                                    {/* Main Body */}
+                                    <div className="space-y-4">
+                                        <Label>نص الرسالة الرئيسي (يظهر فوق الكاروسيل)</Label>
+                                        <Textarea 
+                                            placeholder="اكتب مقدمة للكاروسيل..."
+                                            value={bodyText}
+                                            onChange={e => setBodyText(e.target.value)}
+                                            className="min-h-[80px]"
+                                        />
+                                    </div>
+
+                                    {/* Cards Editor */}
+                                    <div className="space-y-4">
+                                        <Label className="flex items-center justify-between">
+                                            <span>البطاقات ({carouselCards.length}/10)</span>
+                                            <Button size="sm" variant="outline" onClick={addCard} disabled={carouselCards.length >= 10}>
+                                                <Plus className="h-4 w-4 mr-2" /> إضافة بطاقة
+                                            </Button>
+                                        </Label>
+                                        
+                                        <Tabs defaultValue="card-0" className="w-full">
+                                            <TabsList className="w-full justify-start overflow-x-auto h-auto p-2 bg-muted/50 rounded-xl gap-2">
+                                                {carouselCards.map((_, i) => (
+                                                    <TabsTrigger key={i} value={`card-${i}`} className="rounded-lg px-4 py-2">
+                                                        بطاقة {i + 1}
+                                                    </TabsTrigger>
+                                                ))}
+                                            </TabsList>
+                                            
+                                            {carouselCards.map((card, i) => (
+                                                <TabsContent key={i} value={`card-${i}`} className="space-y-6 border rounded-xl p-4 mt-4 animate-in fade-in-50">
+                                                    <div className="flex justify-between items-center">
+                                                        <h4 className="font-bold text-lg">محتوى البطاقة {i + 1}</h4>
+                                                        {carouselCards.length > 1 && (
+                                                            <Button size="sm" variant="destructive" onClick={() => removeCard(i)}>
+                                                                <X className="h-4 w-4 mr-2" /> حذف البطاقة
+                                                            </Button>
+                                                        )}
+                                                    </div>
+
+                                                    {/* Card Header Media */}
+                                                    <div className="space-y-2">
+                                                        <Label>صورة/فيديو البطاقة</Label>
+                                                        <div className="flex gap-4 items-center border rounded-xl p-4 bg-muted/20">
+                                                            <div className="h-24 w-24 bg-muted rounded-lg overflow-hidden flex items-center justify-center">
+                                                                {card.headerUrl ? (
+                                                                    <img src={card.headerUrl} className="h-full w-full object-cover" alt="Preview" />
+                                                                ) : (
+                                                                    <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                                                )}
+                                                            </div>
+                                                            <div className="flex-1">
+                                                                <div className="flex gap-2 flex-wrap">
+                                                                    <Button size="sm" variant="outline" onClick={() => triggerUpload(i)} disabled={uploadingMedia}>
+                                                                        {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+                                                                        رفع
+                                                                    </Button>
+                                                                    <ProductPicker 
+                                                                        onSelect={(p) => handleSallaProductSelect(p, i)}
+                                                                        trigger={
+                                                                            <Button size="sm" variant="outline" disabled={uploadingMedia} className="text-purple-600 border-purple-200 hover:bg-purple-50">
+                                                                                <ShoppingBag className="h-4 w-4 mr-2" />
+                                                                                سلة
+                                                                            </Button>
+                                                                        }
+                                                                    />
                                                                 </div>
                                                             </div>
-                                                        )
-                                                    })
-                                                ) : (
-                                                    <div className="text-center py-8 text-muted-foreground text-sm w-full bg-white/50 rounded-xl">
-                                                        اختر منتجات لعرض المعاينة
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Card Body */}
+                                                    <div className="space-y-2">
+                                                        <Label>نص البطاقة</Label>
+                                                        <Input 
+                                                            value={card.bodyText} 
+                                                            onChange={e => updateCard(i, "bodyText", e.target.value)}
+                                                            placeholder="وصف المنتج أو العرض..."
+                                                        />
+                                                    </div>
+
+                                                    {/* Card Buttons (Global for now in UI logic simplified) */}
+                                                    <div className="space-y-2">
+                                                        <Label>أزرار البطاقة (تنطبق على جميع البطاقات)</Label>
+                                                        {card.buttons.map((btn, btnIdx) => (
+                                                            <div key={btnIdx} className="flex gap-2 mb-2">
+                                                                <Input value={btn.text} onChange={e => handleButtonChange(btnIdx, "text", e.target.value, true)} />
+                                                                {btn.type === "URL" && <Input value={btn.url} onChange={e => handleButtonChange(btnIdx, "url", e.target.value, true)} placeholder="URL" />}
+                                                                <Button size="icon" variant="ghost" onClick={() => handleRemoveButton(btnIdx, true)}><X className="h-4 w-4" /></Button>
+                                                            </div>
+                                                        ))}
+                                                        {card.buttons.length < 2 && (
+                                                             <div className="flex gap-2">
+                                                                 <Button size="sm" variant="outline" onClick={() => handleAddButton("QUICK_REPLY", true)}>+ رد سريع</Button>
+                                                                 <Button size="sm" variant="outline" onClick={() => handleAddButton("URL", true)}>+ رابط</Button>
+                                                             </div>
+                                                        )}
+                                                    </div>
+                                                </TabsContent>
+                                            ))}
+                                        </Tabs>
+                                    </div>
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    <div className="flex justify-end gap-4">
+                        <Button variant="outline" onClick={() => router.push("/templates")}>إلغاء</Button>
+                        <Button 
+                            onClick={handleSubmit} 
+                            className="bg-[#004D3D] hover:bg-[#003D2D] min-w-[150px]"
+                            disabled={isSubmitting || !name || !bodyText}
+                        >
+                            {isSubmitting ? "جاري الإرسال..." : "إرسال للمراجعة"}
+                        </Button>
+                    </div>
+                </div>
+
+                {/* Preview Column */}
+                <div className="lg:col-span-4">
+                    <div className="sticky top-8">
+                        <div className="relative mx-auto border-gray-800 dark:border-gray-800 bg-gray-900 border-[14px] rounded-[2.5rem] h-[600px] w-[300px] shadow-2xl flex flex-col">
+                            {/* ... (Same frame elements) ... */}
+                            <div className="w-[148px] h-[18px] bg-gray-800 top-0 rounded-b-[1rem] left-1/2 -translate-x-1/2 absolute z-20"></div>
+                            
+                            {/* WhatsApp Header */}
+                            <div className="bg-[#008069] dark:bg-[#202c33] p-3 pt-8 flex items-center gap-2 text-white z-10 rounded-t-[2rem]">
+                                <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+                                    <Smartphone className="h-4 w-4" />
+                                </div>
+                                <div className="flex-1">
+                                    <div className="text-sm font-semibold">معاينة مباشرة</div>
+                                </div>
+                            </div>
+                            
+                            {/* Message Area */}
+                            <div className="flex-1 p-3 overflow-y-auto bg-[#E5DDD5] dark:bg-[#111b21] bg-opacity-90 relative rounded-b-[2rem] flex flex-col">
+                                {templateType === "STANDARD" ? (
+                                    <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[90%] mb-2">
+                                        {/* Standard Preview */}
+                                        {headerType !== "NONE" && (
+                                            <div className="mb-2">
+                                                {headerType === "TEXT" && <p className="font-bold text-sm">{headerText || "عنوان الرسالة"}</p>}
+                                                {(headerType === "IMAGE" || headerType === "VIDEO") && (
+                                                    <div className="bg-gray-200 dark:bg-gray-700 rounded-lg h-32 flex items-center justify-center overflow-hidden">
+                                                        {headerPreviewUrl ? (
+                                                            <img src={headerPreviewUrl} className="w-full h-full object-cover" />
+                                                        ) : (
+                                                            <ImageIcon className="h-8 w-8 text-muted-foreground" />
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
-                                        </>
-                                    )}
-                                </div>
-
-                                <div className="mt-4 p-3 bg-muted/50 rounded-xl">
-                                    <p className="text-xs text-muted-foreground mb-2">حالة القالب:</p>
-                                    <Badge variant="secondary" className="gap-1">
-                                        <div className="w-2 h-2 rounded-full bg-warning animate-pulse" />
-                                        قيد المراجعة
-                                    </Badge>
-                                </div>
-                            </CardContent>
-                        </Card>
+                                        )}
+                                        <p className="text-sm whitespace-pre-wrap">{bodyText || "نص الرسالة..."}</p>
+                                        {footerText && <p className="text-[10px] text-gray-500 mt-2">{footerText}</p>}
+                                        
+                                        {/* Standard Buttons */}
+                                        <div className="border-t mt-2 pt-2 space-y-1">
+                                            {buttons.map((btn, i) => (
+                                                <div key={i} className="text-center text-sm text-[#00a884] font-medium py-1">{btn.text || "زر"}</div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-2">
+                                        <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[90%]">
+                                            <p className="text-sm whitespace-pre-wrap">{bodyText || "مقدمة الكاروسيل..."}</p>
+                                        </div>
+                                        {/* Carousel Cards Preview (Horizontal Scroll) */}
+                                        <div className="flex overflow-x-auto gap-2 pb-2 -mx-3 px-3">
+                                            {carouselCards.map((card, i) => (
+                                                <div key={i} className="bg-white dark:bg-[#202c33] rounded-lg shadow-sm min-w-[200px] max-w-[200px] overflow-hidden shrink-0">
+                                                    <div className="h-24 bg-gray-200 flex items-center justify-center overflow-hidden">
+                                                         {card.headerUrl ? <img src={card.headerUrl} className="w-full h-full object-cover" /> : <ImageIcon className="h-6 w-6 text-muted-foreground" />}
+                                                    </div>
+                                                    <div className="p-2">
+                                                        <p className="text-sm font-medium">{card.bodyText || "وصف البطاقة..."}</p>
+                                                        <div className="mt-2 space-y-1">
+                                                            {card.buttons.map((btn, bI) => (
+                                                                <div key={bI} className="bg-gray-50 p-1 text-center text-xs text-[#00a884] rounded border">{btn.text || "زر"}</div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

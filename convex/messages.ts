@@ -1,7 +1,8 @@
-import { internalMutation, mutation } from "./_generated/server";
+import { internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { internal, api } from "./_generated/api";
 
-export const saveMessage = mutation({
+export const saveMessage = internalMutation({
     args: {
         contactId: v.string(),
         contactName: v.string(),
@@ -35,7 +36,7 @@ export const saveMessage = mutation({
         try {
             const existingContact = await ctx.db
                 .query("contacts")
-                .filter(q => q.eq(q.field("phone"), args.contactPhone))
+                .withIndex("by_phone", (q) => q.eq("phone", args.contactPhone))
                 .first();
 
             if (!existingContact && args.direction === "inbound") {
@@ -66,7 +67,7 @@ export const saveMessage = mutation({
             // ... logic same as before, simplified for diff
             let chat = await ctx.db
                 .query("chats")
-                .filter(q => q.eq(q.field("contactPhone"), args.contactPhone))
+                .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
                 .first();
 
             if (chat) {
@@ -83,7 +84,8 @@ export const saveMessage = mutation({
                     contactPhone: args.contactPhone,
                     lastMessageTime: args.timestamp,
                     unreadCount: 1,
-                    status: "active"
+                    status: "active",
+                    aiMode: true, // Default to true
                 });
             }
         } catch (e) {
@@ -104,11 +106,21 @@ export const saveMessage = mutation({
             storageId: args.storageId,
         });
         console.log(`[Messages] Message saved: ${msgId} (${args.direction})`);
+
+        // 3. Trigger Workflows (Async)
+        if (args.direction === "inbound") {
+            await ctx.scheduler.runAfter(0, internal.workflows.checkAndExecuteWorkflows, {
+                messageId: msgId,
+                content: args.content,
+                contactPhone: args.contactPhone
+            });
+        }
+
         return msgId;
     }
 });
 
-export const updateMessageStatus = mutation({
+export const updateMessageStatus = internalMutation({
     args: {
         metaMessageId: v.string(),
         status: v.string(),
@@ -116,7 +128,7 @@ export const updateMessageStatus = mutation({
     handler: async (ctx, args) => {
         const message = await ctx.db
             .query("messages")
-            .filter(q => q.eq(q.field("metaMessageId"), args.metaMessageId))
+            .filter((q: any) => q.eq(q.field("metaMessageId"), args.metaMessageId))
             .first();
 
         if (message) {
@@ -129,7 +141,7 @@ export const updateMessageStatus = mutation({
     }
 });
 
-export const updateMessageMetaId = mutation({
+export const updateMessageMetaId = internalMutation({
     args: {
         messageId: v.id("messages"),
         metaMessageId: v.string(),
@@ -156,4 +168,86 @@ export const updateMessageStorageId = internalMutation({
     handler: async (ctx, args) => {
         await ctx.db.patch(args.messageId, { storageId: args.storageId });
     }
+});
+
+export const sendAndSave = internalMutation({
+    args: {
+        chatId: v.id("chats"),
+        contactPhone: v.string(),
+        content: v.string(),
+        type: v.string(),
+        mediaId: v.optional(v.string()), // Add support for passing mediaId
+        storageId: v.optional(v.string()), // Add support for passing storageId
+        mediaUrl: v.optional(v.string()), // Add support for passing mediaUrl directly
+    },
+    handler: async (ctx, args) => {
+        // 1. Save to DB
+        const messageId = await ctx.db.insert("messages", {
+            chatId: args.chatId,
+            direction: "outbound",
+            type: args.type as any,
+            content: args.content,
+            status: "sent",
+            timestamp: Date.now(),
+            mediaId: args.mediaId,
+            storageId: args.storageId,
+        });
+
+        // 2. Send via WhatsApp
+        // Format content based on type (WhatsApp API expects objects for text/image etc)
+        let payloadContent: any;
+
+        if (args.type === "text") {
+            payloadContent = { body: args.content };
+        } else if (args.type === "image") {
+            if (args.mediaId) {
+                payloadContent = { id: args.mediaId, caption: args.content };
+            } else if (args.mediaUrl) {
+                payloadContent = { link: args.mediaUrl, caption: args.content };
+            } else {
+                payloadContent = args.content;
+            }
+        } else if (args.type === "audio") {
+            if (args.mediaId) {
+                payloadContent = { id: args.mediaId };
+            } else if (args.mediaUrl) {
+                payloadContent = { link: args.mediaUrl };
+            } else {
+                payloadContent = args.content;
+            }
+        } else if (args.type === "video") {
+            if (args.mediaId) {
+                payloadContent = { id: args.mediaId, caption: args.content };
+            } else if (args.mediaUrl) {
+                payloadContent = { link: args.mediaUrl, caption: args.content };
+            } else {
+                payloadContent = args.content;
+            }
+        } else {
+            payloadContent = args.content;
+        }
+
+        await ctx.scheduler.runAfter(0, api.whatsapp.sendMessage, {
+            to: args.contactPhone,
+            type: args.type,
+            content: payloadContent,
+            messageId: messageId,
+        });
+
+        // 3. Update Chat
+        await ctx.db.patch(args.chatId, {
+            lastMessageTime: Date.now(),
+        });
+    }
+});
+
+export const list = query({
+    args: { chatId: v.id("chats") },
+    handler: async (ctx, args) => {
+        return await ctx.db
+            .query("messages")
+            .withIndex("by_chat", (q) => q.eq("chatId", args.chatId))
+            .order("desc")
+            .take(50);
+    },
 });

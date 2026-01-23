@@ -19,7 +19,8 @@ import {
   Users,
   Package,
   Link2,
-  ShoppingBag
+  ShoppingBag,
+  Bot
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -36,9 +37,9 @@ function SidebarContent({ pathname }: { pathname: string }) {
     { href: "/customers", icon: Users, label: "العملاء" },
     { href: "/products", icon: Package, label: "المنتجات" },
     { href: "/campaigns", icon: Megaphone, label: "الحملات" },
-    { href: "/orders", icon: ShoppingBag, label: "الطلبات" },
     { href: "/templates", icon: FileText, label: "القوالب" },
     { href: "/workflows", icon: Zap, label: "الأتمتة" },
+    { href: "/ai-settings", icon: Bot, label: "الذكاء الاصطناعي" },
   ]
 
   const generalItems = [
@@ -56,7 +57,7 @@ function SidebarContent({ pathname }: { pathname: string }) {
       {/* Logo */}
       <div className="p-5 border-b border-sidebar-border">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center shadow-lg shadow-primary/20">
+          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
             <MessageSquare className="h-5 w-5 text-primary-foreground" />
           </div>
           <div>

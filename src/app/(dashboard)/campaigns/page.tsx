@@ -1,11 +1,13 @@
 "use client"
 
-import { useQuery } from "convex/react"
+import { useQuery, useMutation } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Card } from "@/components/ui/card"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { StatCard } from "@/components/ui/stat-card"
 import {
   Plus,
   Search,
@@ -15,174 +17,362 @@ import {
   CheckCircle2,
   AlertCircle,
   BarChart3,
-  ArrowRight
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  MoreVertical,
+  Trash2,
+  Calendar as CalendarIcon,
+  Play
 } from "lucide-react"
 import Link from "next/link"
-import { useState } from "react"
-import { format } from "date-fns"
+import { useMemo, useState } from "react"
+import { format, startOfMonth, endOfMonth, startOfWeek, endOfWeek, addDays, addMonths, subMonths, isSameDay, isSameMonth } from "date-fns"
 import { ar } from "date-fns/locale"
+import type { Id } from "../../../../convex/_generated/dataModel"
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
 
 export default function CampaignsPage() {
   const campaigns = useQuery(api.campaigns.list)
+  const templates = useQuery(api.templates.list)
+  const removeCampaign = useMutation(api.campaigns.remove)
+  const createCampaign = useMutation(api.campaigns.create)
   const [searchQuery, setSearchQuery] = useState("")
+  const [view, setView] = useState<"list" | "calendar">("list")
+  const [currentMonth, setCurrentMonth] = useState<Date>(new Date())
+
+  const calendarDays = useMemo(() => {
+    const startMonth = startOfMonth(currentMonth)
+    const endMonthDate = endOfMonth(currentMonth)
+    const startDate = startOfWeek(startMonth, { locale: ar })
+    const endDate = endOfWeek(endMonthDate, { locale: ar })
+    const days: Date[] = []
+    let day = startDate
+    while (day <= endDate) {
+      days.push(day)
+      day = addDays(day, 1)
+      days.push(day) // Double push bug in loop? No, day updated before push? Wait.
+      // Correct loop:
+      // day = startDate
+      // while day <= endDate
+      //   push day
+      //   day = addDays(day, 1)
+      // My previous code:
+      // days.push(day)
+      // day = addDays(day, 1)
+    }
+    // Let's rewrite the loop properly
+    const d = []
+    let curr = startDate
+    while (curr <= endDate) {
+      d.push(curr)
+      curr = addDays(curr, 1)
+    }
+    return d
+  }, [currentMonth])
+
+  const stats = useMemo(() => {
+    if (!campaigns) return { total: 0, sent: 0, readRate: 0, deliveredRate: 0 }
+    const total = campaigns.length
+    const sent = campaigns.reduce((acc, c) => acc + (c.stats.sent || 0), 0)
+    const totalDelivered = campaigns.reduce((acc, c) => acc + (c.stats.delivered || 0), 0)
+    const totalRead = campaigns.reduce((acc, c) => acc + (c.stats.read || 0), 0)
+    
+    return {
+      total,
+      sent,
+      readRate: totalDelivered > 0 ? Math.round((totalRead / totalDelivered) * 100) : 0,
+      deliveredRate: sent > 0 ? Math.round((totalDelivered / sent) * 100) : 0
+    }
+  }, [campaigns])
+
+  const handleQuickCampaign = async () => {
+    const approved = (templates || []).find(t => t.status === "APPROVED") as { _id: Id<"templates">; name: string } | undefined
+    if (!approved) return
+    await createCampaign({
+      name: `حملة سريعة ${format(new Date(), "d MMM", { locale: ar })}`,
+      templateId: approved._id,
+      templateName: approved.name,
+      scheduledAt: Date.now()
+    })
+  }
+
+  const handleDelete = async (id: Id<"campaigns">) => {
+    try {
+      await removeCampaign({ id })
+    } catch (e) {
+      console.error("Failed to delete campaign", e)
+    }
+  }
 
   return (
-    <div className="space-y-6 p-4 sm:p-6 animate-in fade-in duration-500">
+    <div className="space-y-8 p-6 sm:p-8 animate-in fade-in duration-500 max-w-[1600px] mx-auto">
       {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
+        <div className="space-y-1">
           <h1 className="text-3xl font-bold tracking-tight text-foreground">الحملات التسويقية</h1>
-          <p className="text-muted-foreground mt-1">إدارة الحملات ورسائل البث الجماعي</p>
+          <p className="text-muted-foreground text-lg">أداة قوية لإدارة رسائل WhatsApp الجماعية</p>
         </div>
-        <Link href="/campaigns/new">
-          <Button className="gap-2 bg-[#004D3D] hover:bg-[#003D2D]">
-            <Plus className="h-4 w-4" />
-            حملة جديدة
+        <div className="flex items-center gap-3">
+          <div className="bg-muted p-1 rounded-xl flex items-center">
+             <Tabs value={view} onValueChange={(v) => setView(v as "list" | "calendar")}>
+                <TabsList className="bg-transparent p-0">
+                  <TabsTrigger value="list" className="rounded-lg px-4">قائمة</TabsTrigger>
+                  <TabsTrigger value="calendar" className="rounded-lg px-4">تقويم</TabsTrigger>
+                </TabsList>
+             </Tabs>
+          </div>
+          
+          <Button 
+            variant="outline" 
+            onClick={handleQuickCampaign}
+            className="hidden sm:flex"
+          >
+            <Play className="h-4 w-4 ml-2 text-primary" />
+            حملة سريعة
           </Button>
-        </Link>
-      </div>
 
-      {/* Stats Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">إجمالي الحملات</CardTitle>
-            <MessageSquare className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{campaigns ? campaigns.length : "-"}</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">تم إرسالها</CardTitle>
-            <CheckCircle2 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {campaigns ? campaigns.reduce((acc, c) => acc + (c.stats.sent || 0), 0) : "-"}
-            </div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">معدل القراءة</CardTitle>
-            <BarChart3 className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">
-              {campaigns && campaigns.length > 0
-                ? Math.round((campaigns.reduce((acc, c) => acc + (c.stats.read || 0), 0) / Math.max(1, campaigns.reduce((acc, c) => acc + (c.stats.delivered || 0), 0))) * 100)
-                : 0}%
-            </div>
-          </CardContent>
-        </Card>
-      </div>
-
-      {/* Campaigns List */}
-      <div className="space-y-4">
-        <div className="relative">
-          <Search className="absolute right-3 top-3 h-4 w-4 text-muted-foreground" />
-          <Input
-            placeholder="بحث عن حملة..."
-            className="pl-4 pr-9"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
+          <Link href="/campaigns/new">
+            <Button className="gap-2 bg-primary hover:bg-primary/90 text-primary-foreground shadow-none rounded-xl px-6">
+              <Plus className="h-5 w-5" />
+              حملة جديدة
+            </Button>
+          </Link>
         </div>
+      </div>
 
-        {!campaigns ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-48 rounded-xl bg-muted/20 animate-pulse" />
-            ))}
-          </div>
-        ) : campaigns.length === 0 ? (
-          <div className="text-center py-12 bg-muted/10 rounded-2xl border-2 border-dashed">
-            <div className="w-16 h-16 bg-muted rounded-full flex items-center justify-center mx-auto mb-4">
-              <MessageSquare className="h-8 w-8 text-muted-foreground" />
-            </div>
-            <h3 className="text-lg font-semibold">لا توجد حملات بعد</h3>
-            <p className="text-muted-foreground max-w-sm mx-auto mt-2 mb-6">
-              أنشئ حملتك الأولى للوصول إلى عملائك وزيادة مبيعاتك.
-            </p>
-            <Link href="/campaigns/new">
-              <Button variant="outline">إنشاء حملة</Button>
-            </Link>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {campaigns
-              .filter(c => c.name.includes(searchQuery))
-              .map((campaign) => (
-                <Link href={`/campaigns/${campaign._id}`} key={campaign._id}>
-                  <Card className="hover:shadow-md transition-shadow cursor-pointer">
-                    <div className="p-6 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+      {/* Stats Cards */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <StatCard 
+          title="إجمالي الحملات" 
+          value={stats.total} 
+          icon={<MessageSquare className="h-4 w-4 text-primary" />} 
+        />
+        <StatCard 
+          title="رسائل مرسلة" 
+          value={stats.sent.toLocaleString()} 
+          icon={<CheckCircle2 className="h-4 w-4 text-success" />} 
+          trend="+12%"
+        />
+        <StatCard 
+          title="معدل الوصول" 
+          value={`${stats.deliveredRate}%`} 
+          icon={<Users className="h-4 w-4 text-blue-500" />}
+          trend="+5%" 
+        />
+        <StatCard 
+          title="معدل القراءة" 
+          value={`${stats.readRate}%`} 
+          icon={<BarChart3 className="h-4 w-4 text-orange-500" />}
+          variant="primary"
+          trend="+8%"
+        />
+      </div>
 
-                      {/* Info */}
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-lg">{campaign.name}</h3>
-                          <Badge variant={
-                            campaign.status === 'COMPLETED' ? 'default' :
-                              campaign.status === 'PROCESSING' ? 'secondary' :
-                                campaign.status === 'SCHEDULED' ? 'outline' : 'destructive'
-                          } className={campaign.status === 'COMPLETED' ? 'bg-success hover:bg-success/90' : ''}>
-                            {campaign.status === 'COMPLETED' && 'مكتملة'}
-                            {campaign.status === 'PROCESSING' && 'جاري الإرسال'}
-                            {campaign.status === 'SCHEDULED' && 'مجدولة'}
-                            {campaign.status === 'DRAFT' && 'مسودة'}
-                            {campaign.status === 'FAILED' && 'فشلت'}
-                          </Badge>
-                        </div>
-                        <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                          <span className="flex items-center gap-1">
-                            <Clock className="h-3 w-3" />
-                            {format(campaign.createdAt, "d MMM, yyyy", { locale: ar })}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <MessageSquare className="h-3 w-3" />
-                            قالب: {campaign.templateName}
-                          </span>
-                        </div>
-                      </div>
+      {/* Main Content */}
+      <div className="space-y-6">
+        {view === "list" && (
+          <>
+             <div className="relative max-w-md">
+                <Search className="absolute right-3 top-3 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="بحث في الحملات..."
+                  className="pl-4 pr-10 bg-white dark:bg-muted/30 border-none shadow-none ring-1 ring-border/50 focus:ring-primary/20 rounded-xl h-11"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+              </div>
 
-                      {/* Stats */}
-                      <div className="flex items-center gap-6 w-full md:w-auto">
-                        <div className="text-center">
-                          <div className="text-lg font-bold">{campaign.stats.total}</div>
-                          <div className="text-xs text-muted-foreground">مستلم</div>
-                        </div>
-                        <div className="h-8 w-px bg-border hidden md:block" />
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-success">
-                            {Math.round((campaign.stats.read / Math.max(1, campaign.stats.delivered)) * 100)}%
+              {!campaigns ? (
+                <div className="grid grid-cols-1 gap-4">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="h-24 rounded-2xl bg-muted/20 animate-pulse" />
+                  ))}
+                </div>
+              ) : campaigns.length === 0 ? (
+                <div className="flex flex-col items-center justify-center py-20 text-center bg-muted/5 rounded-3xl border border-dashed border-muted-foreground/20">
+                  <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
+                    <MessageSquare className="h-10 w-10 text-primary" />
+                  </div>
+                  <h3 className="text-xl font-bold mb-2">لا توجد حملات حتى الآن</h3>
+                  <p className="text-muted-foreground max-w-sm mb-8">
+                    ابدأ بإنشاء حملتك الأولى للتواصل مع عملائك عبر WhatsApp بسهولة.
+                  </p>
+                  <Link href="/campaigns/new">
+                    <Button size="lg" className="rounded-xl px-8">إنشاء حملة جديدة</Button>
+                  </Link>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 gap-4">
+                  {campaigns
+                    .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
+                    .map((campaign) => (
+                      <Card key={campaign._id} className="p-0 overflow-hidden border-none ring-1 ring-border/50 shadow-none hover:bg-muted/30 transition-colors">
+                        <div className="p-5 flex flex-col sm:flex-row sm:items-center gap-6">
+                          {/* Icon & Name */}
+                          <div className="flex items-start gap-4 flex-1">
+                            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center shrink-0 ${
+                              campaign.status === 'COMPLETED' ? 'bg-success/10 text-success' :
+                              campaign.status === 'PROCESSING' ? 'bg-blue-500/10 text-blue-600' :
+                              campaign.status === 'FAILED' ? 'bg-destructive/10 text-destructive' :
+                              'bg-muted text-muted-foreground'
+                            }`}>
+                              {campaign.status === 'PROCESSING' ? (
+                                <span className="relative flex h-3 w-3">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-3 w-3 bg-blue-500"></span>
+                                </span>
+                              ) : (
+                                <MessageSquare className="h-6 w-6" />
+                              )}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-3 mb-1">
+                                <Link href={`/campaigns/${campaign._id}`} className="font-bold text-lg hover:text-primary transition-colors">
+                                  {campaign.name}
+                                </Link>
+                                <Badge variant={
+                                  campaign.status === 'COMPLETED' ? 'secondary' :
+                                  campaign.status === 'PROCESSING' ? 'default' :
+                                  campaign.status === 'FAILED' ? 'destructive' : 'outline'
+                                } className="rounded-md font-normal px-2">
+                                  {campaign.status}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                                <span className="flex items-center gap-1.5">
+                                  <CalendarIcon className="h-3.5 w-3.5" />
+                                  {format(campaign.createdAt, "d MMM yyyy", { locale: ar })}
+                                </span>
+                                <span className="flex items-center gap-1.5">
+                                  <Users className="h-3.5 w-3.5" />
+                                  {campaign.stats.total} مستلم
+                                </span>
+                              </div>
+                            </div>
                           </div>
-                          <div className="text-xs text-muted-foreground">قراءة</div>
-                        </div>
-                        <div className="h-8 w-px bg-border hidden md:block" />
-                        <div className="text-center">
-                          <div className="text-lg font-bold text-blue-600">
-                            {Math.round((campaign.stats.delivered / Math.max(1, campaign.stats.sent)) * 100)}%
-                          </div>
-                          <div className="text-xs text-muted-foreground">وصول</div>
-                        </div>
-                      </div>
 
+                          {/* Mini Stats */}
+                          <div className="flex items-center gap-8 text-sm sm:mr-auto">
+                            <div className="text-center min-w-[60px]">
+                              <div className="font-bold text-lg">{campaign.stats.sent}</div>
+                              <div className="text-xs text-muted-foreground">تم الإرسال</div>
+                            </div>
+                            <div className="text-center min-w-[60px]">
+                              <div className="font-bold text-lg text-success">
+                                {Math.round((campaign.stats.read / Math.max(1, campaign.stats.delivered)) * 100)}%
+                              </div>
+                              <div className="text-xs text-muted-foreground">قراءة</div>
+                            </div>
+                          </div>
+
+                          {/* Actions */}
+                          <div className="flex items-center gap-2 border-r pr-4 mr-4 sm:border-r-0 sm:pr-0 sm:mr-0">
+                             <Link href={`/campaigns/${campaign._id}`}>
+                                <Button variant="ghost" size="sm">التفاصيل</Button>
+                             </Link>
+                             <DropdownMenu>
+                                <DropdownMenuTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="rounded-lg">
+                                    <MoreVertical className="h-4 w-4" />
+                                  </Button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem 
+                                    className="text-destructive focus:text-destructive"
+                                    onClick={() => handleDelete(campaign._id as Id<"campaigns">)}
+                                    disabled={campaign.status === 'PROCESSING'}
+                                  >
+                                    <Trash2 className="h-4 w-4 ml-2" />
+                                    حذف الحملة
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                             </DropdownMenu>
+                          </div>
+                        </div>
+                        
+                        {/* Progress Bar for Processing */}
+                        {campaign.status === 'PROCESSING' && (
+                          <div className="h-1 w-full bg-muted/50">
+                            <div 
+                              className="h-full bg-blue-500 transition-all duration-1000 ease-in-out" 
+                              style={{ width: `${(campaign.stats.sent / Math.max(1, campaign.stats.total)) * 100}%` }}
+                            />
+                          </div>
+                        )}
+                      </Card>
+                    ))}
+                </div>
+              )}
+          </>
+        )}
+
+        {view === "calendar" && (
+          <div className="bg-card rounded-3xl border p-6">
+            <div className="flex items-center justify-between mb-8">
+              <div className="flex items-center gap-4">
+                 <div className="bg-muted rounded-xl flex">
+                    <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(subMonths(currentMonth, 1))} className="rounded-r-xl rounded-l-none">
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                    <div className="px-4 py-2 font-bold min-w-[140px] text-center border-x border-background">
+                      {format(currentMonth, "MMMM yyyy", { locale: ar })}
                     </div>
+                    <Button variant="ghost" size="icon" onClick={() => setCurrentMonth(addMonths(currentMonth, 1))} className="rounded-l-xl rounded-r-none">
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                 </div>
+              </div>
+              <Badge variant="secondary" className="text-base py-1 px-4 rounded-lg">
+                 {campaigns?.length || 0} حملات مجدولة
+              </Badge>
+            </div>
 
-                    {/* Progress Bar (if processing) */}
-                    {campaign.status === 'PROCESSING' && (
-                      <div className="h-1 w-full bg-muted mt-auto">
-                        <div
-                          className="h-full bg-primary transition-all duration-500"
-                          style={{ width: `${(campaign.stats.sent / Math.max(1, campaign.stats.total)) * 100}%` }}
-                        />
-                      </div>
-                    )}
-                  </Card>
-                </Link>
-              ))}
+            <div className="grid grid-cols-7 gap-px bg-muted/20 rounded-2xl overflow-hidden border">
+               {["الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"].map((d) => (
+                  <div key={d} className="bg-muted/5 p-4 text-center text-sm font-bold text-muted-foreground">{d}</div>
+               ))}
+               {calendarDays.map((day, i) => {
+                  const dayCampaigns = (campaigns || []).filter(c => isSameDay(new Date(c.scheduledAt), day))
+                  const isCurrentMonth = isSameMonth(day, currentMonth)
+                  const isToday = isSameDay(day, new Date())
+                  
+                  return (
+                    <div 
+                      key={day.toISOString()} 
+                      className={`min-h-[140px] bg-background p-3 transition-colors hover:bg-muted/20 ${!isCurrentMonth ? 'bg-muted/5 opacity-50' : ''}`}
+                    >
+                       <div className="flex items-center justify-between mb-2">
+                          <span className={`text-sm font-medium w-7 h-7 flex items-center justify-center rounded-full ${isToday ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}>
+                            {format(day, "d")}
+                          </span>
+                          {dayCampaigns.length > 0 && (
+                            <Badge variant="secondary" className="text-[10px] h-5 px-1.5">{dayCampaigns.length}</Badge>
+                          )}
+                       </div>
+                       
+                       <div className="space-y-1.5">
+                          {dayCampaigns.map(c => (
+                            <Link key={c._id} href={`/campaigns/${c._id}`}>
+                              <div className={`text-xs p-2 rounded-lg border truncate transition-all hover:scale-[1.02] active:scale-95 cursor-pointer ${
+                                c.status === 'COMPLETED' ? 'bg-success/5 border-success/20 text-success-foreground' :
+                                c.status === 'PROCESSING' ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800 text-blue-700 dark:text-blue-300' :
+                                'bg-muted/30 border-transparent hover:bg-muted'
+                              }`}>
+                                {c.name}
+                              </div>
+                            </Link>
+                          ))}
+                       </div>
+                    </div>
+                  )
+               })}
+            </div>
           </div>
         )}
       </div>

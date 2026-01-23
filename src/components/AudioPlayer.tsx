@@ -74,7 +74,7 @@ export function AudioPlayer({ src, isOutbound }: AudioPlayerProps) {
                     <Mic className={cn("h-6 w-6", isOutbound ? "text-[#00a884] dark:text-[#00a884]" : "text-muted-foreground")} />
                 </div>
                 {/* Small Badge icon (e.g. Mic) */}
-                <div className={cn("absolute bottom-0 right-0 w-4 h-4 rounded-full flex items-center justify-center shadow-sm", isOutbound ? "bg-[#25d366]" : "bg-muted-foreground")}>
+                <div className={cn("absolute bottom-0 right-0 w-4 h-4 rounded-full flex items-center justify-center", isOutbound ? "bg-[#25d366]" : "bg-muted-foreground")}>
                     <Mic className="h-2.5 w-2.5 text-white" />
                 </div>
             </div>

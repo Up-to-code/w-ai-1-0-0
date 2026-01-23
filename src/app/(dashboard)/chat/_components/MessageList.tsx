@@ -77,9 +77,9 @@ export function MessageList({ chatId }: MessageListProps) {
     }
 
     return (
-        <div className="relative flex-1 h-full overflow-hidden">
-            {/* Background Doodle */}
-            <div className="absolute inset-0 z-0 opacity-[0.06] bg-[url('https://repo.sourcelib.xyz/wa-background.png')] bg-repeat text-foreground pointer-events-none" />
+        <div className="relative flex-1 h-full overflow-hidden bg-[#efeae2] dark:bg-[#0b141a]">
+            {/* Background Pattern - Subtle & Clean */}
+            <div className="absolute inset-0 z-0 opacity-[0.4] dark:opacity-[0.03] bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')] pointer-events-none" />
 
             <div
                 ref={scrollRef}
@@ -112,6 +112,7 @@ export function MessageList({ chatId }: MessageListProps) {
                                     animate={{ opacity: 1, y: 0, scale: 1 }}
                                     transition={{ duration: 0.2 }}
                                     className="w-full flex flex-col"
+                                    style={{ contentVisibility: "auto", containIntrinsicSize: "0 80px" }}
                                 >
                                     <MessageBubble message={msg as any} />
                                 </motion.div>
@@ -128,7 +129,7 @@ export function MessageList({ chatId }: MessageListProps) {
                 <Button
                     size="icon"
                     variant="secondary"
-                    className="absolute bottom-4 right-4 z-20 rounded-full shadow-md h-10 w-10 bg-background hover:bg-muted"
+                    className="absolute bottom-4 right-4 z-20 rounded-full h-10 w-10 bg-background hover:bg-muted"
                     onClick={() => scrollToBottom("smooth")}
                 >
                     <ArrowDown className="h-5 w-5 text-muted-foreground" />

@@ -57,7 +57,7 @@ function LoginForm() {
   };
 
   return (
-    <Card className="w-full max-w-md shadow-lg">
+    <Card className="w-full max-w-md">
       <CardHeader className="space-y-1 text-center pb-8">
         <div className="mx-auto w-14 h-14 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
           <MessageSquare className="w-7 h-7 text-primary" />

@@ -12,6 +12,14 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table"
+import {
     Zap,
     Plus,
     MessageSquare,
@@ -25,7 +33,9 @@ import {
     Pause,
     Trash,
     Edit,
-    ChevronDown
+    ChevronDown,
+    Users,
+    UserPlus
 } from "lucide-react"
 
 // Mock Workflows
@@ -64,6 +74,7 @@ const MOCK_WORKFLOWS = [
 
 const TRIGGERS = [
     { value: "new_message", label: "رسالة جديدة", icon: MessageSquare },
+    { value: "contact_created", label: "عميل جديد", icon: Users },
     { value: "keyword", label: "كلمة مفتاحية", icon: Tag },
     { value: "tag_added", label: "إضافة وسم", icon: Tag },
 ]
@@ -71,16 +82,22 @@ const TRIGGERS = [
 const ACTIONS = [
     { value: "send_template", label: "إرسال قالب", icon: Send },
     { value: "add_tag", label: "إضافة وسم", icon: Tag },
+    { value: "remove_tag", label: "إزالة وسم", icon: Trash },
+    { value: "assign_user", label: "تعيين موظف", icon: UserPlus },
     { value: "notify", label: "إرسال تنبيه", icon: Bell },
 ]
 
 export default function WorkflowsPage() {
     const workflows = useQuery(api.workflows.list) || []
+    const templates = useQuery(api.templates.list) || []
+    const users = useQuery(api.users.list) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
+    const updateWorkflow = useMutation(api.workflows.update)
     const toggleWorkflowMutation = useMutation(api.workflows.toggle)
     const deleteWorkflow = useMutation(api.workflows.remove)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
+    const [editingId, setEditingId] = useState<string | null>(null)
     const [name, setName] = useState("")
     const [selectedTrigger, setSelectedTrigger] = useState("")
     const [triggerConfig, setTriggerConfig] = useState<any>({})
@@ -91,23 +108,45 @@ export default function WorkflowsPage() {
         await toggleWorkflowMutation({ id: id as any })
     }
 
+    const handleEdit = (workflow: any) => {
+        setEditingId(workflow._id)
+        setName(workflow.name)
+        setSelectedTrigger(workflow.trigger)
+        setTriggerConfig(workflow.triggerConfig || {})
+        setSelectedAction(workflow.action)
+        setActionConfig(workflow.actionConfig || {})
+        setIsCreateOpen(true)
+    }
+
     const handleSave = async () => {
         try {
-            await createWorkflow({
-                name: name || "قاعدة جديدة",
-                trigger: selectedTrigger,
-                triggerConfig,
-                action: selectedAction,
-                actionConfig,
-            })
+            if (editingId) {
+                await updateWorkflow({
+                    id: editingId as any,
+                    name,
+                    trigger: selectedTrigger,
+                    triggerConfig,
+                    action: selectedAction,
+                    actionConfig,
+                })
+            } else {
+                await createWorkflow({
+                    name: name || "قاعدة جديدة",
+                    trigger: selectedTrigger,
+                    triggerConfig,
+                    action: selectedAction,
+                    actionConfig,
+                })
+            }
             setIsCreateOpen(false)
             resetForm()
         } catch (error) {
-            console.error("Failed to create workflow", error)
+            console.error("Failed to save workflow", error)
         }
     }
 
     const resetForm = () => {
+        setEditingId(null)
         setName("")
         setSelectedTrigger("")
         setTriggerConfig({})
@@ -116,7 +155,7 @@ export default function WorkflowsPage() {
     }
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 m-16">
             <div className="flex justify-between items-center">
                 <div>
                     <h1 className="text-2xl font-bold text-foreground">الأتمتة</h1>
@@ -131,7 +170,7 @@ export default function WorkflowsPage() {
                     </DialogTrigger>
                     <DialogContent className="max-w-2xl">
                         <DialogHeader>
-                            <DialogTitle>إنشاء قاعدة أتمتة</DialogTitle>
+                            <DialogTitle>{editingId ? "تعديل القاعدة" : "إنشاء قاعدة أتمتة"}</DialogTitle>
                         </DialogHeader>
                         <div className="space-y-6 py-4">
                             {/* Workflow Name */}
@@ -154,7 +193,7 @@ export default function WorkflowsPage() {
                                         return (
                                             <div
                                                 key={trigger.value}
-                                                className={`border rounded-xl p-4 cursor-pointer transition-all ${selectedTrigger === trigger.value ? 'border-primary bg-primary/5 shadow-sm' : 'hover:border-primary/50'}`}
+                                                className={`border rounded-xl p-4 cursor-pointer transition-all ${selectedTrigger === trigger.value ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                                 onClick={() => setSelectedTrigger(trigger.value)}
                                             >
                                                 <Icon className="h-5 w-5 mb-2 text-primary" />
@@ -170,6 +209,16 @@ export default function WorkflowsPage() {
                                             placeholder="أدخل الكلمة..."
                                             value={triggerConfig.keyword || ""}
                                             onChange={e => setTriggerConfig({ ...triggerConfig, keyword: e.target.value })}
+                                        />
+                                    </div>
+                                )}
+                                {selectedTrigger === "tag_added" && (
+                                    <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
+                                        <Label>عند إضافة وسم (اختياري)</Label>
+                                        <Input
+                                            placeholder="اتركه فارغاً لأي وسم، أو حدد وسماً محدداً"
+                                            value={triggerConfig.tag || ""}
+                                            onChange={e => setTriggerConfig({ ...triggerConfig, tag: e.target.value })}
                                         />
                                     </div>
                                 )}
@@ -196,7 +245,7 @@ export default function WorkflowsPage() {
                                         return (
                                             <div
                                                 key={action.value}
-                                                className={`border rounded-xl p-4 cursor-pointer transition-all ${selectedAction === action.value ? 'border-primary bg-primary/5 shadow-sm' : 'hover:border-primary/50'}`}
+                                                className={`border rounded-xl p-4 cursor-pointer transition-all ${selectedAction === action.value ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                                 onClick={() => setSelectedAction(action.value)}
                                             >
                                                 <Icon className="h-5 w-5 mb-2 text-success" />
@@ -208,13 +257,21 @@ export default function WorkflowsPage() {
                                 {selectedAction === "send_template" && (
                                     <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
                                         <Label>اختر القالب</Label>
-                                        <Select onValueChange={(v) => setActionConfig({ ...actionConfig, template: v })}>
+                                        <Select
+                                            value={actionConfig.template}
+                                            onValueChange={(v) => setActionConfig({ ...actionConfig, template: v })}
+                                        >
                                             <SelectTrigger>
                                                 <SelectValue placeholder="اختر قالب..." />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="welcome">رسالة ترحيب</SelectItem>
-                                                <SelectItem value="promo">عرض ترويجي</SelectItem>
+                                                {templates
+                                                    .filter(t => t.status === "APPROVED")
+                                                    .map(t => (
+                                                        <SelectItem key={t._id} value={t.name}>
+                                                            {t.name}
+                                                        </SelectItem>
+                                                    ))}
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -226,6 +283,46 @@ export default function WorkflowsPage() {
                                             placeholder="مثال: VIP"
                                             value={actionConfig.tag || ""}
                                             onChange={e => setActionConfig({ ...actionConfig, tag: e.target.value })}
+                                        />
+                                    </div>
+                                )}
+                                {selectedAction === "remove_tag" && (
+                                    <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
+                                        <Label>اسم الوسم</Label>
+                                        <Input
+                                            placeholder="مثال: VIP"
+                                            value={actionConfig.tag || ""}
+                                            onChange={e => setActionConfig({ ...actionConfig, tag: e.target.value })}
+                                        />
+                                    </div>
+                                )}
+                                {selectedAction === "assign_user" && (
+                                    <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
+                                        <Label>اختر الموظف</Label>
+                                        <Select
+                                            value={actionConfig.userId}
+                                            onValueChange={(v) => setActionConfig({ ...actionConfig, userId: v })}
+                                        >
+                                            <SelectTrigger>
+                                                <SelectValue placeholder="اختر موظف..." />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {users.map((u: any) => (
+                                                    <SelectItem key={u._id} value={u._id}>
+                                                        {u.name || u.email || "مستخدم غير معروف"}
+                                                    </SelectItem>
+                                                ))}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                )}
+                                {selectedAction === "notify" && (
+                                    <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
+                                        <Label>رسالة التنبيه</Label>
+                                        <Input
+                                            placeholder="مثال: تم إضافة وسم VIP لعميل"
+                                            value={actionConfig.message || ""}
+                                            onChange={e => setActionConfig({ ...actionConfig, message: e.target.value })}
                                         />
                                     </div>
                                 )}
@@ -278,45 +375,72 @@ export default function WorkflowsPage() {
                 </Card>
             </div>
 
-            <div className="space-y-4">
-                {workflows.map((workflow) => (
-                    <Card key={workflow._id} className={!workflow.enabled ? 'opacity-60' : ''}>
-                        <CardContent className="p-4">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-4">
-                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${workflow.enabled ? 'bg-primary/10' : 'bg-muted'}`}>
-                                        <Zap className={`h-5 w-5 ${workflow.enabled ? 'text-primary' : 'text-muted-foreground'}`} />
-                                    </div>
-                                    <div>
-                                        <h3 className="font-semibold text-foreground">{workflow.name}</h3>
-                                        <div className="flex items-center gap-2 mt-1 text-sm text-muted-foreground">
-                                            <span className="bg-warning/10 text-warning px-2 py-0.5 rounded text-xs">
-                                                {workflow.trigger}{workflow.triggerConfig?.keyword ? `: ${workflow.triggerConfig.keyword}` : ''}
-                                            </span>
-                                            <ArrowRight className="h-3 w-3" />
-                                            <span className="bg-success/10 text-success px-2 py-0.5 rounded text-xs">
-                                                {workflow.action}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div className="flex items-center gap-4">
-                                    <div className="text-left">
-                                        <p className="text-sm font-medium">{workflow.stats?.runs || 0}</p>
-                                        <p className="text-xs text-muted-foreground">تنفيذ</p>
-                                    </div>
+            <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
+                <Table>
+                    <TableHeader>
+                        <TableRow>
+                            <TableHead>الحالة</TableHead>
+                            <TableHead>اسم القاعدة</TableHead>
+                            <TableHead>المشغّل (Trigger)</TableHead>
+                            <TableHead>الإجراء (Action)</TableHead>
+                            <TableHead>التنفيذات</TableHead>
+                            <TableHead>آخر نشاط</TableHead>
+                            <TableHead className="text-left">إجراءات</TableHead>
+                        </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                        {workflows.map((workflow) => (
+                            <TableRow key={workflow._id} className={!workflow.enabled ? 'opacity-60 bg-muted/50' : ''}>
+                                <TableCell>
                                     <Switch
                                         checked={workflow.enabled}
                                         onCheckedChange={() => toggleWorkflow(workflow._id)}
                                     />
-                                    <Button variant="ghost" size="icon">
-                                        <MoreVertical className="h-4 w-4" />
-                                    </Button>
-                                </div>
-                            </div>
-                        </CardContent>
-                    </Card>
-                ))}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                    {workflow.name}
+                                </TableCell>
+                                <TableCell>
+                                    <Badge variant="outline" className="bg-warning/10 text-warning border-warning/20">
+                                        {TRIGGERS.find(t => t.value === workflow.trigger)?.label || workflow.trigger}
+                                        {workflow.triggerConfig?.keyword ? `: ${workflow.triggerConfig.keyword}` : ''}
+                                        {workflow.triggerConfig?.tag ? `: ${workflow.triggerConfig.tag}` : ''}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    <Badge variant="outline" className="bg-success/10 text-success border-success/20">
+                                        {ACTIONS.find(a => a.value === workflow.action)?.label || workflow.action}
+                                    </Badge>
+                                </TableCell>
+                                <TableCell>
+                                    {workflow.stats?.runs || 0}
+                                </TableCell>
+                                <TableCell className="text-muted-foreground text-sm">
+                                    {workflow.stats?.lastRun ? new Date(workflow.stats.lastRun).toLocaleString('en-US', {
+                                        month: 'short', day: 'numeric', hour: 'numeric', minute: 'numeric'
+                                    }) : '-'}
+                                </TableCell>
+                                <TableCell className="text-left">
+                                    <div className="flex items-center justify-end gap-2">
+                                        <Button variant="ghost" size="icon" onClick={() => handleEdit(workflow)}>
+                                            <Edit className="h-4 w-4" />
+                                        </Button>
+                                        <Button variant="ghost" size="icon" onClick={() => deleteWorkflow({ id: workflow._id })} className="text-destructive hover:text-destructive">
+                                            <Trash className="h-4 w-4" />
+                                        </Button>
+                                    </div>
+                                </TableCell>
+                            </TableRow>
+                        ))}
+                        {workflows.length === 0 && (
+                            <TableRow>
+                                <TableCell colSpan={7} className="h-32 text-center text-muted-foreground">
+                                    لا توجد قواعد أتمتة حتى الآن. ابدأ بإنشاء قاعدة جديدة.
+                                </TableCell>
+                            </TableRow>
+                        )}
+                    </TableBody>
+                </Table>
             </div>
         </div>
     )

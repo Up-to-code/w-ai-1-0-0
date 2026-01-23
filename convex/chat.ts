@@ -1,7 +1,52 @@
-import { query, mutation, internalMutation, internalAction } from "./_generated/server";
+import { query, mutation, internalMutation, internalAction, internalQuery } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
+import { PushNotifications } from "@convex-dev/expo-push-notifications"; // Import PushNotifications
+import { components } from "./_generated/api";
+
+const pushNotifications = new PushNotifications<any>(components.pushNotifications);
 import { paginationOptsValidator } from "convex/server";
+
+export const getChatByPhone = internalQuery({
+  args: { phone: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("chats")
+      .filter((q: any) => q.eq(q.field("contactPhone"), args.phone))
+      .first();
+  },
+});
+
+export const getOrCreateChat = mutation({
+  args: { contactPhone: v.string(), contactName: v.string() },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("chats")
+      .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
+      .first();
+
+    if (existing) return existing;
+
+    const chatId = await ctx.db.insert("chats", {
+      contactId: args.contactPhone, // WhatsApp ID usually phone
+      contactName: args.contactName,
+      contactPhone: args.contactPhone,
+      lastMessageTime: Date.now(),
+      unreadCount: 0,
+      status: "active",
+      aiMode: true,
+    });
+
+    return await ctx.db.get(chatId);
+  },
+});
+
+export const toggleAiMode = mutation({
+  args: { chatId: v.id("chats"), enabled: v.boolean() },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.chatId, { aiMode: args.enabled });
+  },
+});
 
 export const getLatestGlobalMessage = query({
   handler: async (ctx) => {
@@ -183,7 +228,7 @@ export const saveIncomingMessage = internalMutation({
     // 2. Find or Create Chat
     const chat = await ctx.db
       .query("chats")
-      .filter((q) => q.eq(q.field("contactId"), args.contactId))
+      .filter((q: any) => q.eq(q.field("contactId"), args.contactId))
       .first();
 
     let chatId;
@@ -195,6 +240,7 @@ export const saveIncomingMessage = internalMutation({
         lastMessageTime: args.timestamp,
         unreadCount: 1,
         status: "active",
+        aiMode: true, // Default to enabled
       });
     } else {
       chatId = chat._id;
@@ -232,6 +278,34 @@ export const saveIncomingMessage = internalMutation({
         messageId,
         mediaId: args.mediaId
       });
+    }
+
+    // 5. Send Push Notification to Admins
+    // We notify all users with role 'admin' about the new message
+    try {
+      const admins = await ctx.db.query("users")
+        .filter((q: any) => q.eq(q.field("role"), "admin"))
+        .collect();
+
+      if (admins.length > 0) {
+        const notifTitle = args.contactName || args.contactId;
+        const notifBody = args.messageType === "text" ? args.content : `Sent a ${args.messageType}`;
+
+        for (const admin of admins) {
+          if (admin.tokenIdentifier) {
+            await pushNotifications.sendPushNotification(ctx, {
+              userId: admin.tokenIdentifier,
+              notification: {
+                title: notifTitle,
+                body: notifBody,
+                data: { chatId: chatId },
+              },
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to send push notifications:", e);
     }
   },
 });
@@ -311,7 +385,7 @@ export const updateMessageStatus = internalMutation({
   handler: async (ctx, args) => {
     const message = await ctx.db
       .query("messages")
-      .filter((q) => q.eq(q.field("metaMessageId"), args.metaMessageId))
+      .filter((q: any) => q.eq(q.field("metaMessageId"), args.metaMessageId))
       .first();
 
     if (!message) {

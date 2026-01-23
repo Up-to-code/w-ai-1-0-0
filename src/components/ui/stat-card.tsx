@@ -30,7 +30,7 @@ function StatCard({
                 "flex flex-col gap-3 rounded-2xl p-5 transition-all duration-200",
                 isPrimary
                     ? "bg-primary text-primary-foreground"
-                    : "bg-card text-card-foreground shadow-sm",
+              : "bg-card text-card-foreground",
                 className
             )}
             {...props}

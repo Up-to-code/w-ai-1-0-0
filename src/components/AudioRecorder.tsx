@@ -128,7 +128,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
             <Button
                 onClick={handleFinish}
                 disabled={isFinishing}
-                className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#008f6f] text-white shadow-sm shrink-0 flex items-center justify-center p-0"
+                className="h-10 w-10 rounded-full bg-[#00a884] hover:bg-[#008f6f] text-white shrink-0 flex items-center justify-center p-0"
             >
                 {isFinishing ? (
                     <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

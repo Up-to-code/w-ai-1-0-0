@@ -1,13 +1,13 @@
 import type { Metadata } from "next";
-import { Tajawal } from "next/font/google";
+import { Cairo, Tajawal } from "next/font/google";
 import "./globals.css";
 import ConvexClientProvider from "@/components/ConvexClientProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 
-const tajawal = Tajawal({
-  subsets: ["arabic"],
-  weight: ["200", "300", "400", "500", "700", "800", "900"],
-  variable: "--font-tajawal",
+const tajawal = Cairo({
+  subsets: ["arabic",
+    "latin"
+  ],
 });
 
 export const metadata: Metadata = {
@@ -23,7 +23,7 @@ export default function RootLayout({
   return (
     <html lang="ar" dir="rtl">
       <body
-        className={`${tajawal.variable} antialiased font-sans`}
+        className={`${tajawal.className} antialiased font-sans`}
       >
         <ConvexClientProvider>
           <ErrorBoundary>
