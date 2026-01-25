@@ -41,3 +41,7 @@ yarn-error.*
 /ios
 /android
 node_modules
+
+# Firebase Service Account Keys (sensitive credentials)
+*-firebase-adminsdk-*.json
+firebase-adminsdk-*.json

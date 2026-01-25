@@ -48,6 +48,77 @@ export const toggleAiMode = mutation({
   },
 });
 
+// Set the active chat for a user
+export const setActiveChat = mutation({
+  args: { 
+    chatId: v.id("chats"),
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    // Check if record exists
+    const existing = await ctx.db
+      .query("userActiveChats")
+      .withIndex("by_user_chat", (q) => 
+        q.eq("userId", args.userId).eq("chatId", args.chatId)
+      )
+      .first();
+
+    if (existing) {
+      // Update timestamp
+      await ctx.db.patch(existing._id, {
+        lastActiveAt: Date.now(),
+      });
+    } else {
+      // Create new record
+      await ctx.db.insert("userActiveChats", {
+        userId: args.userId,
+        chatId: args.chatId,
+        lastActiveAt: Date.now(),
+      });
+    }
+  },
+});
+
+// Clear active chat (when user navigates away)
+export const clearActiveChat = mutation({
+  args: { 
+    userId: v.id("users"),
+  },
+  handler: async (ctx, args) => {
+    // Delete all active chats for this user (only one should be active at a time)
+    const activeChats = await ctx.db
+      .query("userActiveChats")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+
+    for (const activeChat of activeChats) {
+      await ctx.db.delete(activeChat._id);
+    }
+  },
+});
+
+// Query to check if user is viewing a specific chat
+export const isUserViewingChat = internalQuery({
+  args: {
+    userId: v.id("users"),
+    chatId: v.id("chats"),
+  },
+  handler: async (ctx, args) => {
+    const activeChat = await ctx.db
+      .query("userActiveChats")
+      .withIndex("by_user_chat", (q) => 
+        q.eq("userId", args.userId).eq("chatId", args.chatId)
+      )
+      .first();
+
+    if (!activeChat) return false;
+
+    // Consider chat active if viewed within last 30 seconds (to handle brief navigation)
+    const thirtySecondsAgo = Date.now() - 30 * 1000;
+    return activeChat.lastActiveAt > thirtySecondsAgo;
+  },
+});
+
 export const getLatestGlobalMessage = query({
   handler: async (ctx) => {
     // Get the absolute latest message inserted into the DB
@@ -124,7 +195,21 @@ export const getMessagesPage = query({
         if (msg.storageId) {
           mediaUrl = await ctx.storage.getUrl(msg.storageId);
         }
-        return { ...msg, mediaUrl };
+        
+        let replyTo = undefined;
+        if (msg.replyTo) {
+          const repliedMessage = await ctx.db.get(msg.replyTo);
+          if (repliedMessage) {
+            replyTo = {
+              _id: repliedMessage._id,
+              type: repliedMessage.type,
+              content: repliedMessage.content,
+              direction: repliedMessage.direction,
+            };
+          }
+        }
+        
+        return { ...msg, mediaUrl, replyTo };
       })
     );
 
@@ -236,6 +321,7 @@ export const sendMessage = mutation({
     type: v.string(),
     mediaId: v.optional(v.string()),
     storageId: v.optional(v.string()),
+    replyTo: v.optional(v.id("messages")),
     template: v.optional(v.object({
       name: v.string(),
       language: v.string(),
@@ -258,6 +344,7 @@ export const sendMessage = mutation({
       storageId: args.storageId,
       status: "sent",
       timestamp: now,
+      replyTo: args.replyTo,
     });
 
     let payloadContent: any;
@@ -336,8 +423,15 @@ export const sendMessage = mutation({
           components: components,
         };
       }
+    } else if (args.type === "audio") {
+      // Audio messages don't support captions in WhatsApp API
+      payloadContent = { id: args.mediaId };
+    } else if (args.type === "image" || args.type === "video") {
+      // Image and video support captions
+      payloadContent = { id: args.mediaId, caption: args.content || "" };
     } else {
-      payloadContent = { id: args.mediaId, caption: args.content };
+      // Document and other media types
+      payloadContent = { id: args.mediaId };
     }
 
     // Send via WhatsApp API Action
@@ -703,8 +797,7 @@ export const saveIncomingMessage = internalMutation({
       });
     }
 
-    // 5. Send Push Notification to Admins
-    // We notify all users with role 'admin' about the new message
+    // 5. Send Push Notification to Admins (only if not viewing the conversation)
     try {
       const admins = await ctx.db.query("users")
         .filter((q: any) => q.eq(q.field("role"), "admin"))
@@ -715,14 +808,23 @@ export const saveIncomingMessage = internalMutation({
         const notifBody = args.messageType === "text" ? args.content : `Sent a ${args.messageType}`;
 
         for (const admin of admins) {
-          await pushNotifications.sendPushNotification(ctx, {
+          // Check if admin is currently viewing this chat
+          const isViewing = await ctx.runQuery(internal.chat.isUserViewingChat, {
             userId: admin._id,
-            notification: {
-              title: notifTitle,
-              body: notifBody,
-              data: { chatId: chatId },
-            },
+            chatId: chatId,
           });
+
+          // Only send notification if admin is NOT viewing the conversation
+          if (!isViewing) {
+            await pushNotifications.sendPushNotification(ctx, {
+              userId: admin._id,
+              notification: {
+                title: notifTitle,
+                body: notifBody,
+                data: { chatId: chatId },
+              },
+            });
+          }
         }
       }
     } catch (e) {

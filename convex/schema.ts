@@ -53,6 +53,7 @@ export default defineSchema({
     status: v.union(v.literal("sent"), v.literal("delivered"), v.literal("read"), v.literal("failed")),
     timestamp: v.number(),
     metaMessageId: v.optional(v.string()),
+    replyTo: v.optional(v.id("messages")), // Reference to message being replied to
   }).index("by_chat", ["chatId"])
     .index("by_meta_message_id", ["metaMessageId"]),
 
@@ -229,4 +230,11 @@ export default defineSchema({
     items: v.any(), // JSON array of items
     createdAt: v.number(),
   }).index("by_status", ["status"]),
+
+  userActiveChats: defineTable({
+    userId: v.id("users"),
+    chatId: v.id("chats"),
+    lastActiveAt: v.number(), // Timestamp when user last viewed this chat
+  }).index("by_user", ["userId"])
+    .index("by_user_chat", ["userId", "chatId"]),
 });

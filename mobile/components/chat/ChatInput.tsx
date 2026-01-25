@@ -7,6 +7,7 @@ import {
   StyleSheet,
   ActivityIndicator,
   Alert,
+  ScrollView,
 } from "react-native";
 import { useMutation, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -16,13 +17,26 @@ import { TemplatePicker } from "../TemplatePicker";
 import { ProductPicker } from "../ProductPicker";
 import { AudioRecorder } from "../AudioRecorder";
 import { MediaLibraryModal } from "../MediaLibraryModal";
+import { CameraScreen } from "../CameraScreen";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+
+interface Message {
+  _id: string;
+  direction: "inbound" | "outbound";
+  type: string;
+  content?: string;
+  mediaUrl?: string;
+  timestamp: number;
+  status?: string;
+}
 
 interface ChatInputProps {
   chatId: string;
+  replyTo?: Message | null;
+  onReplyCancel?: () => void;
 }
 
-export function ChatInput({ chatId }: ChatInputProps) {
+export function ChatInput({ chatId, replyTo, onReplyCancel }: ChatInputProps) {
   const insets = useSafeAreaInsets();
   const [inputValue, setInputValue] = useState("");
   const [isSending, setIsSending] = useState(false);
@@ -31,6 +45,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const [showTemplatePicker, setShowTemplatePicker] = useState(false);
   const [showProductPicker, setShowProductPicker] = useState(false);
   const [showMediaLibrary, setShowMediaLibrary] = useState(false);
+  const [showCameraScreen, setShowCameraScreen] = useState(false);
   
   const sendMessage = useMutation(api.chat.sendMessage);
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -50,7 +65,11 @@ export function ChatInput({ chatId }: ChatInputProps) {
         chatId: chatId as any,
         content,
         type: "text",
+        replyTo: replyTo?._id,
       });
+      if (onReplyCancel) {
+        onReplyCancel();
+      }
     } catch (error) {
       console.error("Failed to send message:", error);
       setInputValue(content);
@@ -132,7 +151,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      mediaTypes: ['images'],
       allowsEditing: false,
       quality: 0.8,
     });
@@ -208,7 +227,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
     }
 
     const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: ['videos'],
       allowsEditing: false,
       quality: 0.8,
     });
@@ -274,23 +293,13 @@ export function ChatInput({ chatId }: ChatInputProps) {
     }
   }, [chatId, sendMessage, generateUploadUrl, saveFile, uploadMediaToMeta]);
 
-  const handleTakePhoto = useCallback(async () => {
+  const handleTakePhoto = useCallback(() => {
     setShowAttachMenu(false);
-    
-    const { status } = await ImagePicker.requestCameraPermissionsAsync();
-    if (status !== "granted") {
-      Alert.alert("Permission needed", "Please grant camera access");
-      return;
-    }
+    setShowCameraScreen(true);
+  }, []);
 
-    const result = await ImagePicker.launchCameraAsync({
-      allowsEditing: false,
-      quality: 0.8,
-    });
-
-    if (result.canceled) return;
-
-    const asset = result.assets[0];
+  const handleCameraCapture = useCallback(async (asset: ImagePicker.ImagePickerAsset) => {
+    setShowCameraScreen(false);
     setIsSending(true);
 
     try {
@@ -364,7 +373,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
       // 3. Upload to Convex storage
       const uploadResponse = await fetch(postUrl, {
         method: "POST",
-        headers: { "Content-Type": "audio/m4a" },
+        headers: { "Content-Type": "audio/mp4" },
         body: blob,
       });
 
@@ -381,8 +390,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
       // 4. Save file metadata
       await saveFile({
         storageId,
-        name: `voice_note_${Date.now()}.m4a`,
-        mimeType: "audio/m4a",
+        name: `voice_note_${Date.now()}.aac`,
+        mimeType: "audio/mp4",
         size: blob.size,
         category: "chat",
       });
@@ -390,7 +399,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
       // 5. Upload to Meta WhatsApp API
       const mediaId = await uploadMediaToMeta({
         storageId: storageId,
-        type: "audio/m4a",
+        type: "audio/mp4",
       });
 
       // 6. Send as audio message
@@ -452,13 +461,19 @@ export function ChatInput({ chatId }: ChatInputProps) {
 
       {/* Attachment Menu */}
       {!isRecording && showAttachMenu && (
-        <View style={styles.attachMenu}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.attachMenu}
+        >
           <TouchableOpacity 
             style={styles.attachOption}
             onPress={() => {
               setShowAttachMenu(false);
               setShowTemplatePicker(true);
             }}
+            accessibilityLabel="Template"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#007AFF" }]}>
               <Ionicons name="document-text" size={22} color="#FFF" />
@@ -472,6 +487,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
               setShowAttachMenu(false);
               setShowProductPicker(true);
             }}
+            accessibilityLabel="Product"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#FF9500" }]}>
               <Ionicons name="cube" size={22} color="#FFF" />
@@ -485,6 +502,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
               setShowAttachMenu(false);
               setShowMediaLibrary(true);
             }}
+            accessibilityLabel="Library"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#34C759" }]}>
               <Ionicons name="folder" size={22} color="#FFF" />
@@ -495,6 +514,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
           <TouchableOpacity 
             style={styles.attachOption}
             onPress={handlePickImage}
+            accessibilityLabel="Photo"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#34C759" }]}>
               <Ionicons name="image" size={22} color="#FFF" />
@@ -505,6 +526,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
           <TouchableOpacity 
             style={styles.attachOption}
             onPress={handleTakePhoto}
+            accessibilityLabel="Camera"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#AF52DE" }]}>
               <Ionicons name="camera" size={22} color="#FFF" />
@@ -515,6 +538,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
           <TouchableOpacity 
             style={styles.attachOption}
             onPress={handlePickVideo}
+            accessibilityLabel="Video"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#5856D6" }]}>
               <Ionicons name="videocam" size={22} color="#FFF" />
@@ -528,11 +553,42 @@ export function ChatInput({ chatId }: ChatInputProps) {
               setShowAttachMenu(false);
               setIsRecording(true);
             }}
+            accessibilityLabel="Voice"
+            accessibilityRole="button"
           >
             <View style={[styles.attachIcon, { backgroundColor: "#FF3B30" }]}>
               <Ionicons name="mic" size={22} color="#FFF" />
             </View>
             <Text style={styles.attachLabel}>Voice</Text>
+          </TouchableOpacity>
+        </ScrollView>
+      )}
+
+      {/* Reply Preview */}
+      {replyTo && !isRecording && (
+        <View style={styles.replyPreview}>
+          <View style={styles.replyPreviewContent}>
+            <View style={styles.replyPreviewLine} />
+            <View style={styles.replyPreviewInfo}>
+              <Text style={styles.replyPreviewLabel} numberOfLines={1}>
+                Replying to {replyTo.type === "text" 
+                  ? replyTo.content?.substring(0, 30) || "message"
+                  : `${replyTo.type} message`}
+              </Text>
+              {replyTo.content && replyTo.type === "text" && (
+                <Text style={styles.replyPreviewText} numberOfLines={1}>
+                  {replyTo.content}
+                </Text>
+              )}
+            </View>
+          </View>
+          <TouchableOpacity
+            style={styles.replyCancelButton}
+            onPress={onReplyCancel}
+            accessibilityLabel="Cancel reply"
+            accessibilityRole="button"
+          >
+            <Ionicons name="close" size={20} color="#667781" />
           </TouchableOpacity>
         </View>
       )}
@@ -544,6 +600,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
           style={styles.attachButton}
           onPress={() => setShowAttachMenu(!showAttachMenu)}
           disabled={isSending}
+          accessibilityLabel="Open attachment menu"
+          accessibilityRole="button"
         >
           <Ionicons 
             name={showAttachMenu ? "close" : "add"} 
@@ -563,6 +621,9 @@ export function ChatInput({ chatId }: ChatInputProps) {
             maxLength={4096}
             editable={!isSending}
             onFocus={() => setShowAttachMenu(false)}
+            accessibilityLabel="Message input"
+            accessibilityRole="textbox"
+            accessibilityHint="Type your message here"
           />
         </View>
 
@@ -573,6 +634,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
           ]}
           onPress={handleSendText}
           disabled={!inputValue.trim() || isSending}
+          accessibilityLabel={inputValue.trim() ? "Send message" : "Send button disabled"}
+          accessibilityRole="button"
         >
           {isSending ? (
             <ActivityIndicator size="small" color="#FFFFFF" />
@@ -596,6 +659,20 @@ export function ChatInput({ chatId }: ChatInputProps) {
         onClose={() => setShowProductPicker(false)}
         onSelect={handleSendProduct}
       />
+
+      {/* Media Library Modal */}
+      <MediaLibraryModal
+        visible={showMediaLibrary}
+        onClose={() => setShowMediaLibrary(false)}
+        onSelect={handleSelectFromLibrary}
+      />
+
+      {/* Camera Screen Modal */}
+      <CameraScreen
+        visible={showCameraScreen}
+        onClose={() => setShowCameraScreen(false)}
+        onCapture={handleCameraCapture}
+      />
     </View>
   );
 }
@@ -608,11 +685,11 @@ const styles = StyleSheet.create({
   },
   attachMenu: {
     flexDirection: "row",
-    justifyContent: "space-around",
     paddingVertical: 16,
     paddingHorizontal: 24,
     borderBottomWidth: 1,
     borderBottomColor: "#E5E5E5",
+    gap: 16,
   },
   attachOption: {
     alignItems: "center",
@@ -669,5 +746,47 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: {
     opacity: 0.5,
+  },
+  replyPreview: {
+    flexDirection: "row",
+    alignItems: "center",
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: "#F5F5F5",
+    borderTopWidth: 1,
+    borderTopColor: "#E5E5E5",
+    gap: 8,
+  },
+  replyPreviewContent: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 8,
+  },
+  replyPreviewLine: {
+    width: 3,
+    height: 40,
+    backgroundColor: "#007AFF",
+    borderRadius: 2,
+  },
+  replyPreviewInfo: {
+    flex: 1,
+  },
+  replyPreviewLabel: {
+    fontSize: 13,
+    fontWeight: "600",
+    color: "#007AFF",
+    marginBottom: 2,
+  },
+  replyPreviewText: {
+    fontSize: 12,
+    color: "#667781",
+  },
+  replyCancelButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    justifyContent: "center",
+    alignItems: "center",
   },
 });

@@ -1,7 +1,13 @@
-import { useState, useRef, useEffect } from "react";
-import { View, Text, TouchableOpacity, StyleSheet } from "react-native";
+import { useEffect, useRef } from "react";
+import { View, Text, TouchableOpacity, StyleSheet, Animated } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
-import { Audio } from "expo-av";
+import {
+  useAudioRecorder,
+  useAudioRecorderState,
+  RecordingPresets,
+  setAudioModeAsync,
+  requestRecordingPermissionsAsync,
+} from "expo-audio";
 
 interface AudioRecorderProps {
   onRecordingComplete: (uri: string) => void;
@@ -9,63 +15,117 @@ interface AudioRecorderProps {
 }
 
 export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderProps) {
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
-  const [duration, setDuration] = useState(0);
-  const [isRecording, setIsRecording] = useState(false);
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  // Enable metering for audio level visualization
+  const recorder = useAudioRecorder({
+    ...RecordingPresets.HIGH_QUALITY,
+    isMeteringEnabled: true,
+  });
+  const recorderState = useAudioRecorderState(recorder);
+
+  // Create animated values for waveform bars (20 bars)
+  const barAnimations = useRef(
+    Array.from({ length: 20 }, () => new Animated.Value(0.2))
+  ).current;
+
+  // Animated value for red dot pulsing
+  const dotScale = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
-    return () => {
-      if (recording) {
-        recording.stopAndUnloadAsync();
-      }
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
+    const initializeRecording = async () => {
+      try {
+        // Request permissions
+        const { granted } = await requestRecordingPermissionsAsync();
+        if (!granted) {
+          console.error("[AudioRecorder] Recording permission denied");
+          onCancel();
+          return;
+        }
+
+        // Set audio mode
+        await setAudioModeAsync({
+          allowsRecording: true,
+          playsInSilentMode: true,
+        });
+
+        // Prepare and start recording
+        await recorder.prepareToRecordAsync();
+        recorder.record();
+      } catch (error) {
+        console.error("Failed to start recording", error);
+        onCancel();
       }
     };
-  }, [recording]);
 
-  const startRecording = async () => {
-    try {
-      await Audio.requestPermissionsAsync();
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
+    initializeRecording();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Animate waveform bars based on metering or time
+  useEffect(() => {
+    if (!recorderState.isRecording) return;
+
+    const animateBars = () => {
+      // Use metering data if available, otherwise use animated random values
+      const meterValue = recorderState.metering ?? 0;
+      const baseLevel = meterValue > 0 ? Math.min(meterValue * 2, 1) : 0.2;
+
+      const animations = barAnimations.map((anim, i) => {
+        // Create variation for each bar
+        const variation = (Math.sin(Date.now() / 200 + i * 0.5) + 1) / 2;
+        const targetValue = baseLevel + variation * (1 - baseLevel) * 0.6;
+        
+        return Animated.timing(anim, {
+          toValue: Math.max(0.1, Math.min(1, targetValue)),
+          duration: 100,
+          useNativeDriver: false, // height animation doesn't support native driver
+        });
       });
 
-      const { recording: newRecording } = await Audio.Recording.createAsync(
-        Audio.RecordingOptionsPresets.HIGH_QUALITY
-      );
+      Animated.parallel(animations).start();
+    };
 
-      setRecording(newRecording);
-      setIsRecording(true);
-      setDuration(0);
+    const interval = setInterval(animateBars, 100);
+    return () => clearInterval(interval);
+  }, [recorderState.isRecording, recorderState.metering, barAnimations]);
 
-      timerRef.current = setInterval(() => {
-        setDuration((prev) => prev + 1);
-      }, 1000);
-    } catch (error) {
-      console.error("Failed to start recording", error);
-      onCancel();
+  // Pulse red dot animation
+  useEffect(() => {
+    if (!recorderState.isRecording) {
+      dotScale.setValue(1);
+      return;
     }
-  };
+
+    const pulseAnimation = Animated.loop(
+      Animated.sequence([
+        Animated.timing(dotScale, {
+          toValue: 1.3,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+        Animated.timing(dotScale, {
+          toValue: 1,
+          duration: 500,
+          useNativeDriver: true,
+        }),
+      ])
+    );
+
+    pulseAnimation.start();
+    return () => pulseAnimation.stop();
+  }, [recorderState.isRecording, dotScale]);
 
   const stopRecording = async () => {
-    if (!recording) return;
-
     try {
-      if (timerRef.current) {
-        clearInterval(timerRef.current);
-        timerRef.current = null;
-      }
+      if (recorderState.isRecording) {
+        await recorder.stop();
+        const uri = recorder.uri;
 
-      await recording.stopAndUnloadAsync();
-      const uri = recording.getURI();
-      setIsRecording(false);
-      setRecording(null);
-
-      if (uri) {
-        onRecordingComplete(uri);
+        if (uri) {
+          onRecordingComplete(uri);
+        } else {
+          console.error("[AudioRecorder] No recording URI available");
+          onCancel();
+        }
       } else {
         onCancel();
       }
@@ -76,28 +136,24 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
   };
 
   const handleCancel = async () => {
-    if (recording) {
-      await recording.stopAndUnloadAsync();
-      setRecording(null);
+    try {
+      if (recorderState.isRecording) {
+        await recorder.stop();
+      }
+    } catch (error) {
+      console.error("Failed to cancel recording", error);
     }
-    if (timerRef.current) {
-      clearInterval(timerRef.current);
-      timerRef.current = null;
-    }
-    setIsRecording(false);
     onCancel();
   };
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
+  const formatTime = (millis: number) => {
+    const totalSeconds = Math.floor(millis / 1000);
+    const mins = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
     return `${mins}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Auto-start recording when component mounts
-  useEffect(() => {
-    startRecording();
-  }, []);
+  const duration = recorderState.durationMillis || 0;
 
   return (
     <View style={styles.container}>
@@ -112,19 +168,28 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
 
       <View style={styles.recordingContainer}>
         <View style={styles.timerContainer}>
-          <View style={styles.redDot} />
+          <Animated.View
+            style={[
+              styles.redDot,
+              {
+                transform: [{ scale: dotScale }],
+              },
+            ]}
+          />
           <Text style={styles.timer}>{formatTime(duration)}</Text>
         </View>
 
         <View style={styles.waveform}>
-          {[...Array(20)].map((_, i) => (
-            <View
+          {barAnimations.map((anim, i) => (
+            <Animated.View
               key={i}
               style={[
                 styles.waveformBar,
                 {
-                  height: `${20 + Math.random() * 60}%`,
-                  animationDelay: `${i * 0.05}s`,
+                  height: anim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: ['4%', '80%'],
+                  }),
                 },
               ]}
             />
@@ -135,7 +200,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       <TouchableOpacity
         style={styles.sendButton}
         onPress={stopRecording}
-        disabled={!isRecording}
+        disabled={!recorderState.isRecording}
         accessibilityLabel="Send recording"
         accessibilityRole="button"
       >

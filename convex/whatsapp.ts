@@ -350,7 +350,39 @@ export const uploadMedia = action({
     const data = await response.json();
     if (!response.ok) {
       console.error("Media Upload Error:", data);
-      throw new Error(data.error?.message || "Upload failed");
+      
+      // Handle specific error codes
+      const errorCode = data.error?.code;
+      const errorMessage = data.error?.message || "Upload failed";
+      
+      if (errorCode === 190) {
+        // Authentication Error (OAuthException)
+        const error = new Error("WhatsApp API Authentication Error: Invalid or expired access token. Please check your WHATSAPP_ACCESS_TOKEN environment variable.") as Error & { code?: number; category?: string };
+        error.code = 190;
+        error.category = "AUTH_ERROR";
+        console.error("[WhatsApp] Authentication failed - check access token validity");
+        throw error;
+      } else if (errorCode === 131047) {
+        // Media type not supported
+        const error = new Error(`Media type not supported: ${args.type}`) as Error & { code?: number; category?: string };
+        error.code = 131047;
+        error.category = "MEDIA_TYPE_ERROR";
+        throw error;
+      } else if (errorCode === 131026) {
+        // File too large
+        const error = new Error("File size exceeds WhatsApp limits (16MB for images, 16MB for videos)") as Error & { code?: number; category?: string };
+        error.code = 131026;
+        error.category = "FILE_SIZE_ERROR";
+        throw error;
+      }
+      
+      // Generic error with code
+      const error = new Error(errorMessage) as Error & { code?: number; category?: string };
+      if (errorCode) {
+        error.code = errorCode;
+        error.category = "UPLOAD_ERROR";
+      }
+      throw error;
     }
 
     return data.id; // Meta Media ID

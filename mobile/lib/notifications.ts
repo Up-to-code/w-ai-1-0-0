@@ -1,5 +1,6 @@
 import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
+import Constants from "expo-constants";
 
 // Configure notification behavior
 Notifications.setNotificationHandler({
@@ -31,9 +32,16 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
       return null;
     }
 
-    // Get the Expo push token
-    // Note: projectId is optional if using EAS Build
-    const tokenData = await Notifications.getExpoPushTokenAsync();
+    // Get projectId from Constants
+    const projectId = 
+      Constants.expoConfig?.extra?.eas?.projectId || 
+      Constants.expoConfig?.extra?.projectId ||
+      Constants.easConfig?.projectId;
+
+    // Get the Expo push token with projectId
+    const tokenData = await Notifications.getExpoPushTokenAsync(
+      projectId ? { projectId } : undefined
+    );
 
     token = tokenData.data;
     console.log("Expo push token:", token);
@@ -47,7 +55,12 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         lightColor: "#FF231F7C",
       });
     }
-  } catch (error) {
+  } catch (error: any) {
+    // Handle specific projectId error gracefully
+    if (error.message?.includes("projectId") || error.message?.includes("No \"projectId\"")) {
+      console.warn("Push notifications require a projectId. This is expected in Expo Go. For full push notification support, use a development build with EAS.");
+      return null;
+    }
     console.error("Error registering for push notifications:", error);
   }
 

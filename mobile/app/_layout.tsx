@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { LocaleProvider, useLocale } from "../contexts/LocaleContext";
 import { ActivityIndicator, View, I18nManager } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { AccessDenied } from "../components/AccessDenied";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
@@ -99,14 +100,16 @@ export default function RootLayout() {
   }
 
   return (
-    <SafeAreaProvider>
-      <LocaleProvider>
-        <AuthProvider>
-          <ConvexProvider client={convexClient}>
-            <AuthGuard />
-          </ConvexProvider>
-        </AuthProvider>
-      </LocaleProvider>
-    </SafeAreaProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <SafeAreaProvider>
+        <LocaleProvider>
+          <AuthProvider>
+            <ConvexProvider client={convexClient}>
+              <AuthGuard />
+            </ConvexProvider>
+          </AuthProvider>
+        </LocaleProvider>
+      </SafeAreaProvider>
+    </GestureHandlerRootView>
   );
 }

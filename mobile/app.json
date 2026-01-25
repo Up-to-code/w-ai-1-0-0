@@ -28,14 +28,25 @@
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
       "package": "com.wai.mobile",
+      "googleServicesFile": "./google-services.json",
       "permissions": [
         "USE_BIOMETRIC",
         "USE_FINGERPRINT",
-        "RECEIVE_BOOT_COMPLETED"
+        "RECEIVE_BOOT_COMPLETED",
+        "android.permission.USE_BIOMETRIC",
+        "android.permission.USE_FINGERPRINT",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "329126fb-c2dd-416a-bb9e-d5152a0527c3"
+      },
+      "router": {}
     },
     "plugins": [
       [
@@ -52,9 +63,16 @@
           "sounds": []
         }
       ],
+      [
+        "expo-audio",
+        {
+          "microphonePermission": "Allow $(PRODUCT_NAME) to access your microphone to record voice messages."
+        }
+      ],
       "expo-router",
       "expo-font",
       "expo-localization"
-    ]
+    ],
+    "owner": "ahmedss7"
   }
 }
