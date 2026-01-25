@@ -1,268 +1,343 @@
-import React, { useState } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, TextInput, SafeAreaView } from 'react-native';
-import { useQuery } from 'convex/react';
-import { api } from '../../convex/_generated/api';
-import { Ionicons } from '@expo/vector-icons';
-import { Theme } from '../constants/Theme';
+import React, { useState, useMemo, useCallback } from "react";
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  Pressable,
+} from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 interface Template {
-    _id: string;
-    name: string;
-    language: string;
-    category: string;
-    status: string;
-    content?: string;
+  _id: string;
+  name: string;
+  status: string;
+  category: string;
+  language: string;
+  components?: any[];
 }
 
 interface TemplatePickerProps {
-    onSelect: (template: Template) => void;
-    trigger?: React.ReactNode;
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (template: Template) => void;
 }
 
-export function TemplatePicker({ onSelect, trigger }: TemplatePickerProps) {
-    const templates = useQuery(api.templates.list);
-    const [isOpen, setIsOpen] = useState(false);
-    const [searchQuery, setSearchQuery] = useState("");
-    const [activeTab, setActiveTab] = useState<'approved' | 'all'>('approved');
+export function TemplatePicker({ visible, onClose, onSelect }: TemplatePickerProps) {
+  const templates = useQuery(api.templates.list);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [activeTab, setActiveTab] = useState<"approved" | "all">("approved");
 
-    const handleOpen = () => {
-        setIsOpen(true);
-    };
+  const filteredTemplates = useMemo(() => {
+    if (!templates) return [];
+    
+    let filtered = templates;
+    
+    // Filter by tab
+    if (activeTab === "approved") {
+      filtered = filtered.filter((t: any) => t.status === "APPROVED");
+    }
+    
+    // Filter by search
+    if (searchQuery.trim()) {
+      const query = searchQuery.toLowerCase();
+      filtered = filtered.filter((t: any) => 
+        t.name.toLowerCase().includes(query)
+      );
+    }
+    
+    return filtered;
+  }, [templates, searchQuery, activeTab]);
 
-    const filterTemplates = (list: Template[]) => {
-        let filtered = list;
-        if (activeTab === 'approved') {
-            filtered = list.filter(t => t.status === "APPROVED");
-        }
-        if (searchQuery) {
-            filtered = filtered.filter(t => t.name.toLowerCase().includes(searchQuery.toLowerCase()));
-        }
-        return filtered;
-    };
+  const approvedCount = useMemo(() => 
+    (templates || []).filter((t: any) => t.status === "APPROVED").length,
+    [templates]
+  );
 
-    const displayTemplates = templates ? filterTemplates(templates) : [];
+  const handleSelect = useCallback((template: Template) => {
+    if (template.status !== "APPROVED") return;
+    onSelect(template);
+    onClose();
+  }, [onSelect, onClose]);
 
-    const renderTemplate = ({ item }: { item: Template }) => (
-        <TouchableOpacity
-            style={styles.templateCard}
-            onPress={() => {
-                if (item.status === 'APPROVED') {
-                    onSelect(item);
-                    setIsOpen(false);
-                }
-            }}
-            disabled={item.status !== 'APPROVED' && activeTab === 'all'}
-        >
-            <View style={styles.cardHeader}>
-                <Text style={styles.templateName}>{item.name}</Text>
-                <View style={[
-                    styles.statusBadge,
-                    { backgroundColor: item.status === 'APPROVED' ? '#e6fcf5' : '#fff9db' }
-                ]}>
-                    <Text style={[
-                        styles.statusText,
-                        { color: item.status === 'APPROVED' ? '#087f5b' : '#f08c00' }
-                    ]}>{item.status}</Text>
-                </View>
-            </View>
-            <Text style={styles.templateInfo}>{item.category} · {item.language}</Text>
-            {item.content && (
-                <Text style={styles.templateContent} numberOfLines={2}>{item.content}</Text>
-            )}
-        </TouchableOpacity>
-    );
-
+  const renderTemplate = useCallback(({ item }: { item: Template }) => {
+    const isApproved = item.status === "APPROVED";
+    
     return (
-        <>
-            <TouchableOpacity onPress={handleOpen} style={styles.triggerButton}>
-                {trigger || <Ionicons name="document-text" size={24} color={Theme.colors.textSecondary} />}
-            </TouchableOpacity>
-
-            <Modal
-                visible={isOpen}
-                animationType="slide"
-                onRequestClose={() => setIsOpen(false)}
-            >
-                <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.header}>
-                        <TouchableOpacity onPress={() => setIsOpen(false)} style={styles.closeButton}>
-                            <Ionicons name="close" size={24} color={Theme.colors.textPrimary} />
-                        </TouchableOpacity>
-                        <Text style={styles.headerTitle}>قوالب الرسائل</Text>
-                        <View style={{ width: 40 }} />
-                    </View>
-
-                    <View style={styles.searchContainer}>
-                        <Ionicons name="search" size={20} color={Theme.colors.textSecondary} style={styles.searchIcon} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="بحث في القوالب..."
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                        />
-                    </View>
-
-                    <View style={styles.tabContainer}>
-                        <TouchableOpacity
-                            style={[styles.tab, activeTab === 'approved' && styles.activeTab]}
-                            onPress={() => setActiveTab('approved')}
-                        >
-                            <Text style={[styles.tabText, activeTab === 'approved' && styles.activeTabText]}>
-                                معتمدة ({(templates || []).filter(t => t.status === "APPROVED").length})
-                            </Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.tab, activeTab === 'all' && styles.activeTab]}
-                            onPress={() => setActiveTab('all')}
-                        >
-                            <Text style={[styles.tabText, activeTab === 'all' && styles.activeTabText]}>
-                                الكل ({templates?.length || 0})
-                            </Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    <FlatList
-                        data={displayTemplates}
-                        renderItem={renderTemplate}
-                        keyExtractor={item => item._id}
-                        contentContainerStyle={styles.listContent}
-                        ListEmptyComponent={
-                            <View style={styles.emptyContainer}>
-                                <Ionicons name="document-text-outline" size={64} color="#eee" />
-                                <Text style={styles.emptyText}>لا توجد قوالب</Text>
-                            </View>
-                        }
-                    />
-                </SafeAreaView>
-            </Modal>
-        </>
+      <Pressable
+        style={[
+          styles.templateCard,
+          !isApproved && styles.templateCardDisabled
+        ]}
+        onPress={() => handleSelect(item)}
+        disabled={!isApproved}
+      >
+        <View style={styles.templateHeader}>
+          <Text style={styles.templateName} numberOfLines={1}>
+            {item.name}
+          </Text>
+          <View style={[
+            styles.statusBadge,
+            isApproved ? styles.statusApproved : styles.statusPending
+          ]}>
+            <Text style={[
+              styles.statusText,
+              isApproved ? styles.statusTextApproved : styles.statusTextPending
+            ]}>
+              {item.status}
+            </Text>
+          </View>
+        </View>
+        
+        <View style={styles.templateMeta}>
+          <Text style={styles.templateCategory}>{item.category}</Text>
+          <Text style={styles.templateDot}>•</Text>
+          <Text style={styles.templateLanguage}>{item.language}</Text>
+        </View>
+      </Pressable>
     );
+  }, [handleSelect]);
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Ionicons name="close" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.title}>Message Templates</Text>
+          <View style={styles.closeButton} />
+        </View>
+
+        {/* Search */}
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search templates..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Tabs */}
+        <View style={styles.tabs}>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === "approved" && styles.tabActive]}
+            onPress={() => setActiveTab("approved")}
+          >
+            <Text style={[styles.tabText, activeTab === "approved" && styles.tabTextActive]}>
+              Approved ({approvedCount})
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, activeTab === "all" && styles.tabActive]}
+            onPress={() => setActiveTab("all")}
+          >
+            <Text style={[styles.tabText, activeTab === "all" && styles.tabTextActive]}>
+              All ({templates?.length || 0})
+            </Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* Template List */}
+        {!templates ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading templates...</Text>
+          </View>
+        ) : filteredTemplates.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {searchQuery ? "No templates found" : "No templates available"}
+            </Text>
+          </View>
+        ) : (
+          <FlashList
+            data={filteredTemplates as Template[]}
+            renderItem={renderTemplate}
+            estimatedItemSize={80}
+            keyExtractor={(item) => item._id}
+            contentContainerStyle={styles.listContent}
+          />
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
 }
 
 const styles = StyleSheet.create({
-    triggerButton: {
-        padding: 5,
-    },
-    modalContainer: {
-        flex: 1,
-        backgroundColor: '#f8f9fa',
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: 'white',
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: '#eee',
-    },
-    closeButton: {
-        padding: 4,
-    },
-    headerTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: Theme.colors.textPrimary,
-    },
-    searchContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'white',
-        margin: 12,
-        paddingHorizontal: 12,
-        borderRadius: 10,
-        height: 44,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: '#ddd',
-    },
-    searchIcon: {
-        marginRight: 8,
-    },
-    searchInput: {
-        flex: 1,
-        fontSize: 16,
-        color: Theme.colors.textPrimary,
-        textAlign: 'right',
-    },
-    tabContainer: {
-        flexDirection: 'row',
-        paddingHorizontal: 12,
-        marginBottom: 10,
-    },
-    tab: {
-        flex: 1,
-        paddingVertical: 10,
-        alignItems: 'center',
-        borderBottomWidth: 2,
-        borderBottomColor: 'transparent',
-    },
-    activeTab: {
-        borderBottomColor: Theme.colors.primary,
-    },
-    tabText: {
-        fontSize: 14,
-        color: Theme.colors.textSecondary,
-        fontWeight: '500',
-    },
-    activeTabText: {
-        color: Theme.colors.primary,
-    },
-    listContent: {
-        padding: 12,
-    },
-    templateCard: {
-        backgroundColor: 'white',
-        borderRadius: 12,
-        padding: 16,
-        marginBottom: 12,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: '#eee',
-    },
-    cardHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'flex-start',
-    },
-    templateName: {
-        fontSize: 16,
-        fontWeight: 'bold',
-        color: Theme.colors.textPrimary,
-        flex: 1,
-        textAlign: 'right',
-    },
-    statusBadge: {
-        paddingHorizontal: 8,
-        paddingVertical: 2,
-        borderRadius: 4,
-        marginLeft: 8,
-    },
-    statusText: {
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
-    templateInfo: {
-        fontSize: 12,
-        color: Theme.colors.textSecondary,
-        marginTop: 4,
-        textAlign: 'right',
-    },
-    templateContent: {
-        fontSize: 14,
-        color: Theme.colors.textSecondary,
-        marginTop: 10,
-        fontStyle: 'italic',
-        textAlign: 'right',
-    },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingTop: 100,
-    },
-    emptyText: {
-        marginTop: 10,
-        color: Theme.colors.textSecondary,
-        fontSize: 16,
-    },
+  container: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E5E5",
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#000",
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F5F5F5",
+    margin: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: "#000",
+  },
+  tabs: {
+    flexDirection: "row",
+    marginHorizontal: 12,
+    marginBottom: 12,
+    backgroundColor: "#F5F5F5",
+    borderRadius: 8,
+    padding: 4,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 8,
+    alignItems: "center",
+    borderRadius: 6,
+  },
+  tabActive: {
+    backgroundColor: "#FFFFFF",
+  },
+  tabText: {
+    fontSize: 14,
+    color: "#666",
+    fontWeight: "500",
+  },
+  tabTextActive: {
+    color: "#007AFF",
+    fontWeight: "600",
+  },
+  listContent: {
+    paddingHorizontal: 12,
+    paddingBottom: 24,
+  },
+  templateCard: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+  },
+  templateCardDisabled: {
+    opacity: 0.6,
+  },
+  templateHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+    marginBottom: 8,
+  },
+  templateName: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#000",
+    marginRight: 8,
+  },
+  statusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+  },
+  statusApproved: {
+    backgroundColor: "#DCFCE7",
+  },
+  statusPending: {
+    backgroundColor: "#FEF9C3",
+  },
+  statusText: {
+    fontSize: 10,
+    fontWeight: "600",
+  },
+  statusTextApproved: {
+    color: "#166534",
+  },
+  statusTextPending: {
+    color: "#854D0E",
+  },
+  templateMeta: {
+    flexDirection: "row",
+    alignItems: "center",
+  },
+  templateCategory: {
+    fontSize: 13,
+    color: "#666",
+  },
+  templateDot: {
+    fontSize: 13,
+    color: "#999",
+    marginHorizontal: 6,
+  },
+  templateLanguage: {
+    fontSize: 13,
+    color: "#666",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    color: "#666",
+    fontSize: 14,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  emptyText: {
+    color: "#999",
+    fontSize: 16,
+  },
 });

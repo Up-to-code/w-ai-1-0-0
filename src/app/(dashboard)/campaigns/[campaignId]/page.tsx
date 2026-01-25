@@ -3,12 +3,21 @@
 import { useParams, useRouter } from "next/navigation"
 import { useQuery } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
+import { Id } from "../../../../../convex/_generated/dataModel"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { StatCard } from "@/components/ui/stat-card"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
+import { 
+  Table, 
+  TableBody, 
+  TableCell, 
+  TableHead, 
+  TableHeader, 
+  TableRow 
+} from "@/components/ui/table"
 import { 
   ArrowRight, 
   Clock, 
@@ -17,20 +26,35 @@ import {
   AlertCircle,
   Users,
   BarChart3,
-  Calendar
+  Calendar,
+  Phone,
+  Send,
+  Eye,
+  XCircle,
+  SkipForward,
+  Shield
 } from "lucide-react"
 import Link from "next/link"
 import { format } from "date-fns"
 import { ar } from "date-fns/locale"
-import React from "react"
+import React, { useState } from "react"
+
+type StatusFilter = "all" | "sent" | "delivered" | "read" | "failed" | "skipped"
 
 export default function CampaignDetailPage() {
   const params = useParams()
   const router = useRouter()
   const id = params?.campaignId as string | undefined
+  const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
 
   const campaigns = useQuery(api.campaigns.list)
   const campaign = (campaigns || []).find(c => String(c._id) === id)
+  
+  // Fetch campaign logs - only when we have a valid campaign
+  const campaignLogs = useQuery(
+    api.campaigns.getCampaignLogs,
+    campaign ? { campaignId: campaign._id as Id<"campaigns"> } : "skip"
+  )
 
   if (!id) return null
 
@@ -95,7 +119,7 @@ export default function CampaignDetailPage() {
       </div>
 
       {/* Main Stats */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
         <StatCard 
             title="إجمالي الجمهور" 
             value={campaign.stats.total} 
@@ -106,6 +130,12 @@ export default function CampaignDetailPage() {
             value={campaign.stats.sent} 
             icon={<CheckCircle2 className="h-4 w-4 text-success" />} 
             trend={`${Math.round(progress)}%`}
+        />
+        <StatCard 
+            title="تم التخطي" 
+            value={campaign.stats.skipped || 0} 
+            icon={<SkipForward className="h-4 w-4 text-yellow-500" />} 
+            variant="default"
         />
         <StatCard 
             title="فشل الإرسال" 
@@ -145,6 +175,36 @@ export default function CampaignDetailPage() {
                         <p className="text-xs text-muted-foreground mt-4">
                             يتم إرسال الرسائل على دفعات (Batches) لضمان سلامة الرقم وتجنب الحظر.
                         </p>
+                    </CardContent>
+                </Card>
+            )}
+
+            {/* Anti-Spam Protection Card */}
+            {campaign.status === "PROCESSING" && (
+                <Card className="border-green-200 bg-green-50/50 dark:border-green-900 dark:bg-green-900/10">
+                    <CardHeader className="pb-2">
+                        <CardTitle className="text-green-700 dark:text-green-300 flex items-center gap-2">
+                            <Shield className="h-5 w-5" />
+                            حماية من الحظر مفعلة
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="text-sm text-muted-foreground space-y-2">
+                        <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
+                            <span>معدل الإرسال:</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">10 رسائل/ثانية</span>
+                        </div>
+                        <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
+                            <span>التأخير بين الرسائل:</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">100ms</span>
+                        </div>
+                        <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
+                            <span>التأخير بين الدفعات:</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">5 ثوان</span>
+                        </div>
+                        <div className="flex justify-between py-1">
+                            <span>تخطي المتصل مؤخراً:</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">24 ساعة</span>
+                        </div>
                     </CardContent>
                 </Card>
             )}
@@ -224,6 +284,171 @@ export default function CampaignDetailPage() {
             )}
         </div>
       </div>
+
+      {/* Message Logs Section */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center text-primary">
+                <Send className="h-5 w-5" />
+              </div>
+              <div>
+                <CardTitle>سجل الرسائل</CardTitle>
+                <CardDescription>تفاصيل إرسال الرسائل لكل جهة اتصال</CardDescription>
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button 
+                variant={statusFilter === "all" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("all")}
+              >
+                الكل
+              </Button>
+              <Button 
+                variant={statusFilter === "sent" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("sent")}
+              >
+                <Send className="h-3 w-3 ml-1" />
+                مُرسل
+              </Button>
+              <Button 
+                variant={statusFilter === "delivered" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("delivered")}
+              >
+                <CheckCircle2 className="h-3 w-3 ml-1" />
+                مُستلم
+              </Button>
+              <Button 
+                variant={statusFilter === "read" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("read")}
+              >
+                <Eye className="h-3 w-3 ml-1" />
+                مقروء
+              </Button>
+              <Button 
+                variant={statusFilter === "failed" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("failed")}
+              >
+                <XCircle className="h-3 w-3 ml-1" />
+                فشل
+              </Button>
+              <Button 
+                variant={statusFilter === "skipped" ? "default" : "outline"} 
+                size="sm"
+                onClick={() => setStatusFilter("skipped")}
+              >
+                <SkipForward className="h-3 w-3 ml-1" />
+                تم التخطي
+              </Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {campaignLogs === undefined ? (
+            <div className="text-center py-8 text-muted-foreground animate-pulse">
+              جاري تحميل السجلات...
+            </div>
+          ) : campaignLogs.length === 0 ? (
+            <div className="text-center py-8 text-muted-foreground">
+              لا توجد سجلات رسائل بعد
+            </div>
+          ) : (
+            <div className="rounded-md border">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="text-right">جهة الاتصال</TableHead>
+                    <TableHead className="text-right">رقم الهاتف</TableHead>
+                    <TableHead className="text-right">الحالة</TableHead>
+                    <TableHead className="text-right">معرف الرسالة</TableHead>
+                    <TableHead className="text-right">الخطأ</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {campaignLogs
+                    .filter(log => statusFilter === "all" || log.status === statusFilter)
+                    .map((log) => (
+                      <TableRow key={String(log._id)}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <div className="w-8 h-8 rounded-full bg-muted flex items-center justify-center">
+                              <Users className="h-4 w-4 text-muted-foreground" />
+                            </div>
+                            {log.contactName}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex items-center gap-1 text-muted-foreground">
+                            <Phone className="h-3 w-3" />
+                            <span dir="ltr">{log.contactPhone}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge 
+                            variant={
+                              log.status === "read" ? "default" :
+                              log.status === "delivered" ? "secondary" :
+                              log.status === "sent" ? "outline" :
+                              log.status === "skipped" ? "outline" :
+                              "destructive"
+                            }
+                            className={`gap-1 ${log.status === "skipped" ? "border-yellow-500 text-yellow-600" : ""}`}
+                          >
+                            {log.status === "sent" && <Send className="h-3 w-3" />}
+                            {log.status === "delivered" && <CheckCircle2 className="h-3 w-3" />}
+                            {log.status === "read" && <Eye className="h-3 w-3" />}
+                            {log.status === "failed" && <XCircle className="h-3 w-3" />}
+                            {log.status === "skipped" && <SkipForward className="h-3 w-3" />}
+                            {log.status === "sent" && "مُرسل"}
+                            {log.status === "delivered" && "مُستلم"}
+                            {log.status === "read" && "مقروء"}
+                            {log.status === "failed" && "فشل"}
+                            {log.status === "skipped" && "تم التخطي"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {log.metaMessageId ? (
+                            <code className="text-xs bg-muted px-2 py-1 rounded" dir="ltr">
+                              {log.metaMessageId.slice(-12)}...
+                            </code>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {log.error ? (
+                            <span className="text-destructive text-sm" title={log.error}>
+                              {log.error.length > 30 ? log.error.slice(0, 30) + "..." : log.error}
+                            </span>
+                          ) : log.status === "skipped" && log.skipReason ? (
+                            <span className="text-yellow-600 text-sm">
+                              {log.skipReason === "recently_contacted" && "تم التواصل مؤخراً"}
+                              {log.skipReason === "rate_limited" && "تجاوز حد المعدل"}
+                              {!["recently_contacted", "rate_limited"].includes(log.skipReason) && log.skipReason}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">-</span>
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                </TableBody>
+              </Table>
+              {campaignLogs.filter(log => statusFilter === "all" || log.status === statusFilter).length === 0 && (
+                <div className="text-center py-8 text-muted-foreground">
+                  لا توجد رسائل بهذه الحالة
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

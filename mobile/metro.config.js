@@ -1,22 +1,25 @@
-const { getDefaultConfig } = require("expo/metro-config");
-const path = require("path");
+// Learn more https://docs.expo.dev/guides/customizing-metro
+const { getDefaultConfig } = require('expo/metro-config');
+const path = require('path');
 
+// Get the project root (mobile directory)
 const projectRoot = __dirname;
-const workspaceRoot = path.resolve(projectRoot, "../");
+
+// Get the workspace root (parent directory where convex is located)
+const workspaceRoot = path.resolve(projectRoot, '..');
 
 const config = getDefaultConfig(projectRoot);
 
-// 1. Watch all files within the monorepo
+// Configure Metro to watch the parent directory's convex folder
 config.watchFolders = [workspaceRoot];
 
-// 2. Let Metro know where to resolve packages and in what order
-config.resolver.nodeModulesPaths = [
-  path.resolve(projectRoot, "node_modules"),
-  path.resolve(workspaceRoot, "node_modules"),
-];
-
-// 3. Force Metro to resolve (sub)dependencies from the `node_modules`
-//    of the workspace root if they are not found in the project root.
-// config.resolver.disableHierarchicalLookup = true;
+// Configure resolver to allow imports from parent directory
+config.resolver = {
+  ...config.resolver,
+  nodeModulesPaths: [
+    path.resolve(projectRoot, 'node_modules'),
+    path.resolve(workspaceRoot, 'node_modules'),
+  ],
+};
 
 module.exports = config;

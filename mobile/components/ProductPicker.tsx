@@ -1,293 +1,308 @@
-import React, { useState, useEffect } from 'react';
-import { Modal, View, Text, StyleSheet, TouchableOpacity, FlatList, Image, TextInput, ActivityIndicator, SafeAreaView } from 'react-native';
-import { useAction } from 'convex/react';
-import { api } from '../../convex/_generated/api';
-import { Ionicons } from '@expo/vector-icons';
-import { Theme } from '../constants/Theme';
+import React, { useState, useMemo, useCallback } from "react";
+import {
+  View,
+  Text,
+  Modal,
+  TouchableOpacity,
+  TextInput,
+  StyleSheet,
+  ActivityIndicator,
+  Image,
+  Pressable,
+} from "react-native";
+import { FlashList } from "@shopify/flash-list";
+import { useAction } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Ionicons } from "@expo/vector-icons";
+import { SafeAreaView } from "react-native-safe-area-context";
 
 interface Product {
-    id: string;
-    name: string;
-    price: number;
-    currency: string;
-    image: string;
-    sku: string;
-    url?: string;
-    description?: string;
+  id: string;
+  name: string;
+  price: number;
+  currency: string;
+  image?: string;
+  description?: string;
+  url?: string;
+  sku?: string;
 }
 
 interface ProductPickerProps {
-    onSelect: (product: Product) => void;
-    trigger?: React.ReactNode;
+  visible: boolean;
+  onClose: () => void;
+  onSelect: (product: Product) => void;
 }
 
-export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
-    const fetchProducts = useAction(api.salla.fetchProducts);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [isLoading, setIsLoading] = useState(false);
-    const [isOpen, setIsOpen] = useState(false);
-    const [hasLoaded, setHasLoaded] = useState(false);
-    const [currentPage, setCurrentPage] = useState(1);
-    const [totalItems, setTotalItems] = useState(0);
-    const [searchQuery, setSearchQuery] = useState("");
+export function ProductPicker({ visible, onClose, onSelect }: ProductPickerProps) {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [hasMore, setHasMore] = useState(true);
+  const [page, setPage] = useState(1);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [initialLoadDone, setInitialLoadDone] = useState(false);
+  
+  const fetchProducts = useAction(api.salla.fetchProducts);
 
-    const loadProducts = async (page = 1) => {
-        setIsLoading(true);
-        try {
-            const result = await fetchProducts({ page });
-            if (result.connected) {
-                if (page === 1) {
-                    setProducts(result.products);
-                } else {
-                    setProducts(prev => [...prev, ...result.products]);
-                }
-                setCurrentPage(page);
-                setTotalItems(result.pagination?.totalItems || 0);
-            }
-            setHasLoaded(true);
-        } catch (error) {
-            console.error("Failed to load products", error);
-        } finally {
-            setIsLoading(false);
+  const loadProducts = useCallback(async (pageNum: number = 1) => {
+    if (loading) return;
+    setLoading(true);
+    
+    try {
+      const result = await fetchProducts({ page: pageNum, perPage: 20 });
+      if (result && result.products) {
+        if (pageNum === 1) {
+          setProducts(result.products);
+        } else {
+          setProducts(prev => [...prev, ...result.products]);
         }
-    };
+        setHasMore(result.products.length >= 20);
+        setPage(pageNum);
+      }
+    } catch (error) {
+      console.error("Failed to fetch products:", error);
+    } finally {
+      setLoading(false);
+      setInitialLoadDone(true);
+    }
+  }, [fetchProducts, loading]);
 
-    const handleOpen = () => {
-        setIsOpen(true);
-        if (!hasLoaded) loadProducts(1);
-    };
+  // Load products when modal opens
+  React.useEffect(() => {
+    if (visible && !initialLoadDone) {
+      loadProducts(1);
+    }
+  }, [visible, initialLoadDone, loadProducts]);
 
-    const filteredProducts = products.filter(p =>
-        p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        p.sku?.toLowerCase().includes(searchQuery.toLowerCase())
+  const filteredProducts = useMemo(() => {
+    if (!searchQuery.trim()) return products;
+    
+    const query = searchQuery.toLowerCase();
+    return products.filter(p => 
+      p.name.toLowerCase().includes(query) ||
+      p.sku?.toLowerCase().includes(query)
     );
+  }, [products, searchQuery]);
 
-    const renderProduct = ({ item }: { item: Product }) => (
-        <TouchableOpacity
-            style={styles.productCard}
-            onPress={() => {
-                onSelect(item);
-                setIsOpen(false);
-            }}
-        >
-            <View style={styles.imageContainer}>
-                {item.image ? (
-                    <Image source={{ uri: item.image }} style={styles.productImage} />
-                ) : (
-                    <View style={styles.imagePlaceholder}>
-                        <Ionicons name="bag-handle-outline" size={32} color="#ccc" />
-                    </View>
-                )}
-                {item.sku && (
-                    <View style={styles.skuBadge}>
-                        <Text style={styles.skuText}>{item.sku}</Text>
-                    </View>
-                )}
-            </View>
-            <View style={styles.productDetails}>
-                <Text style={styles.productName} numberOfLines={2}>{item.name}</Text>
-                <View style={styles.productFooter}>
-                    <Text style={styles.productPrice}>{item.price} <Text style={styles.currencyText}>{item.currency}</Text></Text>
-                </View>
-            </View>
-        </TouchableOpacity>
-    );
+  const handleSelect = useCallback((product: Product) => {
+    onSelect(product);
+    onClose();
+  }, [onSelect, onClose]);
 
+  const handleLoadMore = useCallback(() => {
+    if (!loading && hasMore) {
+      loadProducts(page + 1);
+    }
+  }, [loading, hasMore, page, loadProducts]);
+
+  const renderProduct = useCallback(({ item }: { item: Product }) => (
+    <Pressable
+      style={styles.productCard}
+      onPress={() => handleSelect(item)}
+    >
+      {item.image ? (
+        <Image source={{ uri: item.image }} style={styles.productImage} />
+      ) : (
+        <View style={styles.productImagePlaceholder}>
+          <Ionicons name="cube-outline" size={24} color="#999" />
+        </View>
+      )}
+      
+      <View style={styles.productInfo}>
+        <Text style={styles.productName} numberOfLines={2}>
+          {item.name}
+        </Text>
+        {item.sku && (
+          <Text style={styles.productSku}>SKU: {item.sku}</Text>
+        )}
+        <Text style={styles.productPrice}>
+          {item.price} {item.currency}
+        </Text>
+      </View>
+    </Pressable>
+  ), [handleSelect]);
+
+  const renderFooter = useCallback(() => {
+    if (!loading || !hasMore) return null;
     return (
-        <>
-            <TouchableOpacity onPress={handleOpen} style={styles.triggerButton}>
-                {trigger || <Ionicons name="bag-handle" size={24} color={Theme.colors.textSecondary} />}
-            </TouchableOpacity>
-
-            <Modal
-                visible={isOpen}
-                animationType="slide"
-                onRequestClose={() => setIsOpen(false)}
-            >
-                <SafeAreaView style={styles.modalContainer}>
-                    <View style={styles.header}>
-                        <TouchableOpacity onPress={() => setIsOpen(false)} style={styles.closeButton}>
-                            <Ionicons name="close" size={24} color={Theme.colors.textPrimary} />
-                        </TouchableOpacity>
-                        <Text style={styles.headerTitle}>اختر منتج من سلة</Text>
-                        <View style={{ width: 40 }} />
-                    </View>
-
-                    <View style={styles.searchContainer}>
-                        <Ionicons name="search" size={20} color={Theme.colors.textSecondary} style={styles.searchIcon} />
-                        <TextInput
-                            style={styles.searchInput}
-                            placeholder="بحث عن منتج..."
-                            value={searchQuery}
-                            onChangeText={setSearchQuery}
-                        />
-                    </View>
-
-                    {isLoading && products.length === 0 ? (
-                        <View style={styles.loadingContainer}>
-                            <ActivityIndicator size="large" color={Theme.colors.primary} />
-                        </View>
-                    ) : (
-                        <FlatList
-                            data={filteredProducts}
-                            renderItem={renderProduct}
-                            keyExtractor={item => item.id}
-                            numColumns={2}
-                            contentContainerStyle={styles.listContent}
-                            onEndReached={() => {
-                                if (!isLoading && products.length < totalItems) {
-                                    loadProducts(currentPage + 1);
-                                }
-                            }}
-                            onEndReachedThreshold={0.5}
-                            ListFooterComponent={isLoading ? <ActivityIndicator style={{ margin: 20 }} /> : null}
-                            ListEmptyComponent={
-                                <View style={styles.emptyContainer}>
-                                    <Ionicons name="bag-handle-outline" size={64} color="#eee" />
-                                    <Text style={styles.emptyText}>لا توجد منتجات</Text>
-                                </View>
-                            }
-                        />
-                    )}
-                </SafeAreaView>
-            </Modal>
-        </>
+      <View style={styles.footerLoader}>
+        <ActivityIndicator size="small" color="#007AFF" />
+      </View>
     );
+  }, [loading, hasMore]);
+
+  return (
+    <Modal
+      visible={visible}
+      animationType="slide"
+      presentationStyle="pageSheet"
+      onRequestClose={onClose}
+    >
+      <SafeAreaView style={styles.container} edges={["top"]}>
+        {/* Header */}
+        <View style={styles.header}>
+          <TouchableOpacity onPress={onClose} style={styles.closeButton}>
+            <Ionicons name="close" size={24} color="#007AFF" />
+          </TouchableOpacity>
+          <Text style={styles.title}>Products</Text>
+          <View style={styles.closeButton} />
+        </View>
+
+        {/* Search */}
+        <View style={styles.searchContainer}>
+          <Ionicons name="search" size={20} color="#999" style={styles.searchIcon} />
+          <TextInput
+            style={styles.searchInput}
+            placeholder="Search products..."
+            placeholderTextColor="#999"
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          {searchQuery.length > 0 && (
+            <TouchableOpacity onPress={() => setSearchQuery("")}>
+              <Ionicons name="close-circle" size={20} color="#999" />
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Product List */}
+        {!initialLoadDone ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading products...</Text>
+          </View>
+        ) : filteredProducts.length === 0 ? (
+          <View style={styles.emptyContainer}>
+            <Text style={styles.emptyText}>
+              {searchQuery ? "No products found" : "No products available"}
+            </Text>
+          </View>
+        ) : (
+          <FlashList
+            data={filteredProducts}
+            renderItem={renderProduct}
+            estimatedItemSize={100}
+            keyExtractor={(item) => item.id}
+            numColumns={2}
+            contentContainerStyle={styles.listContent}
+            onEndReached={handleLoadMore}
+            onEndReachedThreshold={0.5}
+            ListFooterComponent={renderFooter}
+          />
+        )}
+      </SafeAreaView>
+    </Modal>
+  );
 }
 
 const styles = StyleSheet.create({
-    triggerButton: {
-        padding: 5,
-    },
-    modalContainer: {
-        flex: 1,
-        backgroundColor: '#f8f9fa',
-    },
-    header: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        backgroundColor: 'white',
-        borderBottomWidth: StyleSheet.hairlineWidth,
-        borderBottomColor: '#eee',
-    },
-    closeButton: {
-        padding: 4,
-    },
-    headerTitle: {
-        fontSize: 18,
-        fontWeight: 'bold',
-        color: Theme.colors.textPrimary,
-    },
-    searchContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: 'white',
-        margin: 12,
-        paddingHorizontal: 12,
-        borderRadius: 10,
-        height: 44,
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: '#ddd',
-    },
-    searchIcon: {
-        marginRight: 8,
-    },
-    searchInput: {
-        flex: 1,
-        fontSize: 16,
-        color: Theme.colors.textPrimary,
-        textAlign: 'right',
-    },
-    listContent: {
-        padding: 8,
-    },
-    productCard: {
-        flex: 1,
-        margin: 6,
-        backgroundColor: 'white',
-        borderRadius: 12,
-        overflow: 'hidden',
-        borderWidth: StyleSheet.hairlineWidth,
-        borderColor: '#eee',
-        elevation: 2,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 1 },
-        shadowOpacity: 0.1,
-        shadowRadius: 2,
-    },
-    imageContainer: {
-        aspectRatio: 1,
-        backgroundColor: '#f0f0f0',
-        position: 'relative',
-    },
-    productImage: {
-        width: '100%',
-        height: '100%',
-    },
-    imagePlaceholder: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    skuBadge: {
-        position: 'absolute',
-        top: 8,
-        right: 8,
-        backgroundColor: 'rgba(0,0,0,0.6)',
-        paddingHorizontal: 6,
-        paddingVertical: 2,
-        borderRadius: 4,
-    },
-    skuText: {
-        color: 'white',
-        fontSize: 10,
-        fontWeight: 'bold',
-    },
-    productDetails: {
-        padding: 10,
-        flex: 1,
-    },
-    productName: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: Theme.colors.textPrimary,
-        lineHeight: 18,
-        textAlign: 'right',
-        height: 36,
-    },
-    productFooter: {
-        marginTop: 8,
-        flexDirection: 'row',
-        justifyContent: 'flex-end',
-        alignItems: 'center',
-    },
-    productPrice: {
-        fontSize: 15,
-        fontWeight: 'bold',
-        color: Theme.colors.primary,
-    },
-    currencyText: {
-        fontSize: 10,
-        fontWeight: 'normal',
-        color: Theme.colors.textSecondary,
-    },
-    loadingContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-    },
-    emptyContainer: {
-        flex: 1,
-        justifyContent: 'center',
-        alignItems: 'center',
-        paddingTop: 100,
-    },
-    emptyText: {
-        marginTop: 10,
-        color: Theme.colors.textSecondary,
-        fontSize: 16,
-    },
+  container: {
+    flex: 1,
+    backgroundColor: "#FFFFFF",
+  },
+  header: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingHorizontal: 16,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: "#E5E5E5",
+  },
+  closeButton: {
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  title: {
+    fontSize: 17,
+    fontWeight: "600",
+    color: "#000",
+  },
+  searchContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#F5F5F5",
+    margin: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+  },
+  searchIcon: {
+    marginRight: 8,
+  },
+  searchInput: {
+    flex: 1,
+    fontSize: 16,
+    color: "#000",
+  },
+  listContent: {
+    paddingHorizontal: 8,
+    paddingBottom: 24,
+  },
+  productCard: {
+    flex: 1,
+    margin: 4,
+    backgroundColor: "#FFFFFF",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#E5E5E5",
+    overflow: "hidden",
+  },
+  productImage: {
+    width: "100%",
+    height: 120,
+    backgroundColor: "#F5F5F5",
+  },
+  productImagePlaceholder: {
+    width: "100%",
+    height: 120,
+    backgroundColor: "#F5F5F5",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  productInfo: {
+    padding: 12,
+  },
+  productName: {
+    fontSize: 14,
+    fontWeight: "600",
+    color: "#000",
+    marginBottom: 4,
+  },
+  productSku: {
+    fontSize: 11,
+    color: "#999",
+    marginBottom: 4,
+  },
+  productPrice: {
+    fontSize: 14,
+    fontWeight: "700",
+    color: "#007AFF",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    marginTop: 12,
+    color: "#666",
+    fontSize: 14,
+  },
+  emptyContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  emptyText: {
+    color: "#999",
+    fontSize: 16,
+  },
+  footerLoader: {
+    paddingVertical: 16,
+    alignItems: "center",
+  },
 });

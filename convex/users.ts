@@ -27,3 +27,17 @@ export const list = query({
     return await ctx.db.query("users").collect();
   },
 });
+
+export const updateRole = mutation({
+  args: { 
+    userId: v.id("users"),
+    role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user"))
+  },
+  handler: async (ctx, args) => {
+    const user = await ctx.db.get(args.userId);
+    if (!user) throw new Error("المستخدم غير موجود");
+    
+    await ctx.db.patch(args.userId, { role: args.role });
+    return true;
+  },
+});

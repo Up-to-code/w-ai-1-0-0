@@ -9,6 +9,7 @@ export default defineSchema({
     role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user")),
     // Auth fields (if using custom auth or linking to provider)
     tokenIdentifier: v.optional(v.string()),
+    password: v.optional(v.string()),
   }).index("by_email", ["email"])
     .index("by_token", ["tokenIdentifier"])
     .index("by_phone", ["phone"]),
@@ -89,8 +90,8 @@ export default defineSchema({
     inStock: v.boolean(),
   }).index("by_external_id", ["externalId"])
     .searchIndex("search_products", {
-        searchField: "name",
-        filterFields: ["inStock"]
+      searchField: "name",
+      filterFields: ["inStock"]
     }),
 
   knowledge_base: defineTable({
@@ -122,6 +123,9 @@ export default defineSchema({
     customFields: v.optional(v.any()), // JSON
     isSubscribed: v.boolean(),
     createdAt: v.number(),
+    // Anti-spam tracking fields
+    lastMessagedAt: v.optional(v.number()),        // Timestamp of last message sent
+    lastMessagedTemplate: v.optional(v.string()),  // Last template name sent
   }).index("by_phone", ["phone"])
     .index("by_tag", ["tags"]), // Note: Convex doesn't support array indexing directly like this, but we'll filter
 
@@ -155,7 +159,16 @@ export default defineSchema({
       delivered: v.number(),
       read: v.number(),
       failed: v.number(),
+      skipped: v.optional(v.number()),  // Contacts skipped due to rate limiting
     }),
+    // Anti-spam sending configuration
+    sendingConfig: v.optional(v.object({
+      messagesPerSecond: v.number(),      // Target rate (default: 10)
+      delayBetweenMessages: v.number(),   // ms delay between each message
+      maxRetries: v.number(),             // Max retries per contact
+      skipRecentlyContacted: v.boolean(), // Skip if contacted in last N hours
+      recentContactHours: v.number(),     // Hours to consider "recent"
+    })),
     createdAt: v.number(),
   }),
 
@@ -181,10 +194,12 @@ export default defineSchema({
       v.literal("sent"),
       v.literal("delivered"),
       v.literal("read"),
-      v.literal("failed")
+      v.literal("failed"),
+      v.literal("skipped")  // Skipped due to rate limiting or recently contacted
     ),
     metaMessageId: v.optional(v.string()),
     error: v.optional(v.string()),
+    skipReason: v.optional(v.string()),  // "recently_contacted", "rate_limited", etc.
   }).index("by_campaign", ["campaignId"])
     .index("by_message_id", ["metaMessageId"]),
 

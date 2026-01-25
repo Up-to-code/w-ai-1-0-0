@@ -14,18 +14,26 @@ import {
     ArrowRight,
     Users,
     MessageSquare,
-    Calendar,
+    Calendar as CalendarIcon,
     CheckCircle2,
     Clock,
     Tag,
     Smartphone,
     LayoutTemplate,
     ChevronRight,
-    Play
+    ChevronDown,
+    Play,
+    Shield,
+    X
 } from "lucide-react"
 import { format } from "date-fns"
 import { ar } from "date-fns/locale"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Switch } from "@/components/ui/switch"
+import { Checkbox } from "@/components/ui/checkbox"
+import { CronScheduler } from "@/components/CronScheduler"
+import { SchedulePicker } from "@/components/SchedulePicker"
+import { TemplatePreview } from "@/components/TemplatePreview"
 import type { Id } from "../../../../../convex/_generated/dataModel"
 
 export default function NewCampaignPage() {
@@ -39,6 +47,16 @@ export default function NewCampaignPage() {
     const [selectedTemplate, setSelectedTemplate] = useState<{ _id: string; name: string; components?: { type?: string; text?: string }[]; content?: string } | null>(null)
     const [targetAudience, setTargetAudience] = useState<"all" | "tags">("all")
     const [selectedTags, setSelectedTags] = useState<string[]>([])
+
+    // Anti-spam sending config
+    const [sendingConfig, setSendingConfig] = useState({
+        messagesPerSecond: 10,
+        delayBetweenMessages: 100,
+        maxRetries: 3,
+        skipRecentlyContacted: true,
+        recentContactHours: 24,
+    })
+    const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
     // Queries
     const templates = useQuery(api.templates.list)
@@ -64,7 +82,8 @@ export default function NewCampaignPage() {
                 templateName: selectedTemplate?.name || "",
                 targetTags: targetAudience === 'tags' ? selectedTags : undefined,
                 scheduledAt: scheduledAt ? new Date(scheduledAt).getTime() : Date.now(),
-                recurrenceCronSpec: recurrenceCronSpec || undefined
+                recurrenceCronSpec: recurrenceCronSpec || undefined,
+                sendingConfig
             })
             router.push("/campaigns?success=true")
         } catch (error) {
@@ -94,15 +113,15 @@ export default function NewCampaignPage() {
                 </div>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Steps Sidebar */}
                 <div className="lg:col-span-3 space-y-2">
                     {steps.map((step) => (
                         <div
                             key={step.id}
-                            className={`flex items-center gap-3 p-3 rounded-xl transition-all duration-300 ${
+                            className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-300 ${
                                 currentStep === step.id 
-                                    ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20" 
+                                    ? "bg-primary text-primary-foreground" 
                                     : currentStep > step.id 
                                         ? "bg-muted text-foreground"
                                         : "text-muted-foreground"
@@ -121,8 +140,8 @@ export default function NewCampaignPage() {
 
                 {/* Main Form Area */}
                 <div className="lg:col-span-9">
-                    <Card className="border-none shadow-none ring-1 ring-border/50 bg-card/50 backdrop-blur-sm min-h-[500px]">
-                        <CardContent className="p-8">
+                    <Card className="border bg-card/50 min-h-[500px]">
+                        <CardContent className="p-6">
                             {/* Step 1: Details */}
                             {currentStep === 0 && (
                                 <div className="space-y-6 max-w-2xl animate-in slide-in-from-bottom-4 duration-500">
@@ -137,74 +156,200 @@ export default function NewCampaignPage() {
                                         />
                                     </div>
                                     
-                                    <div className="space-y-4 pt-4">
-                                        <Label className="text-base">وقت الإرسال</Label>
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                            <div 
-                                                className={`p-4 border rounded-xl cursor-pointer transition-all ${!scheduledAt ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/50'}`}
-                                                onClick={() => setScheduledAt("")}
-                                            >
-                                                <div className="flex items-center gap-3 mb-2">
-                                                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${!scheduledAt ? 'border-primary' : 'border-muted-foreground'}`}>
-                                                        {!scheduledAt && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
-                                                    </div>
-                                                    <span className="font-semibold">إرسال فوري</span>
-                                                </div>
-                                                <p className="text-sm text-muted-foreground mr-8">سيتم بدء الحملة فور الانتهاء من الإعداد</p>
-                                            </div>
+                                    <SchedulePicker
+                                        value={scheduledAt}
+                                        onChange={(datetime) => setScheduledAt(datetime || "")}
+                                        label="وقت الإرسال"
+                                    />
 
-                                            <div 
-                                                className={`p-4 border rounded-xl cursor-pointer transition-all ${scheduledAt ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/50'}`}
-                                                onClick={() => !scheduledAt && setScheduledAt(new Date().toISOString().slice(0, 16))}
-                                            >
-                                                <div className="flex items-center gap-3 mb-2">
-                                                    <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${scheduledAt ? 'border-primary' : 'border-muted-foreground'}`}>
-                                                        {scheduledAt && <div className="w-2.5 h-2.5 rounded-full bg-primary" />}
-                                                    </div>
-                                                    <span className="font-semibold">جدولة لوقت لاحق</span>
+                                    {/* Recurrence Section - Collapsible */}
+                                    <div className="space-y-4 pt-6 border-t mt-6">
+                                        <div 
+                                            className={`p-6 border-2 rounded-lg cursor-pointer transition-all ${
+                                                recurrenceCronSpec 
+                                                    ? 'border-primary bg-primary/5' 
+                                                    : 'border-border hover:border-primary/50'
+                                            }`}
+                                            onClick={() => {
+                                                if (!recurrenceCronSpec) {
+                                                    // Set default daily at 9 AM if enabling
+                                                    setRecurrenceCronSpec("0 9 * * *")
+                                                }
+                                            }}
+                                            role="button"
+                                            tabIndex={0}
+                                            onKeyDown={(e) => {
+                                                if (e.key === 'Enter' || e.key === ' ') {
+                                                    e.preventDefault()
+                                                    if (!recurrenceCronSpec) {
+                                                        setRecurrenceCronSpec("0 9 * * *")
+                                                    }
+                                                }
+                                            }}
+                                        >
+                                            <div className="flex items-center gap-3 mb-3">
+                                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
+                                                    recurrenceCronSpec ? 'border-primary' : 'border-muted-foreground'
+                                                }`}>
+                                                    {recurrenceCronSpec && <div className="w-3 h-3 rounded-full bg-primary" />}
                                                 </div>
-                                                <Input
-                                                    type="datetime-local"
-                                                    className="mt-2 h-9 text-sm"
-                                                    value={scheduledAt}
-                                                    onChange={e => setScheduledAt(e.target.value)}
-                                                    min={new Date().toISOString().slice(0, 16)}
-                                                    disabled={!scheduledAt}
+                                                <div className="flex-1">
+                                                    <Label className="cursor-pointer font-bold text-lg">
+                                                        تكرار دوري (اختياري)
+                                                    </Label>
+                                                </div>
+                                                {recurrenceCronSpec && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation()
+                                                            setRecurrenceCronSpec("")
+                                                        }}
+                                                        className="h-8 w-8 p-0"
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-muted-foreground mr-9">
+                                                {recurrenceCronSpec 
+                                                    ? "الحملة ستعيد الإرسال تلقائياً حسب الجدولة" 
+                                                    : "إرسال الحملة بشكل متكرر (يومي، أسبوعي، شهري، سنوي)"}
+                                            </p>
+                                        </div>
+                                        {recurrenceCronSpec && (
+                                            <div className="mt-4 animate-in fade-in slide-in-from-top-2">
+                                                <CronScheduler
+                                                    value={recurrenceCronSpec}
+                                                    onChange={setRecurrenceCronSpec}
                                                 />
                                             </div>
-                                        </div>
+                                        )}
                                     </div>
 
-                                    <div className="space-y-2 pt-4">
-                                        <Label>تكرار دوري (اختياري)</Label>
-                                        <Input
-                                            placeholder="0 9 * * 1 (كل إثنين 9 صباحاً)"
-                                            value={recurrenceCronSpec}
-                                            onChange={e => setRecurrenceCronSpec(e.target.value)}
-                                            className="font-mono text-sm"
-                                        />
-                                        <p className="text-xs text-muted-foreground">
-                                            اترك الحقل فارغاً للإرسال مرة واحدة فقط.
-                                        </p>
+                                    {/* Anti-spam Settings */}
+                                    <div className="space-y-4 pt-6 border-t">
+                                        <div className="flex items-center gap-2">
+                                            <Shield className="h-5 w-5 text-green-600" />
+                                            <Label className="text-base font-semibold">حماية من الحظر</Label>
+                                        </div>
+                                        
+                                        <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg p-4 space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <div className="space-y-1">
+                                                    <span className="font-medium">تخطي المتصل مؤخراً</span>
+                                                    <p className="text-xs text-muted-foreground">
+                                                        تجنب إرسال رسائل متكررة لنفس العميل
+                                                    </p>
+                                                </div>
+                                                <Switch
+                                                    checked={sendingConfig.skipRecentlyContacted}
+                                                    onCheckedChange={(checked) => 
+                                                        setSendingConfig(prev => ({ ...prev, skipRecentlyContacted: checked }))
+                                                    }
+                                                />
+                                            </div>
+                                            
+                                            {sendingConfig.skipRecentlyContacted && (
+                                                <div className="flex items-center gap-3 pr-4">
+                                                    <Label className="text-sm text-muted-foreground whitespace-nowrap">خلال:</Label>
+                                                    <select
+                                                        value={sendingConfig.recentContactHours}
+                                                        onChange={(e) => 
+                                                            setSendingConfig(prev => ({ ...prev, recentContactHours: Number(e.target.value) }))
+                                                        }
+                                                        className="h-9 px-3 rounded-lg border bg-background text-sm"
+                                                    >
+                                                        <option value={12}>12 ساعة</option>
+                                                        <option value={24}>24 ساعة</option>
+                                                        <option value={48}>48 ساعة</option>
+                                                        <option value={72}>72 ساعة</option>
+                                                    </select>
+                                                </div>
+                                            )}
+                                        </div>
+
+                                        {/* Advanced Settings Toggle */}
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                                            className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
+                                        >
+                                            <ChevronDown className={`h-4 w-4 transition-transform ${showAdvancedSettings ? 'rotate-180' : ''}`} />
+                                            إعدادات متقدمة
+                                        </button>
+
+                                        {showAdvancedSettings && (
+                                            <div className="bg-muted/30 border rounded-lg p-4 space-y-4 animate-in fade-in slide-in-from-top-2">
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                    <div className="space-y-2">
+                                                        <Label className="text-sm">معدل الإرسال (رسائل/ثانية)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            min={1}
+                                                            max={80}
+                                                            value={sendingConfig.messagesPerSecond}
+                                                            onChange={(e) => 
+                                                                setSendingConfig(prev => ({ ...prev, messagesPerSecond: Number(e.target.value) }))
+                                                            }
+                                                            className="h-9"
+                                                        />
+                                                        <p className="text-xs text-muted-foreground">
+                                                            الحد الأقصى: 80 (ننصح بـ 10)
+                                                        </p>
+                                                    </div>
+                                                    <div className="space-y-2">
+                                                        <Label className="text-sm">التأخير بين الرسائل (مللي ثانية)</Label>
+                                                        <Input
+                                                            type="number"
+                                                            min={50}
+                                                            max={5000}
+                                                            value={sendingConfig.delayBetweenMessages}
+                                                            onChange={(e) => 
+                                                                setSendingConfig(prev => ({ ...prev, delayBetweenMessages: Number(e.target.value) }))
+                                                            }
+                                                            className="h-9"
+                                                        />
+                                                        <p className="text-xs text-muted-foreground">
+                                                            ننصح بـ 100ms أو أكثر
+                                                        </p>
+                                                    </div>
+                                                </div>
+                                                <div className="space-y-2">
+                                                    <Label className="text-sm">محاولات إعادة الإرسال</Label>
+                                                    <Input
+                                                        type="number"
+                                                        min={0}
+                                                        max={5}
+                                                        value={sendingConfig.maxRetries}
+                                                        onChange={(e) => 
+                                                            setSendingConfig(prev => ({ ...prev, maxRetries: Number(e.target.value) }))
+                                                        }
+                                                        className="h-9 w-24"
+                                                    />
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             )}
 
                             {/* Step 2: Audience */}
                             {currentStep === 1 && (
-                                <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
+                                <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                         <div
-                                            className={`relative p-6 border rounded-2xl cursor-pointer transition-all overflow-hidden ${targetAudience === 'all' ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/50'}`}
+                                            className={`relative p-6 border rounded-lg cursor-pointer transition-all overflow-hidden ${targetAudience === 'all' ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                             onClick={() => setTargetAudience('all')}
                                         >
                                             <div className="relative z-10">
-                                                <div className="w-12 h-12 rounded-xl bg-background flex items-center justify-center mb-4 shadow-sm">
+                                                <div className="w-12 h-12 rounded-xl bg-background flex items-center justify-center mb-4 border">
                                                     <Users className="h-6 w-6 text-primary" />
                                                 </div>
                                                 <h3 className="text-lg font-bold mb-1">جميع العملاء</h3>
                                                 <p className="text-muted-foreground text-sm">إرسال لجميع جهات الاتصال المسجلة</p>
-                                                <div className="mt-4 inline-flex items-center px-3 py-1 rounded-full bg-background text-sm font-medium shadow-sm">
+                                                <div className="mt-4 inline-flex items-center px-3 py-1 rounded-full bg-background text-sm font-medium border">
                                                     {contacts?.length || 0} عميل
                                                 </div>
                                             </div>
@@ -212,11 +357,11 @@ export default function NewCampaignPage() {
                                         </div>
 
                                         <div
-                                            className={`relative p-6 border rounded-2xl cursor-pointer transition-all overflow-hidden ${targetAudience === 'tags' ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/50'}`}
+                                            className={`relative p-6 border rounded-lg cursor-pointer transition-all overflow-hidden ${targetAudience === 'tags' ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                             onClick={() => setTargetAudience('tags')}
                                         >
                                             <div className="relative z-10">
-                                                <div className="w-12 h-12 rounded-xl bg-background flex items-center justify-center mb-4 shadow-sm">
+                                                <div className="w-12 h-12 rounded-xl bg-background flex items-center justify-center mb-4 border">
                                                     <Tag className="h-6 w-6 text-primary" />
                                                 </div>
                                                 <h3 className="text-lg font-bold mb-1">تحديد فئات</h3>
@@ -227,14 +372,14 @@ export default function NewCampaignPage() {
                                     </div>
 
                                     {targetAudience === 'tags' && (
-                                        <div className="space-y-4 bg-muted/30 p-6 rounded-2xl border animate-in fade-in zoom-in-95">
+                                        <div className="space-y-4 bg-muted/30 p-6 rounded-lg border animate-in fade-in zoom-in-95">
                                             <Label className="text-base">اختر التصنيفات المستهدفة</Label>
                                             <div className="flex flex-wrap gap-2">
                                                 {uniqueTags.map(tag => (
                                                     <Badge
                                                         key={tag}
                                                         variant={selectedTags.includes(tag) ? "default" : "outline"}
-                                                        className={`text-sm py-2 px-4 cursor-pointer hover:bg-primary/90 transition-all ${selectedTags.includes(tag) ? 'shadow-md shadow-primary/20' : 'bg-background hover:text-foreground'}`}
+                                                        className={`text-sm py-2 px-4 cursor-pointer hover:bg-primary/90 transition-all ${selectedTags.includes(tag) ? 'bg-primary text-primary-foreground' : 'bg-background hover:text-foreground'}`}
                                                         onClick={() => {
                                                             if (selectedTags.includes(tag)) {
                                                                 setSelectedTags(selectedTags.filter(t => t !== tag))
@@ -252,7 +397,7 @@ export default function NewCampaignPage() {
                                         </div>
                                     )}
 
-                                    <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl border border-blue-100 dark:border-blue-900/30 text-blue-800 dark:text-blue-300">
+                                    <div className="flex items-center justify-between bg-blue-50 dark:bg-blue-900/10 p-4 rounded-lg border border-blue-100 dark:border-blue-900/30 text-blue-800 dark:text-blue-300">
                                         <span className="font-medium flex items-center gap-2">
                                             <Users className="h-5 w-5" />
                                             إجمالي المستلمين المتوقع:
@@ -264,7 +409,7 @@ export default function NewCampaignPage() {
 
                             {/* Step 3: Content */}
                             {currentStep === 2 && (
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8 animate-in slide-in-from-bottom-4 duration-500">
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 animate-in slide-in-from-bottom-4 duration-500">
                                     <div className="space-y-4">
                                         <div className="flex items-center justify-between">
                                             <Label className="text-base">اختر القالب</Label>
@@ -274,12 +419,12 @@ export default function NewCampaignPage() {
                                         <ScrollArea className="h-[400px] pr-4">
                                             <div className="space-y-3">
                                                 {!templates ? (
-                                                    [1,2,3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-xl" />)
+                                                    [1,2,3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)
                                                 ) : (
                                                     templates.filter(t => t.status === 'APPROVED').map(template => (
                                                         <div
                                                             key={template._id}
-                                                            className={`p-4 border rounded-xl cursor-pointer transition-all hover:shadow-sm ${selectedTemplate?._id === template._id ? 'border-primary bg-primary/5 ring-1 ring-primary' : 'hover:border-primary/50'}`}
+                                                            className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedTemplate?._id === template._id ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                                             onClick={() => setSelectedTemplate(template)}
                                                         >
                                                             <div className="flex justify-between items-start mb-2">
@@ -301,7 +446,7 @@ export default function NewCampaignPage() {
                                     </div>
 
                                     {/* Phone Preview */}
-                                    <div className="relative mx-auto border-gray-800 dark:border-gray-800 bg-gray-900 border-[14px] rounded-[2.5rem] h-[500px] w-[300px] shadow-xl">
+                                    <div className="relative mx-auto border-gray-800 dark:border-gray-800 bg-gray-900 border-[14px] rounded-[2.5rem] h-[500px] w-[300px]">
                                         <div className="w-[148px] h-[18px] bg-gray-800 top-0 rounded-b-[1rem] left-1/2 -translate-x-1/2 absolute"></div>
                                         <div className="h-[32px] w-[3px] bg-gray-800 absolute -left-[17px] top-[72px] rounded-l-lg"></div>
                                         <div className="h-[46px] w-[3px] bg-gray-800 absolute -left-[17px] top-[124px] rounded-l-lg"></div>
@@ -321,20 +466,10 @@ export default function NewCampaignPage() {
                                             
                                             {/* Message Area */}
                                             <div className="flex-1 p-3 overflow-y-auto bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')] bg-repeat opacity-90">
-                                                {selectedTemplate ? (
-                                                    <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[85%] mb-2">
-                                                        <p className="text-sm leading-relaxed text-gray-800 dark:text-gray-100 whitespace-pre-wrap">
-                                                            {(selectedTemplate.components as { type?: string; text?: string }[] | undefined)?.find(c => c.type === 'BODY')?.text || selectedTemplate.content}
-                                                        </p>
-                                                        <div className="text-[10px] text-gray-400 text-right mt-1">
-                                                            {format(new Date(), "p", { locale: ar })}
-                                                        </div>
-                                                    </div>
-                                                ) : (
-                                                    <div className="flex h-full items-center justify-center text-gray-500 text-xs">
-                                                        اختر قالباً للمعاينة
-                                                    </div>
-                                                )}
+                                                <TemplatePreview 
+                                                    template={selectedTemplate}
+                                                    className="max-w-[85%]"
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -343,9 +478,9 @@ export default function NewCampaignPage() {
 
                             {/* Step 4: Review */}
                             {currentStep === 3 && (
-                                <div className="space-y-8 animate-in slide-in-from-bottom-4 duration-500">
-                                    <div className="bg-muted/30 border rounded-2xl p-6 grid grid-cols-1 md:grid-cols-2 gap-8">
-                                        <div className="space-y-6">
+                                <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                        <div className="space-y-4 border rounded-lg p-4">
                                             <div>
                                                 <Label className="text-muted-foreground text-xs uppercase tracking-wider">الحملة</Label>
                                                 <div className="text-xl font-bold mt-1">{name}</div>
@@ -374,15 +509,41 @@ export default function NewCampaignPage() {
                                             </div>
                                         </div>
 
-                                        <div className="bg-card border rounded-xl p-4 shadow-sm">
+                                        <div className="border rounded-lg p-4">
                                             <Label className="text-muted-foreground text-xs mb-3 block">محتوى الرسالة</Label>
-                                            <div className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                {(selectedTemplate?.components as { type?: string; text?: string }[] | undefined)?.find(c => c.type === 'BODY')?.text || selectedTemplate?.content}
-                                            </div>
+                                            <TemplatePreview template={selectedTemplate} />
                                         </div>
                                     </div>
 
-                                    <div className="flex items-start gap-4 p-4 bg-yellow-50 dark:bg-yellow-900/10 border border-yellow-100 dark:border-yellow-900/20 rounded-xl text-yellow-800 dark:text-yellow-200">
+                                    {/* Anti-spam Settings Summary */}
+                                    <div className="bg-green-50/50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg p-4">
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <Shield className="h-5 w-5 text-green-600" />
+                                            <Label className="text-green-700 dark:text-green-300 font-semibold">حماية من الحظر مفعلة</Label>
+                                        </div>
+                                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">
+                                            <div>
+                                                <span className="text-muted-foreground">معدل الإرسال:</span>
+                                                <span className="font-medium mr-2">{sendingConfig.messagesPerSecond} رسائل/ثانية</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">التأخير:</span>
+                                                <span className="font-medium mr-2">{sendingConfig.delayBetweenMessages}ms</span>
+                                            </div>
+                                            <div>
+                                                <span className="text-muted-foreground">إعادة المحاولة:</span>
+                                                <span className="font-medium mr-2">{sendingConfig.maxRetries} مرات</span>
+                                            </div>
+                                            {sendingConfig.skipRecentlyContacted && (
+                                                <div className="col-span-2 sm:col-span-3">
+                                                    <span className="text-muted-foreground">تخطي المتصل خلال:</span>
+                                                    <span className="font-medium mr-2">{sendingConfig.recentContactHours} ساعة</span>
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-start gap-4 p-4 bg-yellow-50/50 dark:bg-yellow-900/10 border border-yellow-100 dark:border-yellow-900/20 rounded-lg text-yellow-800 dark:text-yellow-200">
                                         <Play className="h-5 w-5 mt-0.5 shrink-0" />
                                         <div className="text-sm">
                                             <p className="font-semibold mb-1">تنبيه هام</p>

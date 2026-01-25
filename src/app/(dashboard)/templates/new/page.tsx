@@ -52,6 +52,13 @@ interface CarouselCard {
     buttons: ButtonConfig[]
 }
 
+interface ProductCarouselCard {
+    productId: string // Catalog product ID
+    bodyText?: string // Optional custom body
+    buttonType: "VIEW" | "URL"
+    buttonUrl?: string // For URL buttons
+}
+
 interface ButtonConfig {
     type: "QUICK_REPLY" | "URL" | "PHONE_NUMBER" | "COPY_CODE" | "CATALOG"
     text: string
@@ -78,7 +85,7 @@ export default function NewTemplatePage() {
     const [name, setName] = useState("")
     const [category, setCategory] = useState("MARKETING")
     const [language, setLanguage] = useState("ar")
-    const [templateType, setTemplateType] = useState<"STANDARD" | "CAROUSEL">("STANDARD")
+    const [templateType, setTemplateType] = useState<"STANDARD" | "CAROUSEL" | "PRODUCT_CAROUSEL" | "CATALOG">("STANDARD")
     
     // Standard Components State
     const [headerType, setHeaderType] = useState<"NONE" | "TEXT" | "IMAGE" | "VIDEO">("NONE")
@@ -96,6 +103,15 @@ export default function NewTemplatePage() {
         { headerType: "IMAGE", bodyText: "", buttons: [{ type: "URL", text: "View Details", url: "https://example.com" }] },
         { headerType: "IMAGE", bodyText: "", buttons: [{ type: "URL", text: "View Details", url: "https://example.com" }] }
     ])
+
+    // Product Carousel State
+    const [productCarouselCards, setProductCarouselCards] = useState<ProductCarouselCard[]>([])
+    const [catalogId, setCatalogId] = useState<string>("") // Meta Catalog ID
+
+    // Catalog Template State
+    const [catalogHeaderHandle, setCatalogHeaderHandle] = useState("")
+    const [catalogHeaderPreviewUrl, setCatalogHeaderPreviewUrl] = useState("")
+    const [catalogBodyText, setCatalogBodyText] = useState("")
 
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [activeUploadField, setActiveUploadField] = useState<"HEADER" | number | null>(null) // HEADER or Card Index
@@ -172,8 +188,13 @@ export default function NewTemplatePage() {
             const previewUrl = URL.createObjectURL(file)
 
             if (activeUploadField === "HEADER") {
-                setHeaderHandle(handle)
-                setHeaderPreviewUrl(previewUrl)
+                if (templateType === "CATALOG") {
+                    setCatalogHeaderHandle(handle)
+                    setCatalogHeaderPreviewUrl(previewUrl)
+                } else {
+                    setHeaderHandle(handle)
+                    setHeaderPreviewUrl(previewUrl)
+                }
             } else if (typeof activeUploadField === "number") {
                 // Update Carousel Card
                 const newCards = [...carouselCards]
@@ -401,7 +422,7 @@ export default function NewTemplatePage() {
                         }))
                     })
                 }
-            } else {
+            } else if (templateType === "CAROUSEL") {
                 // CAROUSEL
                 components.push({ type: "BODY", text: bodyText || "Carousel Message" }) // Main body is required? Meta says "Body is required for the message bubble that contains the carousel"
                 
@@ -436,12 +457,108 @@ export default function NewTemplatePage() {
                     type: "CAROUSEL",
                     cards: cards
                 })
+            } else if (templateType === "PRODUCT_CAROUSEL") {
+                // PRODUCT CAROUSEL
+                if (!catalogId) {
+                    alert("يجب تحديد معرف الكتالوج لقالب كاروسيل المنتجات")
+                    setIsSubmitting(false)
+                    return
+                }
+                if (productCarouselCards.length < 2 || productCarouselCards.length > 10) {
+                    alert("يجب اختيار من 2 إلى 10 منتجات")
+                    setIsSubmitting(false)
+                    return
+                }
+
+                components.push({ type: "BODY", text: bodyText || "Product Carousel" })
+                
+                components.push({
+                    type: "PRODUCT_CAROUSEL",
+                    catalog_id: catalogId,
+                    products: productCarouselCards.map(card => ({
+                        product_retailer_id: card.productId,
+                        body: card.bodyText,
+                        button: {
+                            type: card.buttonType,
+                            url: card.buttonType === "URL" ? card.buttonUrl : undefined
+                        }
+                    }))
+                })
+            } else if (templateType === "CATALOG") {
+                // CATALOG TEMPLATE
+                if (!catalogId) {
+                    alert("يجب تحديد معرف الكتالوج")
+                    setIsSubmitting(false)
+                    return
+                }
+
+                // Header (optional but recommended)
+                if (catalogHeaderHandle) {
+                    components.push({
+                        type: "HEADER",
+                        format: "IMAGE",
+                        example: { header_handle: [catalogHeaderHandle] }
+                    })
+                }
+
+                // Body
+                components.push({ type: "BODY", text: catalogBodyText || "View our catalog" })
+
+                // Footer (optional)
+                if (footerText) components.push({ type: "FOOTER", text: footerText })
+
+                // Catalog button (automatic)
+                components.push({
+                    type: "BUTTONS",
+                    buttons: [{
+                        type: "CATALOG",
+                        text: "View Catalog"
+                    }]
+                })
+
+                // Store catalog_id in component metadata
+                components.push({
+                    type: "CATALOG",
+                    catalog_id: catalogId
+                })
             }
 
             if (templateType === "CAROUSEL") {
                 const invalidCardIndex = carouselCards.findIndex(c => c.buttons.length === 0)
                 if (invalidCardIndex !== -1) {
                     alert(`البطاقة رقم ${invalidCardIndex + 1} يجب أن تحتوي على زر واحد على الأقل.`)
+                    setIsSubmitting(false)
+                    return
+                }
+            }
+
+            if (templateType === "PRODUCT_CAROUSEL") {
+                if (!catalogId) {
+                    alert("يجب تحديد معرف الكتالوج لقالب كاروسيل المنتجات")
+                    setIsSubmitting(false)
+                    return
+                }
+                if (productCarouselCards.length < 2 || productCarouselCards.length > 10) {
+                    alert("يجب اختيار من 2 إلى 10 منتجات")
+                    setIsSubmitting(false)
+                    return
+                }
+                const hasEmptyProduct = productCarouselCards.some(c => !c.productId)
+                if (hasEmptyProduct) {
+                    alert("جميع المنتجات يجب أن تحتوي على معرف المنتج")
+                    setIsSubmitting(false)
+                    return
+                }
+            }
+
+            if (templateType === "CATALOG") {
+                if (!catalogId) {
+                    alert("يجب تحديد معرف الكتالوج")
+                    setIsSubmitting(false)
+                    return
+                }
+                if (!catalogBodyText.trim()) {
+                    alert("يجب إدخال نص الرسالة")
                     setIsSubmitting(false)
                     return
                 }
@@ -517,20 +634,34 @@ export default function NewTemplatePage() {
                                 </div>
                                 <div className="space-y-2">
                                     <Label>نوع القالب</Label>
-                                    <div className="flex gap-2">
+                                    <div className="grid grid-cols-2 gap-2">
                                         <div 
                                             onClick={() => setTemplateType("STANDARD")}
-                                            className={`flex-1 border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'STANDARD' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                            className={`border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'STANDARD' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
                                         >
                                             <FileText className="h-4 w-4" />
                                             قياسي
                                         </div>
                                         <div 
                                             onClick={() => setTemplateType("CAROUSEL")}
-                                            className={`flex-1 border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'CAROUSEL' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                            className={`border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'CAROUSEL' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
                                         >
                                             <Layers className="h-4 w-4" />
-                                            كاروسيل (Carousel)
+                                            كاروسيل وسائط
+                                        </div>
+                                        <div 
+                                            onClick={() => setTemplateType("PRODUCT_CAROUSEL")}
+                                            className={`border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'PRODUCT_CAROUSEL' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                        >
+                                            <ShoppingBag className="h-4 w-4" />
+                                            كاروسيل منتجات
+                                        </div>
+                                        <div 
+                                            onClick={() => setTemplateType("CATALOG")}
+                                            className={`border rounded-xl p-3 cursor-pointer transition-all flex items-center justify-center gap-2 ${templateType === 'CATALOG' ? 'border-primary bg-primary/5 text-primary font-bold' : 'hover:bg-muted'}`}
+                                        >
+                                            <ShoppingBag className="h-4 w-4" />
+                                            كتالوج
                                         </div>
                                     </div>
                                 </div>
@@ -719,7 +850,7 @@ export default function NewTemplatePage() {
                                         </div>
                                     </div>
                                 </>
-                            ) : (
+                            ) : templateType === "CAROUSEL" ? (
                                 // --- CAROUSEL EDITOR ---
                                 <div className="space-y-8">
                                     <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-300">
@@ -847,7 +978,217 @@ export default function NewTemplatePage() {
                                         </Tabs>
                                     </div>
                                 </div>
-                            )}
+                            ) : templateType === "PRODUCT_CAROUSEL" ? (
+                                // --- PRODUCT CAROUSEL EDITOR ---
+                                <div className="space-y-6">
+                                    <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-300">
+                                        قوالب كاروسيل المنتجات تتيح إرسال حتى 10 منتجات من كتالوجك. يجب أن تكون المنتجات مرتبطة بكتالوج Meta.
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>معرف الكتالوج (Catalog ID)</Label>
+                                        <Input
+                                            value={catalogId}
+                                            onChange={(e) => setCatalogId(e.target.value)}
+                                            placeholder="أدخل معرف الكتالوج من Meta"
+                                            className="font-mono"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            يمكنك العثور على معرف الكتالوج من Meta Business Manager
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>نص الرسالة الرئيسي</Label>
+                                        <Textarea
+                                            value={bodyText}
+                                            onChange={(e) => setBodyText(e.target.value)}
+                                            placeholder="رسالة تظهر مع كاروسيل المنتجات"
+                                            rows={3}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <div className="flex items-center justify-between">
+                                            <Label>المنتجات ({productCarouselCards.length}/10)</Label>
+                                            <Button 
+                                                size="sm" 
+                                                variant="outline" 
+                                                onClick={() => {
+                                                    // Open product picker modal
+                                                    setProductCarouselCards([...productCarouselCards, { productId: "", buttonType: "VIEW" }])
+                                                }}
+                                                disabled={productCarouselCards.length >= 10}
+                                            >
+                                                <Plus className="h-4 w-4 mr-2" /> إضافة منتج
+                                            </Button>
+                                        </div>
+
+                                        {productCarouselCards.length === 0 ? (
+                                            <div className="border-2 border-dashed rounded-xl p-8 text-center">
+                                                <ShoppingBag className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                                                <p className="text-muted-foreground">لا توجد منتجات محددة</p>
+                                                <p className="text-xs text-muted-foreground mt-2">اختر من 2 إلى 10 منتجات لعرضها</p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                {productCarouselCards.map((card, idx) => (
+                                                    <Card key={idx} className="p-4">
+                                                        <div className="flex items-start justify-between gap-4">
+                                                            <div className="flex-1 space-y-3">
+                                                                <div className="space-y-2">
+                                                                    <Label>معرف المنتج (Product Retailer ID)</Label>
+                                                                    <Input
+                                                                        value={card.productId}
+                                                                        onChange={(e) => {
+                                                                            const newCards = [...productCarouselCards]
+                                                                            newCards[idx].productId = e.target.value
+                                                                            setProductCarouselCards(newCards)
+                                                                        }}
+                                                                        placeholder="مثال: PROD-123"
+                                                                        className="font-mono"
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-2">
+                                                                    <Label>نص إضافي (اختياري)</Label>
+                                                                    <Textarea
+                                                                        value={card.bodyText || ""}
+                                                                        onChange={(e) => {
+                                                                            const newCards = [...productCarouselCards]
+                                                                            newCards[idx].bodyText = e.target.value
+                                                                            setProductCarouselCards(newCards)
+                                                                        }}
+                                                                        placeholder="نص مخصص للمنتج"
+                                                                        rows={2}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-2">
+                                                                    <Label>نوع الزر</Label>
+                                                                    <Select
+                                                                        value={card.buttonType}
+                                                                        onValueChange={(value: "VIEW" | "URL") => {
+                                                                            const newCards = [...productCarouselCards]
+                                                                            newCards[idx].buttonType = value
+                                                                            setProductCarouselCards(newCards)
+                                                                        }}
+                                                                    >
+                                                                        <SelectTrigger>
+                                                                            <SelectValue />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            <SelectItem value="VIEW">عرض (في التطبيق)</SelectItem>
+                                                                            <SelectItem value="URL">رابط خارجي</SelectItem>
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                    {card.buttonType === "URL" && (
+                                                                        <Input
+                                                                            value={card.buttonUrl || ""}
+                                                                            onChange={(e) => {
+                                                                                const newCards = [...productCarouselCards]
+                                                                                newCards[idx].buttonUrl = e.target.value
+                                                                                setProductCarouselCards(newCards)
+                                                                            }}
+                                                                            placeholder="https://example.com/product"
+                                                                        />
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                            {productCarouselCards.length > 1 && (
+                                                                <Button
+                                                                    size="icon"
+                                                                    variant="ghost"
+                                                                    onClick={() => {
+                                                                        setProductCarouselCards(productCarouselCards.filter((_, i) => i !== idx))
+                                                                    }}
+                                                                >
+                                                                    <X className="h-4 w-4" />
+                                                                </Button>
+                                                            )}
+                                                        </div>
+                                                    </Card>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ) : templateType === "CATALOG" ? (
+                                // --- CATALOG TEMPLATE EDITOR ---
+                                <div className="space-y-6">
+                                    <div className="bg-blue-50 dark:bg-blue-900/10 p-4 rounded-xl text-sm text-blue-800 dark:text-blue-300">
+                                        قوالب الكتالوج تعرض كتالوج المنتجات الكامل. يتطلب معرف كتالوج من Meta.
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>معرف الكتالوج (Catalog ID) *</Label>
+                                        <Input
+                                            value={catalogId}
+                                            onChange={(e) => setCatalogId(e.target.value)}
+                                            placeholder="أدخل معرف الكتالوج من Meta"
+                                            className="font-mono"
+                                        />
+                                        <p className="text-xs text-muted-foreground">
+                                            يمكنك العثور على معرف الكتالوج من Meta Business Manager
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>صورة الرأس (اختياري)</Label>
+                                        <div className="flex items-center gap-4">
+                                            {catalogHeaderPreviewUrl ? (
+                                                <div className="relative">
+                                                    <img src={catalogHeaderPreviewUrl} alt="Header" className="w-32 h-32 object-cover rounded-lg" />
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="absolute top-0 right-0"
+                                                        onClick={() => {
+                                                            setCatalogHeaderHandle("")
+                                                            setCatalogHeaderPreviewUrl("")
+                                                        }}
+                                                    >
+                                                        <X className="h-4 w-4" />
+                                                    </Button>
+                                                </div>
+                                            ) : (
+                                                <Button
+                                                    variant="outline"
+                                                    onClick={() => {
+                                                        setActiveUploadField("HEADER")
+                                                        fileInputRef.current?.click()
+                                                    }}
+                                                    disabled={uploadingMedia}
+                                                >
+                                                    {uploadingMedia ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Upload className="h-4 w-4 mr-2" />}
+                                                    رفع صورة
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>نص الرسالة *</Label>
+                                        <Textarea
+                                            value={catalogBodyText}
+                                            onChange={(e) => setCatalogBodyText(e.target.value)}
+                                            placeholder="رسالة تظهر مع زر عرض الكتالوج"
+                                            rows={4}
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label>نص التذييل (اختياري)</Label>
+                                        <Input
+                                            value={footerText}
+                                            onChange={(e) => setFooterText(e.target.value)}
+                                            placeholder="نص تذييل الرسالة"
+                                        />
+                                    </div>
+
+                                    <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-xl text-sm text-green-800 dark:text-green-300">
+                                        سيتم إضافة زر "عرض الكتالوج" تلقائياً عند إنشاء القالب
+                                    </div>
+                                </div>
+                            ) : null}
                         </CardContent>
                     </Card>
 
@@ -856,7 +1197,14 @@ export default function NewTemplatePage() {
                         <Button 
                             onClick={handleSubmit} 
                             className="bg-[#004D3D] hover:bg-[#003D2D] min-w-[150px]"
-                            disabled={isSubmitting || !name || !bodyText}
+                            disabled={
+                                isSubmitting || 
+                                !name || 
+                                (templateType === "STANDARD" && !bodyText) ||
+                                (templateType === "CAROUSEL" && !bodyText) ||
+                                (templateType === "PRODUCT_CAROUSEL" && (!catalogId || productCarouselCards.length < 2)) ||
+                                (templateType === "CATALOG" && (!catalogId || !catalogBodyText))
+                            }
                         >
                             {isSubmitting ? "جاري الإرسال..." : "إرسال للمراجعة"}
                         </Button>
@@ -909,7 +1257,7 @@ export default function NewTemplatePage() {
                                             ))}
                                         </div>
                                     </div>
-                                ) : (
+                                ) : templateType === "CAROUSEL" ? (
                                     <div className="space-y-2">
                                         <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[90%]">
                                             <p className="text-sm whitespace-pre-wrap">{bodyText || "مقدمة الكاروسيل..."}</p>
@@ -933,7 +1281,55 @@ export default function NewTemplatePage() {
                                             ))}
                                         </div>
                                     </div>
-                                )}
+                                ) : templateType === "PRODUCT_CAROUSEL" ? (
+                                    <div className="space-y-2">
+                                        <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[90%]">
+                                            <p className="text-sm whitespace-pre-wrap">{bodyText || "رسالة المنتجات..."}</p>
+                                        </div>
+                                        {/* Product Carousel Preview */}
+                                        <div className="flex overflow-x-auto gap-2 pb-2 -mx-3 px-3">
+                                            {productCarouselCards.length > 0 ? (
+                                                productCarouselCards.map((card, i) => (
+                                                    <div key={i} className="bg-white dark:bg-[#202c33] rounded-lg shadow-sm min-w-[200px] max-w-[200px] overflow-hidden shrink-0">
+                                                        <div className="h-24 bg-gray-200 flex items-center justify-center">
+                                                            <ShoppingBag className="h-8 w-8 text-muted-foreground" />
+                                                        </div>
+                                                        <div className="p-2">
+                                                            <p className="text-xs text-muted-foreground font-mono">{card.productId || "Product ID"}</p>
+                                                            {card.bodyText && (
+                                                                <p className="text-sm mt-1">{card.bodyText}</p>
+                                                            )}
+                                                            <div className="mt-2">
+                                                                <div className="bg-gray-50 p-1 text-center text-xs text-[#00a884] rounded border">
+                                                                    {card.buttonType === "VIEW" ? "عرض" : "رابط"}
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <div className="text-center text-muted-foreground text-sm p-4">
+                                                    اختر المنتجات للمعاينة
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                ) : templateType === "CATALOG" ? (
+                                    <div className="bg-white dark:bg-[#202c33] p-2 rounded-lg rounded-tl-none shadow-sm max-w-[90%] mb-2">
+                                        {catalogHeaderPreviewUrl && (
+                                            <div className="mb-2">
+                                                <div className="bg-gray-200 dark:bg-gray-700 rounded-lg h-32 flex items-center justify-center overflow-hidden">
+                                                    <img src={catalogHeaderPreviewUrl} className="w-full h-full object-cover" />
+                                                </div>
+                                            </div>
+                                        )}
+                                        <p className="text-sm whitespace-pre-wrap">{catalogBodyText || "عرض كتالوجنا..."}</p>
+                                        {footerText && <p className="text-[10px] text-gray-500 mt-2">{footerText}</p>}
+                                        <div className="border-t mt-2 pt-2">
+                                            <div className="text-center text-sm text-[#00a884] font-medium py-1">عرض الكتالوج</div>
+                                        </div>
+                                    </div>
+                                ) : null}
                             </div>
                         </div>
                     </div>

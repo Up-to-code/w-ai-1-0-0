@@ -1,71 +1,51 @@
-import React from 'react';
-import FontAwesome from '@expo/vector-icons/FontAwesome';
-import { Tabs } from 'expo-router';
-import { StyleSheet, useColorScheme, View, ActivityIndicator } from 'react-native';
-import { Theme } from '@/constants/Theme';
-import * as SecureStore from 'expo-secure-store';
-import { useQuery } from 'convex/react';
-import { api } from '../../convex/_generated/api';
-import { useState, useEffect } from 'react';
+import { Tabs } from "expo-router";
+import { Ionicons } from "@expo/vector-icons";
+import { useLocale } from "../../contexts/LocaleContext";
 
-// You can explore the built-in icon families and icons on the web at https://icons.expo.fyi/
-function TabBarIcon(props: {
-  name: React.ComponentProps<typeof FontAwesome>['name'];
-  color: string;
-}) {
-  return <FontAwesome size={28} style={{ marginBottom: -3 }} {...props} />;
-}
-
-export default function TabLayout() {
-  const colorScheme = useColorScheme();
-  const [userId, setUserId] = useState<string | null>(null);
-
-  useEffect(() => {
-    SecureStore.getItemAsync("userId").then(setUserId);
-  }, []);
-
-  const user = useQuery(api.users.getProfile, userId ? { userId: userId as any } : "skip" as any);
-  const isAdmin = user?.role === 'admin';
-  const isAgent = user?.role === 'agent';
-  const hasManagementAccess = isAdmin || isAgent;
-
-  if (userId && !user) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: Theme.colors.headerBackground }}>
-        <ActivityIndicator size="large" color="white" />
-      </View>
-    );
-  }
+export default function TabsLayout() {
+  const { t, isRTL } = useLocale();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Theme.colors.primary,
-        headerShown: true,
-        headerStyle: {
-          backgroundColor: Theme.colors.headerBackground,
-        },
-        headerTintColor: 'white',
+        headerShown: false,
+        tabBarActiveTintColor: "#007AFF",
+        tabBarInactiveTintColor: "#999",
         tabBarStyle: {
-          borderTopWidth: StyleSheet.hairlineWidth,
-        }
-      }}>
+          borderTopWidth: 1,
+          borderTopColor: "#E5E5E5",
+          backgroundColor: "#FFFFFF",
+        },
+        tabBarLabelStyle: {
+          fontFamily: "Cairo_400Regular",
+        },
+      }}
+    >
       <Tabs.Screen
         name="index"
         options={{
-          title: 'الدردشات',
-          tabBarLabel: 'الدردشات',
-          tabBarIcon: ({ color }) => <TabBarIcon name="wechat" color={color} />,
-          href: hasManagementAccess ? undefined : null, // Hide if not admin or agent
+          title: t("chats"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="chatbubbles" size={size} color={color} />
+          ),
         }}
       />
       <Tabs.Screen
-        name="contacts"
+        name="customers"
         options={{
-          title: 'العملاء',
-          tabBarLabel: 'العملاء',
-          tabBarIcon: ({ color }) => <TabBarIcon name="users" color={color} />,
-          href: isAdmin ? undefined : null, // Hide if not admin
+          title: t("customers"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="people" size={size} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="settings"
+        options={{
+          title: t("settings"),
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="settings" size={size} color={color} />
+          ),
         }}
       />
     </Tabs>

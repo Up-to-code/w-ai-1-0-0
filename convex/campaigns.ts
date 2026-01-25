@@ -2,6 +2,7 @@ import { query, mutation, action, internalAction, internalMutation, internalQuer
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
 import { retrier, crons } from "./index";
+import { categorizeWhatsAppError } from "./errorUtils";
 
 // 1. Create a Campaign
 export const create = mutation({
@@ -14,6 +15,13 @@ export const create = mutation({
         targetContactIds: v.optional(v.array(v.id("contacts"))),
         scheduledAt: v.number(),
         recurrenceCronSpec: v.optional(v.string()),
+        sendingConfig: v.optional(v.object({
+            messagesPerSecond: v.number(),
+            delayBetweenMessages: v.number(),
+            maxRetries: v.number(),
+            skipRecentlyContacted: v.boolean(),
+            recentContactHours: v.number(),
+        })),
     },
     handler: async (ctx, args) => {
         const id = await ctx.db.insert("campaigns", {
@@ -26,6 +34,7 @@ export const create = mutation({
             status: "SCHEDULED",
             scheduledAt: args.scheduledAt,
             recurrenceCronSpec: args.recurrenceCronSpec,
+            sendingConfig: args.sendingConfig,
             stats: { total: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
             createdAt: Date.now(),
         });
@@ -77,6 +86,15 @@ export const startProcessing = internalAction({
     },
 });
 
+// Default anti-spam sending configuration
+const DEFAULT_SENDING_CONFIG = {
+    messagesPerSecond: 10,        // Conservative: 10 msgs/sec (WhatsApp allows 80)
+    delayBetweenMessages: 100,    // 100ms between each message
+    maxRetries: 3,                // 3 retries per contact
+    skipRecentlyContacted: true,  // Skip recently contacted
+    recentContactHours: 24,       // Don't re-contact within 24h
+};
+
 // 3. Process Batch (Recursive)
 export const processBatch = internalAction({
     args: {
@@ -85,13 +103,20 @@ export const processBatch = internalAction({
     },
     handler: async (ctx, args) => {
         const BATCH_SIZE = 50;
+        const BATCH_DELAY_MS = 5000; // 5 seconds between batches for anti-spam
 
-        // 1. Fetch batch
-        const { contacts, nextCursor, templateName } = await ctx.runQuery(internal.campaigns.getBatchForProcessing, {
+        // 1. Fetch batch and campaign config
+        const { contacts, nextCursor, templateName, sendingConfig } = await ctx.runQuery(internal.campaigns.getBatchForProcessing, {
             campaignId: args.campaignId,
             cursor: args.cursor,
             limit: BATCH_SIZE
         });
+
+        // Merge with defaults
+        const config = {
+            ...DEFAULT_SENDING_CONFIG,
+            ...sendingConfig
+        };
 
         if (contacts.length === 0) {
             // Done!
@@ -102,19 +127,27 @@ export const processBatch = internalAction({
             return;
         }
 
-        // 2. Send Messages via Retrier
+        console.log(`[Campaign] Processing batch of ${contacts.length} contacts with ${config.delayBetweenMessages}ms delay between messages`);
+
+        // 2. Send Messages via Retrier with anti-spam delay
         for (const contact of contacts) {
             await retrier.run(
                 ctx,
                 internal.campaigns.sendToContact,
                 { campaignId: args.campaignId, contactId: contact._id },
-                { initialBackoffMs: 500, base: 2, maxFailures: 4 }
+                { initialBackoffMs: 500, base: 2, maxFailures: config.maxRetries }
             );
+            
+            // Anti-spam delay between messages (default: 100ms = 10 msgs/sec)
+            if (config.delayBetweenMessages > 0) {
+                await new Promise(resolve => setTimeout(resolve, config.delayBetweenMessages));
+            }
         }
 
-        // 4. Recurse if there's more
+        // 4. Recurse if there's more with increased delay
         if (nextCursor) {
-            await ctx.scheduler.runAfter(1000, internal.campaigns.processBatch, {
+            console.log(`[Campaign] Scheduling next batch in ${BATCH_DELAY_MS}ms`);
+            await ctx.scheduler.runAfter(BATCH_DELAY_MS, internal.campaigns.processBatch, {
                 campaignId: args.campaignId,
                 cursor: nextCursor
             });
@@ -124,12 +157,505 @@ export const processBatch = internalAction({
     },
 });
 
+/**
+ * Sends a campaign template message to a single contact.
+ * 
+ * This function handles both standard and carousel template messages according to
+ * the WhatsApp Cloud API specification.
+ * 
+ * ## Standard Templates
+ * For standard templates, components are built from the template definition:
+ * - HEADER: Can be TEXT, IMAGE, VIDEO, or DOCUMENT format
+ * - BODY: Text content with optional {{variable}} placeholders
+ * - FOOTER: Optional footer text
+ * - BUTTONS: Quick reply, URL, phone number, or copy code buttons
+ * 
+ * ## Carousel Templates
+ * Carousel templates require special handling per Meta's API documentation:
+ * @see https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-message-templates/media-card-carousel-templates/
+ * 
+ * The carousel structure is:
+ * ```json
+ * {
+ *   "type": "carousel",
+ *   "cards": [
+ *     {
+ *       "card_index": 0,
+ *       "components": [
+ *         { "type": "header", "parameters": [{ "type": "image", "image": { "link": "..." } }] },
+ *         { "type": "body", "parameters": [...] },
+ *         { "type": "button", "sub_type": "url", "index": 0, "parameters": [...] }
+ *       ]
+ *     }
+ *   ]
+ * }
+ * ```
+ * 
+ * Key points for carousel templates:
+ * 1. Headers with `example.header_handle` require the carousel component structure
+ * 2. Each card must have a `card_index` (0-based)
+ * 3. Static carousels (no variables, no header handles) send empty components array
+ * 4. Media URLs from template creation (header_handle) are used as `link` parameters
+ * 
+ * ## Error Handling
+ * Errors are categorized using `errorUtils.ts` for consistent handling:
+ * - #131030: Phone not in allowed list (sandbox mode)
+ * - #132012: Template parameter format mismatch
+ * - #10: Permission denied
+ * - #80005/#200: Rate limiting (retryable)
+ */
 export const sendToContact = internalAction({
     args: { campaignId: v.id("campaigns"), contactId: v.id("contacts") },
-    handler: async (ctx, args) => {
+    handler: async (ctx, args): Promise<{ success: boolean; messageId?: string } | null | void> => {
         const campaign = await ctx.runQuery(internal.campaigns.getCampaignById, { id: args.campaignId });
         const contact = await ctx.runQuery(internal.campaigns.getContactById, { id: args.contactId });
-        if (!campaign || !contact) throw new Error("Campaign or contact not found");
+        if (!campaign || !contact) {
+            console.error(`[Campaign] Campaign or contact not found: campaign=${args.campaignId}, contact=${args.contactId}`);
+            throw new Error("Campaign or contact not found");
+        }
+
+        // Anti-spam: Check if contact was recently messaged
+        const config = {
+            ...DEFAULT_SENDING_CONFIG,
+            ...campaign.sendingConfig
+        };
+        
+        if (config.skipRecentlyContacted && contact.lastMessagedAt) {
+            const recentThreshold = Date.now() - (config.recentContactHours * 60 * 60 * 1000);
+            
+            if (contact.lastMessagedAt > recentThreshold) {
+                const hoursAgo = Math.round((Date.now() - contact.lastMessagedAt) / 3600000);
+                console.log(`[Campaign] Skipping contact ${args.contactId} - messaged ${hoursAgo}h ago (threshold: ${config.recentContactHours}h)`);
+                
+                // Log as skipped
+                await ctx.runMutation(internal.campaigns.logBatchResults, {
+                    campaignId: args.campaignId,
+                    logs: [{ 
+                        contactId: args.contactId, 
+                        status: "skipped", 
+                        skipReason: "recently_contacted" 
+                    }]
+                });
+                
+                return; // Skip this contact
+            }
+        }
+
+        // Fetch template to construct components
+        const template = await ctx.runQuery(api.templates.getById, { id: campaign.templateId });
+        
+        // Validate template structure
+        if (!template) {
+            throw new Error(`Template not found: ${campaign.templateId}`);
+        }
+
+        if (template.status !== "APPROVED") {
+            console.warn(`[Campaign] Template ${campaign.templateName} status is ${template.status}, may fail to send`);
+        }
+        
+        const components: any[] = [];
+        console.log(`[Campaign] Template structure:`, {
+            hasComponents: !!template?.components,
+            componentsLength: template?.components?.length || 0,
+            components: JSON.stringify(template?.components || [], null, 2)
+        });
+        
+        /**
+         * Processes a header component for standard (non-carousel) templates.
+         * 
+         * Header formats supported:
+         * - IMAGE: Uses header_handle URL or placeholder
+         * - VIDEO: Uses video URL
+         * - DOCUMENT: Uses document URL with filename
+         * - TEXT: Static text or text with {{variables}}
+         * 
+         * Note: For static text headers (no variables), the header component
+         * should be included WITHOUT parameters per WhatsApp API spec.
+         */
+        const processHeaderComponent = (comp: any) => {
+            if (comp.format === "IMAGE") {
+                const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
+                return {
+                    type: "header",
+                    parameters: [{ type: "image", image: { link } }]
+                };
+            } else if (comp.format === "VIDEO") {
+                return {
+                    type: "header",
+                    parameters: [{ type: "video", video: { link: "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4" } }]
+                };
+            } else if (comp.format === "DOCUMENT") {
+                return {
+                    type: "header",
+                    parameters: [{ type: "document", document: { link: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", filename: "document.pdf" } }]
+                };
+            } else if (comp.format === "TEXT") {
+                // Check if header has variables by looking at the text content
+                // If text contains {{variable}} patterns, it has variables
+                const hasVariables = comp.text?.includes("{{") || 
+                                    (comp.example?.header_text && comp.example.header_text.length > 0);
+                
+                if (hasVariables && comp.example?.header_text && comp.example.header_text.length > 0) {
+                    // Header has variables - include parameters
+                    return {
+                        type: "header",
+                        parameters: comp.example.header_text.map((text: string) => ({ type: "text", text }))
+                    };
+                } else {
+                    // Static text header - include header WITHOUT parameters field
+                    // WhatsApp API: if header has no variables, don't include parameters at all
+                    return {
+                        type: "header"
+                        // No parameters field for static headers
+                    };
+                }
+            }
+            return null;
+        };
+        
+        if (template && template.components) {
+            // Check for PRODUCT_CAROUSEL template
+            const productCarouselComp = template.components.find((c: any) => 
+                c.type === "PRODUCT_CAROUSEL" || c.type === "product_carousel"
+            );
+
+            // Check for CATALOG template
+            const catalogComp = template.components.find((c: any) => 
+                c.type === "CATALOG" || c.type === "catalog"
+            );
+
+            // Check for CAROUSEL template
+            const carouselComp = template.components.find((c: any) => 
+                c.type === "CAROUSEL" || c.type === "carousel"
+            );
+
+            // Handle PRODUCT_CAROUSEL template
+            if (productCarouselComp && productCarouselComp.catalog_id && productCarouselComp.products) {
+                console.log(`[Campaign] Processing PRODUCT_CAROUSEL template with ${productCarouselComp.products.length} products`);
+                
+                const bodyComp: any = template.components.find((c: any) => c.type === "BODY");
+                const footerComp: any = template.components.find((c: any) => c.type === "FOOTER");
+
+                const interactiveContent: any = {
+                    type: "product_list",
+                    body: {
+                        text: bodyComp?.text || "Our Products"
+                    },
+                    footer: footerComp ? { text: footerComp.text } : undefined,
+                    action: {
+                        catalog_id: productCarouselComp.catalog_id,
+                        sections: [{
+                            title: "Products",
+                            product_items: productCarouselComp.products.map((p: any) => ({
+                                product_retailer_id: p.product_retailer_id || p.productId
+                            }))
+                        }]
+                    }
+                };
+
+                const result: any = await ctx.runAction(api.whatsapp.sendMessage, {
+                    to: (contact as { phone?: string }).phone as string,
+                    type: "interactive",
+                    content: interactiveContent
+                });
+
+                await ctx.runMutation(internal.campaigns.logBatchResults, {
+                    campaignId: args.campaignId,
+                    logs: [{ contactId: args.contactId, status: "sent", metaId: result.messages?.[0]?.id }]
+                });
+
+                return { success: true, messageId: result.messages?.[0]?.id };
+            }
+
+            // Handle CATALOG template
+            if (catalogComp && catalogComp.catalog_id) {
+                console.log(`[Campaign] Processing CATALOG template`);
+                
+                const headerComp = template.components.find((c: any) => c.type === "HEADER");
+                const bodyComp = template.components.find((c: any) => c.type === "BODY");
+                const footerComp = template.components.find((c: any) => c.type === "FOOTER");
+
+                const interactiveContent: any = {
+                    type: "catalog_message",
+                    body: {
+                        text: bodyComp?.text || "View our catalog"
+                    },
+                    footer: footerComp ? { text: footerComp.text } : undefined,
+                    action: {
+                        name: "catalog",
+                        parameters: {
+                            thumbnail_product_retailer_id: catalogComp.thumbnail_product_id || undefined
+                        }
+                    }
+                };
+
+                // Add header if present
+                if (headerComp && headerComp.example?.header_handle) {
+                    interactiveContent.header = {
+                        type: "image",
+                        image: {
+                            id: headerComp.example.header_handle[0] // Media ID
+                        }
+                    };
+                }
+
+                const result: any = await ctx.runAction(api.whatsapp.sendMessage, {
+                    to: (contact as { phone?: string }).phone as string,
+                    type: "interactive",
+                    content: interactiveContent
+                });
+
+                await ctx.runMutation(internal.campaigns.logBatchResults, {
+                    campaignId: args.campaignId,
+                    logs: [{ contactId: args.contactId, status: "sent", metaId: result.messages?.[0]?.id }]
+                });
+
+                return { success: true, messageId: result.messages?.[0]?.id };
+            }
+            
+            if (carouselComp && carouselComp.cards) {
+                // CAROUSEL templates: headers are inside cards (template definition)
+                // Headers with example.header_handle require carousel component structure
+                console.log(`[Campaign] Processing CAROUSEL template with ${carouselComp.cards.length} cards`);
+                console.log(`[Campaign] CAROUSEL template detected - headers are in cards, not top-level`);
+                
+                // Check if template body has variables
+                const bodyComp = template.components.find((c: any) => 
+                    c.type === "BODY" || c.type === "body"
+                );
+                const bodyHasVariables = bodyComp?.text?.includes("{{");
+                
+                // Check if any card components have variables or require parameters
+                let cardsHaveHeaderHandles = false;
+                let cardsHaveVariables = false;
+                
+                for (const card of carouselComp.cards) {
+                    if (card.components) {
+                        for (const cardComp of card.components) {
+                            // Check for headers with example.header_handle
+                            if (cardComp.type === "HEADER" && cardComp.example?.header_handle) {
+                                cardsHaveHeaderHandles = true;
+                            }
+                            // Check body text for variables
+                            if (cardComp.type === "BODY" && cardComp.text?.includes("{{")) {
+                                cardsHaveVariables = true;
+                            }
+                            // Check button URLs for variables
+                            if (cardComp.type === "BUTTONS" && cardComp.buttons) {
+                                for (const btn of cardComp.buttons) {
+                                    if (btn.url?.includes("{{") || btn.example) {
+                                        cardsHaveVariables = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // Early exit if we found both
+                    if (cardsHaveHeaderHandles && cardsHaveVariables) break;
+                }
+                
+                console.log(`[Campaign] CAROUSEL analysis:`, {
+                    bodyHasVariables,
+                    cardsHaveHeaderHandles,
+                    cardsHaveVariables
+                });
+                
+                // IMPORTANT: WhatsApp carousel templates REQUIRE header parameters for each card.
+                // We cannot send empty components or skip headers.
+                // 
+                // The header_handle URLs stored in templates are temporary and expire (403 Forbidden).
+                // We need to upload the media to WhatsApp and get fresh media IDs before sending.
+                
+                if (cardsHaveHeaderHandles) {
+                    console.log(`[Campaign] CAROUSEL has ${carouselComp.cards.length} cards with media headers - uploading to get media IDs`);
+                    
+                    // Upload media for each card header and collect media IDs
+                    const mediaIds: (string | null)[] = [];
+                    
+                    for (let i = 0; i < carouselComp.cards.length; i++) {
+                        const card = carouselComp.cards[i];
+                        const headerComp = card.components?.find((c: any) => 
+                            c.type === "HEADER" || c.type === "header"
+                        );
+                        
+                        if (headerComp?.example?.header_handle?.[0]) {
+                            const headerUrl = headerComp.example.header_handle[0];
+                            const headerFormat = (headerComp.format || "IMAGE").toLowerCase();
+                            
+                            console.log(`[Campaign] Card ${i}: Uploading ${headerFormat} from header_handle...`);
+                            
+                            try {
+                                // Upload media to WhatsApp and get a media ID
+                                const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
+                                    url: headerUrl,
+                                    type: headerFormat,
+                                });
+                                mediaIds.push(mediaId);
+                                console.log(`[Campaign] Card ${i}: Got media ID: ${mediaId}`);
+                            } catch (uploadError) {
+                                console.error(`[Campaign] Card ${i}: Failed to upload media:`, uploadError);
+                                // Store null - we'll handle this error below
+                                mediaIds.push(null);
+                            }
+                        } else {
+                            mediaIds.push(null);
+                        }
+                    }
+                    
+                    // Check if any uploads failed
+                    const failedUploads = mediaIds.filter(id => id === null).length;
+                    if (failedUploads > 0) {
+                        console.error(`[Campaign] ${failedUploads}/${mediaIds.length} media uploads failed - header_handle URLs may be expired`);
+                        throw new Error(`Failed to upload ${failedUploads} media items for carousel. The template media URLs may have expired. Please edit the template and re-upload the images.`);
+                    }
+                    
+                    // Build carousel cards with media IDs
+                    const carouselCards = carouselComp.cards.map((card: any, index: number) => {
+                        const cardComponents: any[] = [];
+                        const headerComp = card.components?.find((c: any) => 
+                            c.type === "HEADER" || c.type === "header"
+                        );
+                        
+                        // Add header with media ID
+                        if (mediaIds[index]) {
+                            const headerFormat = (headerComp?.format || "IMAGE").toLowerCase();
+                            const headerParam: any = { type: headerFormat };
+                            
+                            if (headerFormat === "image") {
+                                headerParam.image = { id: mediaIds[index] };
+                            } else if (headerFormat === "video") {
+                                headerParam.video = { id: mediaIds[index] };
+                            } else {
+                                // Fallback to image
+                                headerParam.image = { id: mediaIds[index] };
+                            }
+                            
+                            cardComponents.push({
+                                type: "header",
+                                parameters: [headerParam]
+                            });
+                        }
+                        
+                        // Process body if it has variables (TODO: implement variable substitution)
+                        const cardBodyComp = card.components?.find((c: any) => 
+                            c.type === "BODY" || c.type === "body"
+                        );
+                        if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
+                            console.log(`[Campaign] Card ${index} body has variables - needs implementation`);
+                        }
+                        
+                        // Process buttons if they have variables (TODO: implement)
+                        const buttonsComp = card.components?.find((c: any) => 
+                            c.type === "BUTTONS" || c.type === "buttons"
+                        );
+                        if (buttonsComp?.buttons) {
+                            const hasButtonVariables = buttonsComp.buttons.some((btn: any) => 
+                                btn.url?.includes("{{") || btn.example
+                            );
+                            if (hasButtonVariables) {
+                                console.log(`[Campaign] Card ${index} buttons have variables - needs implementation`);
+                            }
+                        }
+                        
+                        return {
+                            card_index: index,
+                            components: cardComponents
+                        };
+                    });
+                    
+                    // Add body component if main body has variables
+                    if (bodyHasVariables) {
+                        console.log(`[Campaign] CAROUSEL template body has variables - needs implementation`);
+                    }
+                    
+                    // Add carousel component
+                    components.push({
+                        type: "carousel",
+                        cards: carouselCards
+                    });
+                    
+                    console.log(`[Campaign] Constructed carousel with ${carouselCards.length} cards using media IDs`);
+                } else {
+                    // Carousel without media headers - just handle variables if any
+                    console.log(`[Campaign] CAROUSEL without media headers - processing variables only`);
+                    
+                    if (bodyHasVariables || cardsHaveVariables) {
+                        const carouselCards = carouselComp.cards.map((card: any, index: number) => {
+                            const cardComponents: any[] = [];
+                            
+                            // Process body if it has variables
+                            const cardBodyComp = card.components?.find((c: any) => 
+                                c.type === "BODY" || c.type === "body"
+                            );
+                            if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
+                                console.log(`[Campaign] Card ${index} body has variables - needs implementation`);
+                            }
+                            
+                            return {
+                                card_index: index,
+                                components: cardComponents
+                            };
+                        });
+                        
+                        components.push({
+                            type: "carousel",
+                            cards: carouselCards
+                        });
+                    }
+                    // If no headers and no variables, empty components array is OK
+                }
+            } else {
+                // Standard template: process top-level components
+                for (const comp of template.components) {
+                    console.log(`[Campaign] Processing component:`, {
+                        type: comp.type,
+                        format: comp.format,
+                        hasExample: !!comp.example,
+                        example: comp.example
+                    });
+                    
+                    // Check for HEADER (case-insensitive)
+                    if (comp.type === "HEADER" || comp.type === "header") {
+                        const headerComponent = processHeaderComponent(comp);
+                        if (headerComponent) {
+                            components.push(headerComponent);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // After constructing components array, check if we missed any HEADER components
+        if (components.length === 0) {
+            // Skip check for CAROUSEL templates (they don't have top-level headers)
+            const isCarousel = template.components?.some((c: any) => 
+                c.type === "CAROUSEL" || c.type === "carousel"
+            );
+            
+            if (!isCarousel) {
+                // Only check for headers in non-carousel templates
+                let hasHeader = template.components?.some((c: any) => 
+                    (c.type === "HEADER" || c.type === "header")
+                );
+                
+                if (hasHeader) {
+                    console.warn(`[Campaign] Template has HEADER but no header component was added. Template components:`, 
+                        JSON.stringify(template.components, null, 2));
+                    // Try to add a default header without parameters for static headers
+                    components.push({
+                        type: "header"
+                        // No parameters field for static headers
+                    });
+                }
+            } else {
+                // CAROUSEL template with empty components - this is correct only if truly static
+                // (no header handles, no variables) - already logged in CAROUSEL handling section
+                console.log(`[Campaign] CAROUSEL template - empty components array is correct (truly static template)`);
+            }
+        }
+        
+        console.log(`[Campaign] Final components to send:`, JSON.stringify(components, null, 2));
 
         try {
             const res = await ctx.runAction(api.whatsapp.sendMessage, {
@@ -138,17 +664,133 @@ export const sendToContact = internalAction({
                 content: {
                     name: campaign.templateName,
                     language: { code: "ar" },
-                    components: []
+                    components: components
                 }
             });
             await ctx.runMutation(internal.campaigns.logBatchResults, {
                 campaignId: args.campaignId,
                 logs: [{ contactId: args.contactId, status: "sent", metaId: res.messages?.[0]?.id }]
             });
+            
+            // Update contact's lastMessagedAt for anti-spam tracking
+            await ctx.runMutation(internal.campaigns.updateContactLastMessaged, {
+                contactId: args.contactId,
+                templateName: campaign.templateName
+            });
         } catch (e: unknown) {
+            // Try to extract error properties from various error formats
+            // Convex action boundaries can strip custom error properties, so we need to parse them
+            let err: Error & { code?: number; category?: string; retryable?: boolean };
+            
+            if (e instanceof Error) {
+                err = e as Error & { code?: number; category?: string; retryable?: boolean };
+                
+                // Try to extract error code from message if properties are missing
+                // Support multiple formats: (#123), error code 123, "code":123
+                if (!err.code && err.message) {
+                    // Format: (#123) - common in WhatsApp API errors
+                    let codeMatch = err.message.match(/\(#(\d+)\)/);
+                    if (!codeMatch) {
+                        // Format: error code 123 or code: 123
+                        codeMatch = err.message.match(/(?:error\s+)?code[:\s]+(\d+)/i);
+                    }
+                    if (!codeMatch) {
+                        // Format: "code":123 - JSON embedded in message
+                        codeMatch = err.message.match(/"code"\s*:\s*(\d+)/);
+                    }
+                    if (codeMatch) {
+                        err.code = parseInt(codeMatch[1], 10);
+                    }
+                }
+                
+                // Try to extract category from message if it contains JSON
+                if (!err.category && err.message) {
+                    const categoryMatch = err.message.match(/"category"\s*:\s*"([^"]+)"/);
+                    if (categoryMatch) {
+                        err.category = categoryMatch[1];
+                    }
+                }
+                
+                // Use centralized error categorization if we have a code but no category
+                if (err.code && !err.category) {
+                    const errorInfo = categorizeWhatsAppError(err.code, err.message);
+                    err.category = errorInfo.category;
+                    err.retryable = errorInfo.retryable;
+                }
+                
+                // Fall back to message-based detection if still no category
+                if (!err.category && err.message) {
+                    if (err.message.includes("not in allowed list")) {
+                        err.category = "PHONE_NOT_ALLOWED";
+                        err.retryable = false;
+                    } else if (err.message.includes("Parameter format") || err.message.includes("parameter format")) {
+                        err.category = "TEMPLATE_FORMAT";
+                        err.retryable = false;
+                    } else if (err.message.toLowerCase().includes("rate limit") || err.message.includes("throttl")) {
+                        err.category = "RATE_LIMIT";
+                        err.retryable = true;
+                    } else if (err.message.toLowerCase().includes("permission") || err.message.includes("does not have permission")) {
+                        err.category = "AUTH_ERROR";
+                        err.retryable = false;
+                    } else if (err.message.toLowerCase().includes("unauthorized") || err.message.includes("invalid token")) {
+                        err.category = "AUTH_ERROR";
+                        err.retryable = false;
+                    }
+                }
+                
+                // Ensure retryable is set based on category if not already set
+                if (err.retryable === undefined && err.category) {
+                    err.retryable = err.category === "RATE_LIMIT" || err.category === "NETWORK_ERROR";
+                }
+            } else {
+                err = new Error(String(e)) as Error & { code?: number; category?: string; retryable?: boolean };
+            }
+            
+            const errorMsg = err?.message || String(e);
+            
+            // Handle specific WhatsApp errors gracefully
+            if (err.code === 131030) {
+                // Phone number not in allowed list - non-retryable, log as failed
+                // This typically happens in sandbox mode when phone isn't added to test list
+                console.log(`[Campaign] Skipping contact ${args.contactId}: Phone number not in allowed list (sandbox mode)`);
+            } else if (err.code === 10) {
+                // Permission error - non-retryable, log as failed
+                // This happens when the app doesn't have required WhatsApp Business API permissions
+                console.error(`[Campaign] Permission error for contact ${args.contactId}:`, {
+                    error: errorMsg,
+                    suggestion: "Check WhatsApp Business API permissions in Meta Business Suite"
+                });
+            } else if (err.code === 132012) {
+                // Template format error - non-retryable, log as failed
+                console.error(`[Campaign] Template format error for contact ${args.contactId}:`, {
+                    error: errorMsg,
+                    templateName: campaign.templateName,
+                    componentsSent: components.length,
+                    templateComponents: template?.components?.length || 0
+                });
+            } else if (err.code === 80005 || err.code === 200) {
+                // Rate limit error - these are retryable
+                console.warn(`[Campaign] Retryable error (${err.code}) for contact ${args.contactId}: ${errorMsg}`);
+                // Re-throw to let the retrier handle it
+                throw err;
+            } else {
+                // Unknown error - log details for debugging
+                console.error(`[Campaign] Unexpected error for contact ${args.contactId}:`, {
+                    code: err.code,
+                    category: err.category,
+                    message: errorMsg,
+                    retryable: err.retryable,
+                });
+            }
+            
+            // Log the failure
             await ctx.runMutation(internal.campaigns.logBatchResults, {
                 campaignId: args.campaignId,
-                logs: [{ contactId: args.contactId, status: "failed", error: String((e as Error)?.message || e) }]
+                logs: [{ 
+                    contactId: args.contactId, 
+                    status: "failed", 
+                    error: `${err.code ? `[${err.code}] ` : ""}${errorMsg}` 
+                }]
             });
         }
 
@@ -178,12 +820,40 @@ export const getContactById = internalQuery({
 export const remove = mutation({
     args: { id: v.id("campaigns") },
     handler: async (ctx, args) => {
-        const logs = await ctx.db.query("campaign_logs").withIndex("by_campaign", q => q.eq("campaignId", args.id)).collect();
-        for (const log of logs) {
-            await ctx.db.delete(log._id);
+        // Check if campaign exists first
+        const campaign = await ctx.db.get(args.id);
+        if (!campaign) {
+            console.warn(`[Campaign] Attempt to delete non-existent campaign: ${args.id}`);
+            return false;
         }
-        await ctx.db.delete(args.id);
-        return true;
+
+        try {
+            // Delete associated logs
+            const logs = await ctx.db.query("campaign_logs")
+                .withIndex("by_campaign", q => q.eq("campaignId", args.id))
+                .collect();
+            
+            for (const log of logs) {
+                try {
+                    await ctx.db.delete(log._id);
+                } catch (logError) {
+                    console.warn(`[Campaign] Failed to delete log ${log._id}:`, logError);
+                }
+            }
+
+            // Delete the campaign
+            await ctx.db.delete(args.id);
+            console.log(`[Campaign] Successfully deleted campaign ${args.id} and ${logs.length} associated logs`);
+            return true;
+        } catch (error) {
+            // Handle case where campaign was deleted between check and delete
+            const err = error as Error & { code?: string };
+            if (err.code === "InvalidId" || err.message?.includes("nonexistent")) {
+                console.warn(`[Campaign] Campaign ${args.id} was already deleted`);
+                return false;
+            }
+            throw error;
+        }
     }
 });
 
@@ -271,7 +941,8 @@ export const getBatchForProcessing = internalQuery({
         return {
             contacts: page.page,
             nextCursor: page.continueCursor,
-            templateName: campaign.templateName
+            templateName: campaign.templateName,
+            sendingConfig: campaign.sendingConfig  // Anti-spam config
         };
     }
 });
@@ -279,13 +950,13 @@ export const getBatchForProcessing = internalQuery({
 export const updateStatus = internalMutation({
     args: { campaignId: v.id("campaigns"), status: v.string(), total: v.optional(v.number()) },
     handler: async (ctx, args) => {
-        const updates: { status: "DRAFT" | "SCHEDULED" | "PROCESSING" | "COMPLETED" | "FAILED" | "PAUSED"; stats?: { total: number; sent: number; delivered: number; read: number; failed: number } } = { status: args.status as "DRAFT" | "SCHEDULED" | "PROCESSING" | "COMPLETED" | "FAILED" | "PAUSED" };
-        if (args.total !== undefined) updates.stats = { total: args.total, sent: 0, delivered: 0, read: 0, failed: 0 };
+        const updates: { status: "DRAFT" | "SCHEDULED" | "PROCESSING" | "COMPLETED" | "FAILED" | "PAUSED"; stats?: { total: number; sent: number; delivered: number; read: number; failed: number; skipped?: number } } = { status: args.status as "DRAFT" | "SCHEDULED" | "PROCESSING" | "COMPLETED" | "FAILED" | "PAUSED" };
+        if (args.total !== undefined) updates.stats = { total: args.total, sent: 0, delivered: 0, read: 0, failed: 0, skipped: 0 };
 
         // Proper merge
         const campaign = await ctx.db.get(args.campaignId);
         if (campaign && args.total !== undefined) {
-            updates.stats = { ...campaign.stats, total: args.total };
+            updates.stats = { ...campaign.stats, total: args.total, skipped: campaign.stats.skipped || 0 };
         }
 
         await ctx.db.patch(args.campaignId, updates);
@@ -299,26 +970,29 @@ export const logBatchResults = internalMutation({
             contactId: v.id("contacts"),
             status: v.string(),
             metaId: v.optional(v.string()),
-            error: v.optional(v.string())
+            error: v.optional(v.string()),
+            skipReason: v.optional(v.string())  // "recently_contacted", "rate_limited", etc.
         }))
     },
     handler: async (ctx, args) => {
         const campaign = await ctx.db.get(args.campaignId);
         if (!campaign) return;
 
-        let sent = 0, failed = 0;
+        let sent = 0, failed = 0, skipped = 0;
 
         for (const log of args.logs) {
             await ctx.db.insert("campaign_logs", {
                 campaignId: args.campaignId,
                 contactId: log.contactId,
-                status: log.status as "sent" | "delivered" | "read" | "failed",
+                status: log.status as "sent" | "delivered" | "read" | "failed" | "skipped",
                 metaMessageId: log.metaId,
-                error: log.error
+                error: log.error,
+                skipReason: log.skipReason
             });
 
             if (log.status === 'sent') sent++;
             if (log.status === 'failed') failed++;
+            if (log.status === 'skipped') skipped++;
         }
 
         // Increment Stats
@@ -326,8 +1000,23 @@ export const logBatchResults = internalMutation({
             stats: {
                 ...campaign.stats,
                 sent: campaign.stats.sent + sent,
-                failed: campaign.stats.failed + failed
+                failed: campaign.stats.failed + failed,
+                skipped: (campaign.stats.skipped || 0) + skipped
             }
+        });
+    }
+});
+
+// Update contact's last messaged timestamp for anti-spam tracking
+export const updateContactLastMessaged = internalMutation({
+    args: {
+        contactId: v.id("contacts"),
+        templateName: v.string()
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.patch(args.contactId, {
+            lastMessagedAt: Date.now(),
+            lastMessagedTemplate: args.templateName
         });
     }
 });
@@ -402,4 +1091,28 @@ export const list = query({
     handler: async (ctx) => {
         return await ctx.db.query("campaigns").order("desc").take(20);
     }
+});
+
+export const getCampaignLogs = query({
+    args: { campaignId: v.id("campaigns") },
+    handler: async (ctx, args) => {
+        const logs = await ctx.db
+            .query("campaign_logs")
+            .withIndex("by_campaign", (q) => q.eq("campaignId", args.campaignId))
+            .collect();
+
+        // Enrich with contact details
+        const enrichedLogs = await Promise.all(
+            logs.map(async (log) => {
+                const contact = await ctx.db.get(log.contactId);
+                return {
+                    ...log,
+                    contactName: contact?.name || "Unknown",
+                    contactPhone: contact?.phone || "N/A",
+                };
+            })
+        );
+
+        return enrichedLogs;
+    },
 });

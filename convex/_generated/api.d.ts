@@ -15,6 +15,7 @@ import type * as auth from "../auth.js";
 import type * as campaigns from "../campaigns.js";
 import type * as chat from "../chat.js";
 import type * as contacts from "../contacts.js";
+import type * as errorUtils from "../errorUtils.js";
 import type * as files from "../files.js";
 import type * as filesInternal from "../filesInternal.js";
 import type * as http from "../http.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   campaigns: typeof campaigns;
   chat: typeof chat;
   contacts: typeof contacts;
+  errorUtils: typeof errorUtils;
   files: typeof files;
   filesInternal: typeof filesInternal;
   http: typeof http;

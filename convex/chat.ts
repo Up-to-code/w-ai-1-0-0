@@ -132,6 +132,102 @@ export const getMessagesPage = query({
   },
 });
 
+/**
+ * Builds WhatsApp template components array from template definition.
+ * Handles HEADER, BODY, and FOOTER components based on template structure.
+ * Similar to processHeaderComponent in campaigns.ts but simplified for chat use.
+ * 
+ * Returns null if template is a carousel (requires special handling via action).
+ */
+function buildTemplateComponents(template: any): any[] | null {
+  const components: any[] = [];
+  
+  if (!template || !template.components) {
+    return components;
+  }
+
+  // Check for CAROUSEL, PRODUCT_CAROUSEL, or CATALOG templates
+  // These require special handling with media uploads
+  const hasCarousel = template.components.some((c: any) => 
+    c.type === "CAROUSEL" || c.type === "carousel" ||
+    c.type === "PRODUCT_CAROUSEL" || c.type === "product_carousel" ||
+    c.type === "CATALOG" || c.type === "catalog"
+  );
+
+  if (hasCarousel) {
+    // Carousel templates require special handling with media uploads
+    // Return null to signal that this needs to be handled by buildAndSendCarouselTemplate
+    return null;
+  }
+
+  // Process standard template components
+  for (const comp of template.components) {
+    // Process HEADER component
+    if (comp.type === "HEADER" || comp.type === "header") {
+      if (comp.format === "IMAGE") {
+        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
+        components.push({
+          type: "header",
+          parameters: [{ type: "image", image: { link } }]
+        });
+      } else if (comp.format === "VIDEO") {
+        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
+        components.push({
+          type: "header",
+          parameters: [{ type: "video", video: { link } }]
+        });
+      } else if (comp.format === "DOCUMENT") {
+        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
+        components.push({
+          type: "header",
+          parameters: [{ type: "document", document: { link, filename: "document.pdf" } }]
+        });
+      } else if (comp.format === "TEXT") {
+        // Check if header has variables
+        const hasVariables = comp.text?.includes("{{") || 
+                            (comp.example?.header_text && comp.example.header_text.length > 0);
+        
+        if (hasVariables && comp.example?.header_text && comp.example.header_text.length > 0) {
+          // Header has variables - include parameters
+          components.push({
+            type: "header",
+            parameters: comp.example.header_text.map((text: string) => ({ type: "text", text }))
+          });
+        } else {
+          // Static text header - include header WITHOUT parameters field
+          // WhatsApp API: if header has no variables, don't include parameters at all
+          components.push({
+            type: "header"
+            // No parameters field for static headers
+          });
+        }
+      }
+    }
+    // Note: BODY and FOOTER components with variables would be handled here if needed
+    // For now, we only handle HEADER as that's what's causing the error
+  }
+
+  // After constructing components array, check if we missed any HEADER components
+  if (components.length === 0) {
+    // Only check for headers in non-carousel templates (carousels are handled separately)
+    const hasHeader = template.components?.some((c: any) => 
+      (c.type === "HEADER" || c.type === "header")
+    );
+    
+    if (hasHeader) {
+      console.warn(`[Chat] Template has HEADER but no header component was added. Template components:`, 
+        JSON.stringify(template.components, null, 2));
+      // Try to add a default header without parameters for static headers
+      components.push({
+        type: "header"
+        // No parameters field for static headers
+      });
+    }
+  }
+
+  return components;
+}
+
 // Send Message Flow
 export const sendMessage = mutation({
   args: {
@@ -164,16 +260,85 @@ export const sendMessage = mutation({
       timestamp: now,
     });
 
-    const payloadContent =
-      args.type === "text"
-        ? { body: args.content }
-        : args.type === "template"
-          ? {
-            name: args.template?.name,
-            language: { code: args.template?.language },
-            components: args.template?.components ?? [],
+    let payloadContent: any;
+    
+    if (args.type === "text") {
+      payloadContent = { body: args.content };
+    } else if (args.type === "template") {
+      // Fetch template from database to get its structure
+      const template = await ctx.runQuery(internal.templates.getTemplateByName, {
+        name: args.template!.name
+      });
+
+      if (!template) {
+        throw new Error(`Template not found: ${args.template!.name}`);
+      }
+
+      if (template.status !== "APPROVED") {
+        console.warn(`[Chat] Template ${template.name} status is ${template.status}, may fail to send`);
+      }
+
+      // Check if this is a carousel template that needs special handling
+      const carouselComp = template.components?.find((c: any) => 
+        c.type === "CAROUSEL" || c.type === "carousel"
+      );
+
+      if (carouselComp && carouselComp.cards) {
+        // Check if carousel has header handles that need media upload
+        let cardsHaveHeaderHandles = false;
+        for (const card of carouselComp.cards) {
+          if (card.components) {
+            for (const cardComp of card.components) {
+              if (cardComp.type === "HEADER" && cardComp.example?.header_handle) {
+                cardsHaveHeaderHandles = true;
+                break;
+              }
+            }
           }
-          : { id: args.mediaId, caption: args.content };
+          if (cardsHaveHeaderHandles) break;
+        }
+
+        // If carousel has header handles, use special action to upload media and send
+        if (cardsHaveHeaderHandles) {
+          console.log(`[Chat] Carousel template with header handles detected, using buildAndSendCarouselTemplate action`);
+          await ctx.scheduler.runAfter(0, internal.chat.buildAndSendCarouselTemplate, {
+            messageId: messageId,
+            to: chat.contactPhone,
+            templateName: template.name,
+            language: args.template!.language,
+            template: template,
+          });
+          
+          // Update chat and return early (message will be sent by the action)
+          await ctx.db.patch(args.chatId, {
+            lastMessageTime: now,
+            status: "active",
+          });
+          return;
+        }
+      }
+
+      // Build components based on template definition
+      const components = buildTemplateComponents(template);
+
+      // If buildTemplateComponents returned null, it means carousel without headers
+      // For static carousels, we can send empty components
+      if (components === null) {
+        payloadContent = {
+          name: template.name,
+          language: { code: args.template!.language },
+          components: [],
+        };
+      } else {
+        payloadContent = {
+          name: template.name,
+          language: { code: args.template!.language },
+          components: components,
+        };
+      }
+    } else {
+      payloadContent = { id: args.mediaId, caption: args.content };
+    }
 
     // Send via WhatsApp API Action
     console.log(`[Chat] Scheduling WhatsApp send for msg ${messageId} to ${chat.contactPhone}`);
@@ -193,6 +358,264 @@ export const sendMessage = mutation({
     });
 
     await Promise.all([patchChatPromise, schedulePromise]);
+  },
+});
+
+/**
+ * Internal action to build and send carousel templates with proper media handling.
+ * This handles carousel templates that have header handles requiring media uploads.
+ * Similar to carousel handling in campaigns.ts.
+ */
+export const buildAndSendCarouselTemplate = internalAction({
+  args: {
+    messageId: v.id("messages"),
+    to: v.string(),
+    templateName: v.string(),
+    language: v.string(),
+    template: v.any(),
+  },
+  handler: async (ctx, args): Promise<any> => {
+    try {
+      const template = args.template;
+      const carouselComp = template.components?.find((c: any) => 
+        c.type === "CAROUSEL" || c.type === "carousel"
+      );
+
+      if (!carouselComp || !carouselComp.cards) {
+        throw new Error("Carousel component not found in template");
+      }
+
+      console.log(`[Chat] Processing CAROUSEL template with ${carouselComp.cards.length} cards`);
+
+      // Check if template body has variables
+      const bodyComp = template.components.find((c: any) => 
+        c.type === "BODY" || c.type === "body"
+      );
+      const bodyHasVariables = bodyComp?.text?.includes("{{");
+
+      // Check if any card components have variables or require parameters
+      let cardsHaveHeaderHandles = false;
+      let cardsHaveVariables = false;
+
+      for (const card of carouselComp.cards) {
+        if (card.components) {
+          for (const cardComp of card.components) {
+            // Check for headers with example.header_handle
+            if (cardComp.type === "HEADER" && cardComp.example?.header_handle) {
+              cardsHaveHeaderHandles = true;
+            }
+            // Check body text for variables
+            if (cardComp.type === "BODY" && cardComp.text?.includes("{{")) {
+              cardsHaveVariables = true;
+            }
+            // Check button URLs for variables
+            if (cardComp.type === "BUTTONS" && cardComp.buttons) {
+              for (const btn of cardComp.buttons) {
+                if (btn.url?.includes("{{") || btn.example) {
+                  cardsHaveVariables = true;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        // Early exit if we found both
+        if (cardsHaveHeaderHandles && cardsHaveVariables) break;
+      }
+
+      console.log(`[Chat] CAROUSEL analysis:`, {
+        bodyHasVariables,
+        cardsHaveHeaderHandles,
+        cardsHaveVariables
+      });
+
+      const components: any[] = [];
+
+      // IMPORTANT: WhatsApp carousel templates REQUIRE header parameters for each card.
+      // We cannot send empty components or skip headers.
+      // 
+      // The header_handle URLs stored in templates are temporary and expire (403 Forbidden).
+      // We need to upload the media to WhatsApp and get fresh media IDs before sending.
+
+      if (cardsHaveHeaderHandles) {
+        console.log(`[Chat] CAROUSEL has ${carouselComp.cards.length} cards with media headers - uploading to get media IDs`);
+
+        // Upload media for each card header and collect media IDs
+        const mediaIds: (string | null)[] = [];
+
+        for (let i = 0; i < carouselComp.cards.length; i++) {
+          const card = carouselComp.cards[i];
+          const headerComp = card.components?.find((c: any) => 
+            c.type === "HEADER" || c.type === "header"
+          );
+
+          if (headerComp?.example?.header_handle?.[0]) {
+            const headerUrl = headerComp.example.header_handle[0];
+            const headerFormat = (headerComp.format || "IMAGE").toLowerCase();
+
+            console.log(`[Chat] Card ${i}: Uploading ${headerFormat} from header_handle...`);
+
+            try {
+              // Upload media to WhatsApp and get a media ID
+              const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
+                url: headerUrl,
+                type: headerFormat,
+              });
+              mediaIds.push(mediaId);
+              console.log(`[Chat] Card ${i}: Got media ID: ${mediaId}`);
+            } catch (uploadError) {
+              console.error(`[Chat] Card ${i}: Failed to upload media:`, uploadError);
+              // Store null - we'll handle this error below
+              mediaIds.push(null);
+            }
+          } else {
+            mediaIds.push(null);
+          }
+        }
+
+        // Check if any uploads failed
+        const failedUploads = mediaIds.filter(id => id === null).length;
+        if (failedUploads > 0) {
+          const errorMsg = `Failed to upload ${failedUploads} media items for carousel. The template media URLs may have expired. Please edit the template and re-upload the images.`;
+          console.error(`[Chat] ${failedUploads}/${mediaIds.length} media uploads failed - header_handle URLs may be expired`);
+          
+          // Update message status to failed
+          await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
+            messageId: args.messageId,
+            status: "failed",
+          });
+          
+          throw new Error(errorMsg);
+        }
+
+        // Build carousel cards with media IDs
+        const carouselCards = carouselComp.cards.map((card: any, index: number) => {
+          const cardComponents: any[] = [];
+          const headerComp = card.components?.find((c: any) => 
+            c.type === "HEADER" || c.type === "header"
+          );
+
+          // Add header with media ID
+          if (mediaIds[index]) {
+            const headerFormat = (headerComp?.format || "IMAGE").toLowerCase();
+            const headerParam: any = { type: headerFormat };
+
+            if (headerFormat === "image") {
+              headerParam.image = { id: mediaIds[index] };
+            } else if (headerFormat === "video") {
+              headerParam.video = { id: mediaIds[index] };
+            } else {
+              // Fallback to image
+              headerParam.image = { id: mediaIds[index] };
+            }
+
+            cardComponents.push({
+              type: "header",
+              parameters: [headerParam]
+            });
+          }
+
+          // Process body if it has variables (TODO: implement variable substitution)
+          const cardBodyComp = card.components?.find((c: any) => 
+            c.type === "BODY" || c.type === "body"
+          );
+          if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
+            console.log(`[Chat] Card ${index} body has variables - needs implementation`);
+          }
+
+          // Process buttons if they have variables (TODO: implement)
+          const buttonsComp = card.components?.find((c: any) => 
+            c.type === "BUTTONS" || c.type === "buttons"
+          );
+          if (buttonsComp?.buttons) {
+            const hasButtonVariables = buttonsComp.buttons.some((btn: any) => 
+              btn.url?.includes("{{") || btn.example
+            );
+            if (hasButtonVariables) {
+              console.log(`[Chat] Card ${index} buttons have variables - needs implementation`);
+            }
+          }
+
+          return {
+            card_index: index,
+            components: cardComponents
+          };
+        });
+
+        // Add body component if main body has variables
+        if (bodyHasVariables) {
+          console.log(`[Chat] CAROUSEL template body has variables - needs implementation`);
+        }
+
+        // Add carousel component
+        components.push({
+          type: "carousel",
+          cards: carouselCards
+        });
+
+        console.log(`[Chat] Constructed carousel with ${carouselCards.length} cards using media IDs`);
+      } else {
+        // Carousel without media headers - just handle variables if any
+        console.log(`[Chat] CAROUSEL without media headers - processing variables only`);
+
+        if (bodyHasVariables || cardsHaveVariables) {
+          const carouselCards = carouselComp.cards.map((card: any, index: number) => {
+            const cardComponents: any[] = [];
+
+            // Process body if it has variables
+            const cardBodyComp = card.components?.find((c: any) => 
+              c.type === "BODY" || c.type === "body"
+            );
+            if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
+              console.log(`[Chat] Card ${index} body has variables - needs implementation`);
+            }
+
+            return {
+              card_index: index,
+              components: cardComponents
+            };
+          });
+
+          components.push({
+            type: "carousel",
+            cards: carouselCards
+          });
+        }
+        // If no headers and no variables, empty components array is OK
+      }
+
+      // Send the message with built components
+      const payloadContent = {
+        name: args.templateName,
+        language: { code: args.language },
+        components: components,
+      };
+
+      console.log(`[Chat] Sending carousel template with ${components.length} component(s)`);
+      const result: any = await ctx.runAction(api.whatsapp.sendMessage, {
+        to: args.to,
+        type: "template",
+        content: payloadContent,
+        messageId: args.messageId,
+      });
+
+      console.log(`[Chat] Carousel template sent successfully`);
+      return result;
+    } catch (error) {
+      console.error(`[Chat] Failed to build and send carousel template:`, error);
+      
+      // Update message status to failed
+      try {
+        await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
+          messageId: args.messageId,
+          status: "failed",
+        });
+      } catch (updateError) {
+        console.error(`[Chat] Failed to update message status:`, updateError);
+      }
+      
+      throw error;
+    }
   },
 });
 
@@ -292,16 +715,14 @@ export const saveIncomingMessage = internalMutation({
         const notifBody = args.messageType === "text" ? args.content : `Sent a ${args.messageType}`;
 
         for (const admin of admins) {
-          if (admin.tokenIdentifier) {
-            await pushNotifications.sendPushNotification(ctx, {
-              userId: admin.tokenIdentifier,
-              notification: {
-                title: notifTitle,
-                body: notifBody,
-                data: { chatId: chatId },
-              },
-            });
-          }
+          await pushNotifications.sendPushNotification(ctx, {
+            userId: admin._id,
+            notification: {
+              title: notifTitle,
+              body: notifBody,
+              data: { chatId: chatId },
+            },
+          });
         }
       }
     } catch (e) {
@@ -408,6 +829,18 @@ export const updateMessageMetaId = internalMutation({
   handler: async (ctx, args) => {
     await ctx.db.patch(args.messageId, {
       metaMessageId: args.metaMessageId,
+    });
+  },
+});
+
+export const updateMessageStatusDirect = internalMutation({
+  args: {
+    messageId: v.id("messages"),
+    status: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.messageId, {
+      status: args.status as any,
     });
   },
 });

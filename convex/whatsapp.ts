@@ -1,6 +1,12 @@
 import { action, internalAction, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
+import {
+  categorizeWhatsAppError,
+  validateAndCleanPhoneNumber,
+  WhatsAppAPIError,
+  createErrorReport,
+} from "./errorUtils";
 
 const WHATSAPP_API_URL = "https://graph.facebook.com/v21.0";
 
@@ -22,7 +28,16 @@ export const sendMessage = action({
       throw new Error("Missing WhatsApp Environment Variables");
     }
 
-    const recipient = args.to.replace(/\D/g, '');
+    // Validate and clean phone number
+    let recipient: string;
+    try {
+      recipient = validateAndCleanPhoneNumber(args.to);
+    } catch (err) {
+      const error = err as Error;
+      console.error("[WhatsApp] Phone number validation failed:", error.message);
+      throw error;
+    }
+
     console.log(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
 
     const payload: any = {
@@ -33,38 +48,96 @@ export const sendMessage = action({
     };
 
     console.log(`[WhatsApp] Sending payload to ${recipient} via ${WHATSAPP_API_URL}/${phoneId}/messages`);
+    console.log(`[WhatsApp] Payload:`, JSON.stringify(payload, null, 2));
 
-    const response = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${accessToken}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(payload),
-    });
-
-    console.log(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
-    const data = await response.json();
-
-    if (!response.ok) {
-      console.error("[WhatsApp] API Failure Details:", JSON.stringify(data));
-      throw new Error(`WhatsApp API Error: ${data.error?.message || "Unknown error"}`);
-    }
-
-    console.log("[WhatsApp] Send Success:", JSON.stringify(data));
-
-    // Link Meta ID to Internal Message
-    // Link Meta ID to Internal Message
-    if (args.messageId && data.messages?.[0]?.id) {
-      const wamid = data.messages[0].id;
-      await ctx.runMutation((internal as any).chat.updateMessageMetaId, {
-        messageId: args.messageId,
-        metaMessageId: wamid
+    try {
+      const response = await fetch(`${WHATSAPP_API_URL}/${phoneId}/messages`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
       });
-      console.log(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
-    }
 
-    return data;
+      console.log(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        const errorCode = data.error?.code || response.status;
+        const errorMessage = data.error?.message || "Unknown error";
+        const errorCategory = categorizeWhatsAppError(errorCode, errorMessage);
+
+        console.error(
+          `[WhatsApp] API Error (${errorCategory.category}):`,
+          JSON.stringify(data),
+          `Retryable: ${errorCategory.retryable}`
+        );
+
+        // Create structured error report
+        const errorReport = createErrorReport(
+          new Error(errorMessage) as Error & { code?: number; retryable?: boolean },
+          { contact: args.to, phone: recipient }
+        );
+        errorReport.code = errorCode;
+        console.error("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
+
+        // Create and throw a typed error
+        // Ensure properties are enumerable so they survive serialization across action boundaries
+        const error = new Error(errorMessage) as Error & { 
+          code?: number; 
+          category?: string; 
+          retryable?: boolean;
+        };
+        
+        // Set properties and make them enumerable
+        Object.defineProperty(error, 'code', { 
+          value: errorCode, 
+          enumerable: true, 
+          writable: true,
+          configurable: true
+        });
+        Object.defineProperty(error, 'category', { 
+          value: errorCategory.category, 
+          enumerable: true, 
+          writable: true,
+          configurable: true
+        });
+        Object.defineProperty(error, 'retryable', { 
+          value: errorCategory.retryable, 
+          enumerable: true, 
+          writable: true,
+          configurable: true
+        });
+
+        throw error;
+      }
+
+      console.log("[WhatsApp] Send Success:", JSON.stringify(data));
+
+      // Link Meta ID to Internal Message
+      if (args.messageId && data.messages?.[0]?.id) {
+        const wamid = data.messages[0].id;
+        await ctx.runMutation((internal as any).chat.updateMessageMetaId, {
+          messageId: args.messageId,
+          metaMessageId: wamid,
+        });
+        console.log(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
+      }
+
+      return data;
+    } catch (error) {
+      // Log structured error info
+      const err = error as Error & { code?: number; category?: string; retryable?: boolean };
+      console.error("[WhatsApp] Exception during send:", {
+        message: err.message,
+        code: err.code,
+        category: err.category,
+        retryable: err.retryable,
+        stack: err.stack,
+      });
+      throw error;
+    }
   },
 });
 
@@ -281,6 +354,65 @@ export const uploadMedia = action({
     }
 
     return data.id; // Meta Media ID
+  }
+});
+
+/**
+ * Upload media from an external URL and get a WhatsApp Media ID.
+ * This is used for sending carousel templates where we need fresh media IDs.
+ * The returned media ID is valid for 30 days and can be used in send requests.
+ */
+export const uploadMediaFromUrl = action({
+  args: {
+    url: v.string(),      // External URL to the image/video
+    type: v.string(),     // "image" or "video"
+    mimeType: v.optional(v.string()), // Optional: specific mime type like "image/jpeg"
+  },
+  handler: async (ctx, args) => {
+    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+    const phoneId = process.env.WHATSAPP_PHONE_ID;
+
+    if (!accessToken || !phoneId) {
+      throw new Error("Missing WhatsApp Env Vars (ACCESS_TOKEN or PHONE_ID)");
+    }
+
+    console.log(`[uploadMediaFromUrl] Fetching media from: ${args.url.substring(0, 80)}...`);
+
+    // 1. Fetch the file from external URL
+    const fileRes = await fetch(args.url);
+    if (!fileRes.ok) {
+      console.error(`[uploadMediaFromUrl] Failed to fetch: ${fileRes.status} ${fileRes.statusText}`);
+      throw new Error(`Failed to fetch media from URL: ${fileRes.status} ${fileRes.statusText}`);
+    }
+
+    const blob = await fileRes.blob();
+    const contentType = args.mimeType || 
+                        fileRes.headers.get("content-type") || 
+                        (args.type === "video" ? "video/mp4" : "image/jpeg");
+
+    console.log(`[uploadMediaFromUrl] Uploading ${contentType}, size: ${blob.size} bytes`);
+
+    // 2. Prepare Form Data for WhatsApp Media API
+    const formData = new FormData();
+    formData.append("file", blob, `media.${args.type === "video" ? "mp4" : "jpg"}`);
+    formData.append("type", contentType);
+    formData.append("messaging_product", "whatsapp");
+
+    // 3. Upload to WhatsApp Media API
+    const response = await fetch(`${WHATSAPP_API_URL}/${phoneId}/media`, {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${accessToken}` },
+      body: formData
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error("[uploadMediaFromUrl] Upload Error:", data);
+      throw new Error(data.error?.message || "Failed to upload media to WhatsApp");
+    }
+
+    console.log(`[uploadMediaFromUrl] Success! Media ID: ${data.id}`);
+    return data.id; // WhatsApp Media ID to use in send requests
   }
 });
 

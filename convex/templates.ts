@@ -1,4 +1,4 @@
-import { query, mutation, action, internalMutation } from "./_generated/server";
+import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 
@@ -9,6 +9,23 @@ export const list = query({
 });
 
 export const getByName = query({
+  args: { name: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("templates")
+      .filter((q: any) => q.eq(q.field("name"), args.name))
+      .first();
+  },
+});
+
+export const getById = query({
+  args: { id: v.id("templates") },
+  handler: async (ctx, args) => {
+    return await ctx.db.get(args.id);
+  },
+});
+
+export const getTemplateByName = internalQuery({
   args: { name: v.string() },
   handler: async (ctx, args) => {
     return await ctx.db
