@@ -47,7 +47,7 @@ export default function CampaignDetailPage() {
   const id = params?.campaignId as string | undefined
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
 
-  const campaigns = useQuery(api.campaigns.list)
+  const campaigns = useQuery(api.campaigns.list, {})
   const campaign = (campaigns || []).find(c => String(c._id) === id)
   
   // Fetch campaign logs - only when we have a valid campaign
