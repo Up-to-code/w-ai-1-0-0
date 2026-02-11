@@ -13,12 +13,13 @@ import { useWorkspace } from "@/contexts/WorkspaceContext"
 export default function CustomersPage() {
   const { activePhoneNumberId } = useWorkspace()
   
-  // "__all__" means show all contacts (no filter); otherwise filter by specific number
-  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
-  
+  // "__all__" or null = show all. Convex expects undefined, not null.
+  const effectivePhoneNumberId =
+    !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+
   const contacts = useQuery(api.contacts.list, { limit: 1000 })
   const chats = useQuery(api.chat.listChats, {
-    phoneNumberId: effectivePhoneNumberId ?? undefined,
+    phoneNumberId: effectivePhoneNumberId,
   })
 
   const [searchQuery, setSearchQuery] = useState("")

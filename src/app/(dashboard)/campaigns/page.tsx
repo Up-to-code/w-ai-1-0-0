@@ -41,9 +41,10 @@ import { useWorkspace } from "@/contexts/WorkspaceContext"
 export default function CampaignsPage() {
   const { activePhoneNumberId } = useWorkspace()
   
-  // "__all__" means show all campaigns (no filter); otherwise filter by specific number
-  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
-  
+  // "__all__" or null = show all. Convex expects undefined, not null.
+  const effectivePhoneNumberId =
+    !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+
   const campaigns = useQuery(api.campaigns.list, { phoneNumberId: effectivePhoneNumberId })
   const templates = useQuery(api.templates.list)
   const removeCampaign = useMutation(api.campaigns.remove)

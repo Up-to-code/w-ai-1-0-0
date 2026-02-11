@@ -44,8 +44,9 @@ export default function TemplatesPage() {
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
     
-    // "__all__" means use default/first number; otherwise use specific number
-    const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+    // "__all__" or null = default number. Convex expects undefined, not null.
+    const effectivePhoneNumberId =
+      !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
     const [search, setSearch] = useState("")
     const [activeTab, setActiveTab] = useState("all")

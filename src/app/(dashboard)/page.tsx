@@ -29,9 +29,10 @@ import { useWorkspace } from "@/contexts/WorkspaceContext"
 export default function DashboardPage() {
     const { activePhoneNumberId } = useWorkspace()
     
-    // "__all__" means show all stats (no filter); otherwise filter by specific number
-    const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
-    
+    // "__all__" or null = show all stats (no filter). Convex expects undefined, not null.
+    const effectivePhoneNumberId =
+      !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+
     const stats = useQuery(api.stats.getDashboardStats, { phoneNumberId: effectivePhoneNumberId })
 
     // Fallback/Loading State

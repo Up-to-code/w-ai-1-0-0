@@ -16,11 +16,12 @@ export function ChatSidebar() {
   const selectedChatId = params?.chatId as string | undefined
   const { activePhoneNumberId } = useWorkspace()
 
-  // "__all__" means show all chats (no filter); otherwise filter by specific number
-  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+  // "__all__" or null = show all. Convex expects undefined, not null.
+  const effectivePhoneNumberId =
+    !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
   const chats = useQuery(api.chat.listChats, {
-    phoneNumberId: effectivePhoneNumberId ?? undefined,
+    phoneNumberId: effectivePhoneNumberId,
   })
   const [searchQuery, setSearchQuery] = useState("")
 
