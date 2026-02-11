@@ -24,9 +24,15 @@ import {
 } from "lucide-react"
 import { useQuery } from "convex/react"
 import { api } from "../../../convex/_generated/api"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function DashboardPage() {
-    const stats = useQuery(api.stats.getDashboardStats)
+    const { activePhoneNumberId } = useWorkspace()
+    
+    // "__all__" means show all stats (no filter); otherwise filter by specific number
+    const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+    
+    const stats = useQuery(api.stats.getDashboardStats, { phoneNumberId: effectivePhoneNumberId })
 
     // Fallback/Loading State
     if (!stats) {

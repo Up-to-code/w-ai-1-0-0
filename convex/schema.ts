@@ -47,12 +47,13 @@ export default defineSchema({
     .index("by_phoneNumberId_last_message", ["phoneNumberId", "lastMessageTime"]),
 
   ai_configs: defineTable({
+    phoneNumberId: v.optional(v.string()), // null/undefined = global default; otherwise per-number config
     systemPrompt: v.string(),
     model: v.string(),
     temperature: v.optional(v.number()),
     isActive: v.boolean(),
     updatedAt: v.number(),
-  }),
+  }).index("by_phone_number_id", ["phoneNumberId"]),
 
   agent_feedback: defineTable({
     source: v.union(v.literal("test"), v.literal("chat")),
@@ -196,7 +197,7 @@ export default defineSchema({
       recentContactHours: v.number(),     // Hours to consider "recent"
     })),
     createdAt: v.number(),
-  }),
+  }).index("by_phone_number_id", ["phoneNumberId"]),
 
   // Workflows (Automation)
   workflows: defineTable({

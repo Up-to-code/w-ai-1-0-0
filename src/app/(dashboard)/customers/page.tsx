@@ -12,9 +12,13 @@ import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function CustomersPage() {
   const { activePhoneNumberId } = useWorkspace()
+  
+  // "__all__" means show all contacts (no filter); otherwise filter by specific number
+  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+  
   const contacts = useQuery(api.contacts.list, { limit: 1000 })
   const chats = useQuery(api.chat.listChats, {
-    phoneNumberId: activePhoneNumberId ?? undefined,
+    phoneNumberId: effectivePhoneNumberId ?? undefined,
   })
 
   const [searchQuery, setSearchQuery] = useState("")
@@ -31,10 +35,10 @@ export default function CustomersPage() {
   // When a specific number is selected: only show contacts that have a chat with this number
   const contactsForCurrentNumber = useMemo(() => {
     const list = contacts || []
-    if (!activePhoneNumberId || !chats?.length) return list
+    if (!effectivePhoneNumberId || !chats?.length) return list
     const phonesWithChat = new Set((chats || []).map(c => c.contactPhone).filter(Boolean))
     return list.filter(c => phonesWithChat.has(c.phone))
-  }, [contacts, chats, activePhoneNumberId])
+  }, [contacts, chats, effectivePhoneNumberId])
 
   const uniqueTags = useMemo(() => {
     const set = new Set<string>()
@@ -74,7 +78,7 @@ export default function CustomersPage() {
         <CardHeader className="space-y-2">
           <CardTitle>قائمة العملاء</CardTitle>
           <CardDescription>
-            {activePhoneNumberId
+            {effectivePhoneNumberId
               ? `جهات اتصال لهذا الرقم: ${contactsForCurrentNumber.length}`
               : `إجمالي: ${contacts ? contacts.length : 0}`}
           </CardDescription>

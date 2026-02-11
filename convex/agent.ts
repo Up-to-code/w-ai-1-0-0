@@ -104,7 +104,7 @@ export const runRealTest = action({
   handler: async (ctx, args): Promise<{ message: string; model: string; response: string }> => {
     const apiKey = process.env.OPENROUTER_KEY;
     if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
-    const config = await ctx.runQuery(api.ai_config.getConfig) as { systemPrompt?: string; model?: string } | null;
+    const config = await ctx.runQuery(api.ai_config.getConfig, {}) as { systemPrompt?: string; model?: string } | null;
     const systemPrompt = config?.systemPrompt ?? "You are a helpful sales assistant.";
     const model = config?.model ?? "arcee-ai/trinity-mini:free";
     const userMessage = (args.message ?? "مرحبا، ما المنتجات المتوفرة؟").trim();
@@ -323,8 +323,11 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     } | null = null;
 
     // 1. Get AI Config & Chat Details
-    const config = await ctx.runQuery(api.ai_config.getInternalConfig);
     const chat = await ctx.runQuery(api.chat.getChat, { chatId: args.chatId });
+    // Get AI config for this specific phone number (falls back to global if none)
+    const config = await ctx.runQuery(internal.ai_config.getInternalConfig, { 
+      phoneNumberId: chat?.phoneNumberId 
+    });
     const model = config?.model || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
 

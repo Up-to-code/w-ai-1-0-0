@@ -43,6 +43,9 @@ export default function TemplatesPage() {
     const { activePhoneNumberId } = useWorkspace()
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
+    
+    // "__all__" means use default/first number; otherwise use specific number
+    const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
     const [search, setSearch] = useState("")
     const [activeTab, setActiveTab] = useState("all")
@@ -60,7 +63,7 @@ export default function TemplatesPage() {
     const handleSync = async () => {
         setIsSyncing(true)
         try {
-            const count = await syncFromMeta({ phoneNumberId: activePhoneNumberId ?? undefined })
+            const count = await syncFromMeta({ phoneNumberId: effectivePhoneNumberId ?? undefined })
             showToast("success", `تم مزامنة ${count} قالب بنجاح`)
         } catch (error) {
             console.error("Sync failed:", error)
@@ -74,7 +77,7 @@ export default function TemplatesPage() {
         if (!deleteTemplateData) return
         setIsDeleting(true)
         try {
-            await deleteTemplate({ name: deleteTemplateData.name, phoneNumberId: activePhoneNumberId ?? undefined })
+            await deleteTemplate({ name: deleteTemplateData.name, phoneNumberId: effectivePhoneNumberId ?? undefined })
             showToast("success", `تم حذف القالب "${deleteTemplateData.name}" بنجاح`)
             setDeleteTemplateData(null)
         } catch (error: any) {

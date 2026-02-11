@@ -36,9 +36,15 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function CampaignsPage() {
-  const campaigns = useQuery(api.campaigns.list)
+  const { activePhoneNumberId } = useWorkspace()
+  
+  // "__all__" means show all campaigns (no filter); otherwise filter by specific number
+  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+  
+  const campaigns = useQuery(api.campaigns.list, { phoneNumberId: effectivePhoneNumberId })
   const templates = useQuery(api.templates.list)
   const removeCampaign = useMutation(api.campaigns.remove)
   const createCampaign = useMutation(api.campaigns.create)

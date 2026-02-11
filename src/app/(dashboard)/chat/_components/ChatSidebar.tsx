@@ -16,8 +16,11 @@ export function ChatSidebar() {
   const selectedChatId = params?.chatId as string | undefined
   const { activePhoneNumberId } = useWorkspace()
 
+  // "__all__" means show all chats (no filter); otherwise filter by specific number
+  const effectivePhoneNumberId = activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+
   const chats = useQuery(api.chat.listChats, {
-    phoneNumberId: activePhoneNumberId ?? undefined,
+    phoneNumberId: effectivePhoneNumberId ?? undefined,
   })
   const [searchQuery, setSearchQuery] = useState("")
 

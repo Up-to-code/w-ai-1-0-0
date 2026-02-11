@@ -17,10 +17,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Save, RefreshCw, Send, Star, Plus, FlaskConical } from "lucide-react";
+import { Save, RefreshCw, Send, Star, Plus, FlaskConical, Phone } from "lucide-react";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
 
 export default function AiSettingsPage() {
-  const config = useQuery(api.ai_config.getConfig);
+  const { activePhoneNumberId, activeWorkspace, isLoading: workspaceLoading } = useWorkspace();
+  
+  // Use activePhoneNumberId for per-number config; "__all__" or undefined/null means global config
+  const effectivePhoneNumberId = (activePhoneNumberId === "__all__" || !activePhoneNumberId) ? undefined : activePhoneNumberId;
+  
+  const config = useQuery(api.ai_config.getConfig, { phoneNumberId: effectivePhoneNumberId });
   const updateConfig = useMutation(api.ai_config.updateConfig);
   const runTest = useAction(api.agent.runTest);
   const saveFeedback = useMutation(api.agent.saveFeedback);
@@ -72,6 +78,7 @@ export default function AiSettingsPage() {
   const handleSave = async () => {
     try {
       await updateConfig({
+        phoneNumberId: effectivePhoneNumberId,
         systemPrompt,
         model,
         temperature: temperature ?? undefined,
@@ -177,7 +184,7 @@ export default function AiSettingsPage() {
     }
   };
 
-  if (config === undefined) {
+  if (config === undefined || workspaceLoading) {
     return (
       <div className="p-8 flex items-center justify-center" dir="rtl">
         <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -190,6 +197,18 @@ export default function AiSettingsPage() {
       {/* شريط علوي */}
       <div className="flex flex-wrap items-center justify-between gap-4 rounded-xl border bg-card px-4 py-3">
         <div className="flex items-center gap-4">
+          {/* Show which number's config is being edited */}
+          <div className="flex items-center gap-2 text-sm">
+            <Phone className="h-4 w-4 text-muted-foreground" />
+            <span className="text-muted-foreground">
+              {activeWorkspace ? (
+                <>إعدادات: <strong className="text-foreground">{activeWorkspace.name || activeWorkspace.phone}</strong></>
+              ) : (
+                <>إعدادات: <strong className="text-foreground">عامة (كل الأرقام)</strong></>
+              )}
+            </span>
+          </div>
+          <span className="text-muted-foreground">|</span>
           <span className={isActive ? "text-emerald-600 font-medium" : "text-muted-foreground"}>
             {isActive ? "المساعد نشط" : "المساعد متوقف"}
           </span>
