@@ -64,11 +64,12 @@ export default function TemplatesPage() {
     const handleSync = async () => {
         setIsSyncing(true)
         try {
-            const count = await syncFromMeta({ phoneNumberId: effectivePhoneNumberId ?? undefined })
+            const count = await syncFromMeta(effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
             showToast("success", `تم مزامنة ${count} قالب بنجاح`)
         } catch (error) {
             console.error("Sync failed:", error)
-            showToast("error", "فشل في المزامنة")
+            const message = error instanceof Error ? error.message : "فشل في المزامنة"
+            showToast("error", message)
         } finally {
             setIsSyncing(false)
         }
@@ -78,7 +79,7 @@ export default function TemplatesPage() {
         if (!deleteTemplateData) return
         setIsDeleting(true)
         try {
-            await deleteTemplate({ name: deleteTemplateData.name, phoneNumberId: effectivePhoneNumberId ?? undefined })
+            await deleteTemplate({ name: deleteTemplateData.name, ...(effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) })
             showToast("success", `تم حذف القالب "${deleteTemplateData.name}" بنجاح`)
             setDeleteTemplateData(null)
         } catch (error: any) {

@@ -26,7 +26,7 @@ export default function AiSettingsPage() {
   // Use activePhoneNumberId for per-number config; "__all__" or undefined/null means global config
   const effectivePhoneNumberId = (activePhoneNumberId === "__all__" || !activePhoneNumberId) ? undefined : activePhoneNumberId;
   
-  const config = useQuery(api.ai_config.getConfig, { phoneNumberId: effectivePhoneNumberId });
+  const config = useQuery(api.ai_config.getConfig, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {});
   const updateConfig = useMutation(api.ai_config.updateConfig);
   const runTest = useAction(api.agent.runTest);
   const saveFeedback = useMutation(api.agent.saveFeedback);
@@ -78,7 +78,7 @@ export default function AiSettingsPage() {
   const handleSave = async () => {
     try {
       await updateConfig({
-        phoneNumberId: effectivePhoneNumberId,
+        ...(effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}),
         systemPrompt,
         model,
         temperature: temperature ?? undefined,

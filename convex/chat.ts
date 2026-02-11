@@ -191,13 +191,14 @@ export const getLatestGlobalMessage = query({
 
 // Public Query for UI (optional phoneNumberId: when set, only chats for that business number)
 export const listChats = query({
-  args: { phoneNumberId: v.optional(v.string()) },
+  args: { phoneNumberId: v.optional(v.union(v.string(), v.null())) },
   handler: async (ctx, args) => {
-    if (args.phoneNumberId) {
+    const phoneNumberId = args.phoneNumberId ?? undefined;
+    if (phoneNumberId) {
       return await ctx.db
         .query("chats")
         .withIndex("by_phoneNumberId_last_message", (q: any) =>
-          q.eq("phoneNumberId", args.phoneNumberId)
+          q.eq("phoneNumberId", phoneNumberId)
         )
         .order("desc")
         .collect();

@@ -2,14 +2,15 @@ import { query } from "./_generated/server";
 import { v } from "convex/values";
 
 export const getDashboardStats = query({
-    args: { phoneNumberId: v.optional(v.string()) },
+    args: { phoneNumberId: v.optional(v.union(v.string(), v.null())) },
     handler: async (ctx, args) => {
+        const phoneNumberId = args.phoneNumberId ?? undefined;
         // Get chats for this phone number to filter messages
         let chatIds: Set<string> | null = null;
-        if (args.phoneNumberId) {
+        if (phoneNumberId) {
             const chats = await ctx.db
                 .query("chats")
-                .withIndex("by_phoneNumberId_last_message", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+                .withIndex("by_phoneNumberId_last_message", (q) => q.eq("phoneNumberId", phoneNumberId))
                 .collect();
             chatIds = new Set(chats.map(c => c._id));
         }
@@ -23,22 +24,22 @@ export const getDashboardStats = query({
         ] = await Promise.all([
             ctx.db.query("contacts").collect(),
             ctx.db.query("messages").collect(),
-            args.phoneNumberId 
-                ? ctx.db.query("campaigns").withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId)).collect()
+            phoneNumberId
+                ? ctx.db.query("campaigns").withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId)).collect()
                 : ctx.db.query("campaigns").collect(),
-            args.phoneNumberId
-                ? ctx.db.query("chats").withIndex("by_phoneNumberId_last_message", (q) => q.eq("phoneNumberId", args.phoneNumberId)).collect()
+            phoneNumberId
+                ? ctx.db.query("chats").withIndex("by_phoneNumberId_last_message", (q) => q.eq("phoneNumberId", phoneNumberId)).collect()
                 : ctx.db.query("chats").collect()
         ]);
 
         // Filter messages by chatIds if phoneNumberId is specified
-        const filteredMessages = chatIds 
+        const filteredMessages = chatIds
             ? allMessages.filter(m => chatIds!.has(m.chatId))
             : allMessages;
 
         // Filter contacts to those with chats for this number
         const contactPhones = new Set(allChats.map(c => c.contactPhone));
-        const filteredContacts = args.phoneNumberId
+        const filteredContacts = phoneNumberId
             ? allContacts.filter(c => contactPhones.has(c.phone))
             : allContacts;
 

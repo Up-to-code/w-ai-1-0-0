@@ -248,7 +248,15 @@ export const fetchTemplates = action({
 
     if (!response.ok) {
       console.error("WhatsApp Fetch Templates Error:", data);
-      throw new Error(`WhatsApp API Error: ${data.error?.message || "Unknown error"}`);
+      const err = data.error;
+      const code = err?.code;
+      const subcode = err?.error_subcode;
+      if (code === 100 || subcode === 33) {
+        throw new Error(
+          "Cannot load templates: the WhatsApp Business Account ID may be wrong or the access token does not have permission. In Integrations, ensure the number's Business Account ID is the WABA ID (from Meta Business Suite), not the Phone Number ID. Also check your Meta app has the whatsapp_business_management permission."
+        );
+      }
+      throw new Error(`WhatsApp API Error: ${err?.message || "Unknown error"}`);
     }
 
     return data.data || [];

@@ -1142,12 +1142,13 @@ export const updateMessageStatus = internalMutation({
 
 // Front-end queries
 export const list = query({
-    args: { phoneNumberId: v.optional(v.string()) },
+    args: { phoneNumberId: v.optional(v.union(v.string(), v.null())) },
     handler: async (ctx, args) => {
-        if (args.phoneNumberId) {
+        const phoneNumberId = args.phoneNumberId ?? undefined;
+        if (phoneNumberId) {
             return await ctx.db
                 .query("campaigns")
-                .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+                .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
                 .order("desc")
                 .take(20);
         }

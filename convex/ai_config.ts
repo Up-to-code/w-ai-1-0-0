@@ -18,14 +18,15 @@ const DEFAULT_CONFIG = {
  */
 export const getConfig = query({
   args: {
-    phoneNumberId: v.optional(v.string()),
+    phoneNumberId: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
+    const phoneNumberId = args.phoneNumberId ?? undefined;
     // If phoneNumberId provided, try to find per-number config first
-    if (args.phoneNumberId) {
+    if (phoneNumberId) {
       const perNumberConfig = await ctx.db
         .query("ai_configs")
-        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
         .first();
       if (perNumberConfig) {
         return perNumberConfig;
@@ -48,21 +49,22 @@ export const getConfig = query({
  */
 export const updateConfig = mutation({
   args: {
-    phoneNumberId: v.optional(v.string()),
+    phoneNumberId: v.optional(v.union(v.string(), v.null())),
     systemPrompt: v.string(),
     model: v.string(),
     temperature: v.optional(v.number()),
     isActive: v.boolean(),
   },
   handler: async (ctx, args) => {
+    const phoneNumberId = args.phoneNumberId ?? undefined;
     // Find existing config for this phoneNumberId (or global if undefined)
     const existing = await ctx.db
       .query("ai_configs")
-      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
       .first();
     
     const updates = {
-      phoneNumberId: args.phoneNumberId,
+      phoneNumberId,
       systemPrompt: args.systemPrompt,
       model: args.model,
       isActive: args.isActive,
@@ -74,7 +76,7 @@ export const updateConfig = mutation({
       await ctx.db.patch(existing._id, updates);
     } else {
       await ctx.db.insert("ai_configs", {
-        phoneNumberId: args.phoneNumberId,
+        phoneNumberId,
         systemPrompt: args.systemPrompt,
         model: args.model,
         isActive: args.isActive,
@@ -90,14 +92,15 @@ export const updateConfig = mutation({
  */
 export const getInternalConfig = internalQuery({
   args: {
-    phoneNumberId: v.optional(v.string()),
+    phoneNumberId: v.optional(v.union(v.string(), v.null())),
   },
   handler: async (ctx, args) => {
+    const phoneNumberId = args.phoneNumberId ?? undefined;
     // Try per-number config first
-    if (args.phoneNumberId) {
+    if (phoneNumberId) {
       const perNumberConfig = await ctx.db
         .query("ai_configs")
-        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
         .first();
       if (perNumberConfig) {
         return perNumberConfig;

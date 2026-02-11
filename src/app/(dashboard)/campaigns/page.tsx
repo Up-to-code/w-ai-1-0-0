@@ -45,7 +45,7 @@ export default function CampaignsPage() {
   const effectivePhoneNumberId =
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
-  const campaigns = useQuery(api.campaigns.list, { phoneNumberId: effectivePhoneNumberId })
+  const campaigns = useQuery(api.campaigns.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
   const templates = useQuery(api.templates.list)
   const removeCampaign = useMutation(api.campaigns.remove)
   const createCampaign = useMutation(api.campaigns.create)

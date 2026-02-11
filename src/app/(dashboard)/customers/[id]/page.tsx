@@ -18,14 +18,14 @@
    const params = useParams()
    const id = params?.id as string
    const { activePhoneNumberId } = useWorkspace()
- 
+   const effectivePhoneNumberId =
+     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+
    const contact = useQuery(
      api.contacts.getById,
      id ? { id: id as Id<"contacts"> } : "skip"
    )
-   const chats = useQuery(api.chat.listChats, {
-     phoneNumberId: activePhoneNumberId ?? undefined,
-   })
+   const chats = useQuery(api.chat.listChats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
  
    const chatId = useMemo(() => {
      if (!contact || !chats) return null

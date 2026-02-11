@@ -33,7 +33,7 @@ export default function DashboardPage() {
     const effectivePhoneNumberId =
       !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
-    const stats = useQuery(api.stats.getDashboardStats, { phoneNumberId: effectivePhoneNumberId })
+    const stats = useQuery(api.stats.getDashboardStats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
 
     // Fallback/Loading State
     if (!stats) {

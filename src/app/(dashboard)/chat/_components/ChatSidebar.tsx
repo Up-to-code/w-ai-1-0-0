@@ -20,9 +20,7 @@ export function ChatSidebar() {
   const effectivePhoneNumberId =
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
-  const chats = useQuery(api.chat.listChats, {
-    phoneNumberId: effectivePhoneNumberId,
-  })
+  const chats = useQuery(api.chat.listChats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredChats = useMemo(() => {
