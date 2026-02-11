@@ -411,6 +411,10 @@ export default function IntegrationsPage() {
                         <Button type="submit" disabled={webhookSaving}>
                             {webhookSaving ? "جاري الحفظ..." : webhookSaved ? "تم الحفظ" : "حفظ إعدادات الويب هوك"}
                         </Button>
+                        <div className="rounded-lg border border-border/50 bg-muted/20 p-3 text-xs text-muted-foreground space-y-1">
+                            <p className="font-medium text-foreground">للإنتاج (Production):</p>
+                            <p>عيّن في Convex (Environment Variables): WHATSAPP_VERIFY_TOKEN إن لم تُدخله أعلاه، واختيارياً WHATSAPP_APP_SECRET للتحقق من توقيع طلبات الويب هوك. في لوحة Meta ضع رابط الويب هوك أعلاه ورمز التحقق المطابق.</p>
+                        </div>
                     </form>
                 </CardContent>
             </Card>

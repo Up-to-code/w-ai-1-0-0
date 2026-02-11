@@ -34,3 +34,9 @@ You can check out [the Next.js GitHub repository](https://github.com/vercel/next
 The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+
+## Production / WhatsApp Webhook
+
+- **Convex (Dashboard → Settings → Environment Variables):** Set `WHATSAPP_VERIFY_TOKEN` (if not set in Integrations webhook form), and `WHATSAPP_APP_SECRET` (recommended) to verify POST webhook signature. Optionally `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_WABA_ID` when not using per-number tokens.
+- **Vercel:** Set `NEXT_PUBLIC_CONVEX_URL` to your Convex deployment URL.
+- **Meta Developer Console:** Webhook URL = `https://<deployment>.convex.site/whatsapp/webhook` (use your Convex deployment host; replace `.convex.cloud` with `.convex.site` from `NEXT_PUBLIC_CONVEX_URL`). Verify token must match the value in Integrations or `WHATSAPP_VERIFY_TOKEN`.

@@ -30,12 +30,19 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
       wabaId: first.businessAccountId,
     };
   }
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneId = process.env.WHATSAPP_PHONE_ID;
-  const wabaId = process.env.WHATSAPP_WABA_ID;
+  let accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  let phoneId = process.env.WHATSAPP_PHONE_ID;
+  let wabaId = process.env.WHATSAPP_WABA_ID;
   if (!accessToken || !phoneId) {
+    const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
+    const fallbackToken = webhook?.accessToken;
+    const fallbackPhoneId = process.env.WHATSAPP_PHONE_ID;
+    const fallbackWabaId = process.env.WHATSAPP_WABA_ID;
+    if (fallbackToken && fallbackPhoneId) {
+      return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId };
+    }
     throw new Error(
-      "Missing WhatsApp config. Set an access token on a number in Integrations (ربط المتجر), or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
+      "Missing WhatsApp config. Set an access token on a number in Integrations (ربط المتجر), or set webhook Access Token and WHATSAPP_PHONE_ID, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
     );
   }
   return { accessToken, phoneId, wabaId };

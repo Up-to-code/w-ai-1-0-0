@@ -1,5 +1,14 @@
-import { query, mutation } from "./_generated/server";
+import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+
+/** Internal: get only accessToken for getWhatsAppConfig fallback. */
+export const getForConfig = internalQuery({
+  args: {},
+  handler: async (ctx) => {
+    const row = await ctx.db.query("webhook_settings").first();
+    return row?.accessToken?.trim() ? { accessToken: row.accessToken } : null;
+  },
+});
 
 /** Get webhook settings (singleton: first row). Verify token, access token, app ID from DB instead of env. */
 export const get = query({

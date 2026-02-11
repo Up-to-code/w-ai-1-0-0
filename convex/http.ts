@@ -34,32 +34,59 @@ http.route({
   }),
 });
 
+/** Verify Meta webhook POST signature (X-Hub-Signature-256). Uses HMAC-SHA256 with app secret; digest is hex. */
+function verifyWebhookSignature(rawBody: string, signatureHeader: string | null, appSecret: string): boolean {
+  if (!signatureHeader?.startsWith("sha256=")) return false;
+  const crypto = require("crypto");
+  const expectedHex = crypto.createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
+  const expected = "sha256=" + expectedHex;
+  if (signatureHeader.length !== expected.length) return false;
+  try {
+    return crypto.timingSafeEqual(Buffer.from(signatureHeader, "utf8"), Buffer.from(expected, "utf8"));
+  } catch {
+    return false;
+  }
+}
+
 // POST /whatsapp/webhook: Incoming Events
 http.route({
   path: "/whatsapp/webhook",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
-    console.log(`[HTTP] Webhook received: ${request.method} ${request.url}`);
+    const appSecret = process.env.WHATSAPP_APP_SECRET;
+    const rawBody = await request.text();
+    const signatureHeader = request.headers.get("X-Hub-Signature-256");
 
-    let body;
+    if (appSecret) {
+      if (!signatureHeader || !verifyWebhookSignature(rawBody, signatureHeader, appSecret)) {
+        console.error("[HTTP] Webhook signature verification failed");
+        return new Response("Unauthorized", { status: 401 });
+      }
+    }
+
+    let body: unknown;
     try {
-      body = await request.json();
-      console.log("[HTTP] Webhook Body:", JSON.stringify(body, null, 2));
+      body = JSON.parse(rawBody);
     } catch (e) {
       console.error("[HTTP] Failed to parse JSON:", e);
       return new Response("Bad Request: Invalid JSON", { status: 400 });
     }
 
+    if (process.env.CONVEX_VERBOSE_WEBHOOK === "1") {
+      console.log("[HTTP] Webhook Body:", JSON.stringify(body, null, 2));
+    } else {
+      const summary = body && typeof body === "object" && "object" in body ? (body as { object?: string }).object : "?";
+      const entryLen = body && typeof body === "object" && "entry" in body ? (body as { entry?: unknown[] }).entry?.length : 0;
+      console.log(`[HTTP] Webhook received: object=${summary} entries=${entryLen}`);
+    }
+
     await ctx.runMutation(internal.webhookEvents.logWhatsappWebhook, { body });
 
-    // Dispatch to internal mutation to handle async scheduling
     try {
       await ctx.runMutation(internal.whatsapp.dispatchWebhook, { body });
       console.log("[HTTP] Webhook Dispatched Successfully");
     } catch (e) {
       console.error("[HTTP] Dispatch Error:", e);
-      // We still return 200 OK to Meta to prevent retries of bad payloads, or 500?
-      // Meta retries on 5xx. If it's a code bug, 500 is appropriate to see it in dashboard.
       return new Response("Internal Server Error", { status: 500 });
     }
 
