@@ -363,4 +363,314 @@ describe('detectSearchIntent', () => {
       expect(result.queryType).toBe('product_number');
     });
   });
+
+  // --- Handoff / transfer phrases (document expected behavior; real handoff is LLM + system prompt) ---
+  const handoffPatterns = [
+    /أريد التحدث مع شخص|أتحدث مع موظف|موظف حقيقي|استرداد|شكوى|refund|complaint|speak to (agent|human|someone|representative)|talk to (a )?human|transfer to (agent|human)|i want to complain|أريد استرداد/i,
+  ];
+  function shouldHandoff(message: string): boolean {
+    const t = message.trim();
+    if (!t) return false;
+    return handoffPatterns.some((p) => p.test(t));
+  }
+
+  describe('Handoff / transfer phrases', () => {
+    it('should handoff for Arabic "أريد التحدث مع شخص"', () => {
+      expect(shouldHandoff('أريد التحدث مع شخص')).toBe(true);
+    });
+    it('should handoff for "speak to agent"', () => {
+      expect(shouldHandoff('speak to agent')).toBe(true);
+    });
+    it('should handoff for "talk to human"', () => {
+      expect(shouldHandoff('talk to human')).toBe(true);
+    });
+    it('should handoff for "I want to complain"', () => {
+      expect(shouldHandoff('I want to complain')).toBe(true);
+    });
+    it('should handoff for "refund"', () => {
+      expect(shouldHandoff('refund')).toBe(true);
+    });
+    it('should handoff for Arabic "استرداد"', () => {
+      expect(shouldHandoff('استرداد')).toBe(true);
+    });
+    it('should handoff for "transfer to human"', () => {
+      expect(shouldHandoff('transfer to human')).toBe(true);
+    });
+    it('should handoff for "موظف حقيقي"', () => {
+      expect(shouldHandoff('موظف حقيقي')).toBe(true);
+    });
+    it('should not handoff for product search', () => {
+      expect(shouldHandoff('show me laptops')).toBe(false);
+    });
+    it('should not handoff for price inquiry', () => {
+      expect(shouldHandoff('how much is this?')).toBe(false);
+    });
+  });
+
+  describe('More price inquiry variants', () => {
+    it('should detect "cost of"', () => {
+      const result = detectSearchIntent("Cost of MacBook Pro?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "بكام" Arabic', () => {
+      const result = detectSearchIntent("بكام الكاميرا؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "what is the cost"', () => {
+      const result = detectSearchIntent("What is the cost of this item?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "كم سعر" with product', () => {
+      const result = detectSearchIntent("كم سعر اللابتوب؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "how much for"', () => {
+      const result = detectSearchIntent("How much for the Samsung phone?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "قيمة" Arabic', () => {
+      const result = detectSearchIntent("قيمة المنتج؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect "شقد" Arabic', () => {
+      const result = detectSearchIntent("شقد هذا؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should detect price with trailing text', () => {
+      const result = detectSearchIntent("How much is the iPhone 15? Thanks");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+  });
+
+  describe('More availability variants', () => {
+    it('should detect "do u have"', () => {
+      const result = detectSearchIntent("Do u have this in stock?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('availability');
+    });
+    it('should detect "have you got" with item', () => {
+      const result = detectSearchIntent("Have you got Nike shoes?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('availability');
+    });
+    it('should detect "got any" with product type', () => {
+      const result = detectSearchIntent("Got any tablets?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('availability');
+    });
+    it('should detect "do you have" without product word', () => {
+      const result = detectSearchIntent("Do you have laptops?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('availability');
+    });
+    it('should detect "do you have" with number', () => {
+      const result = detectSearchIntent("Do you have product number 9999?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+  });
+
+  describe('More product number variants', () => {
+    it('should detect "item #" format', () => {
+      const result = detectSearchIntent("Item #ABC-999");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+      expect(result.extractedParams.productNumber).toBe('ABC-999');
+    });
+    it('should detect "code XYZ-1"', () => {
+      const result = detectSearchIntent("Code XYZ-1");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+    it('should detect "ref:" prefix', () => {
+      const result = detectSearchIntent("Ref: 12345-AB");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+    it('should detect 6+ alphanumeric with digit', () => {
+      const result = detectSearchIntent("I need item ABC123");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+    it('should detect model number style', () => {
+      const result = detectSearchIntent("Model: XYZ-456");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+  });
+
+  describe('More general search variants', () => {
+    it('should detect "get me"', () => {
+      const result = detectSearchIntent("Get me a charger");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "i need"', () => {
+      const result = detectSearchIntent("I need a mouse");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "want to see"', () => {
+      const result = detectSearchIntent("Want to see monitors");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "look for"', () => {
+      const result = detectSearchIntent("Look for Bluetooth speakers");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "find" with "for"', () => {
+      const result = detectSearchIntent("Find a gift for my friend");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "show me" with category', () => {
+      const result = detectSearchIntent("Show me the best phones");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "search" alone with query', () => {
+      const result = detectSearchIntent("Search for jackets");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "looking for" with item', () => {
+      const result = detectSearchIntent("Looking for a desk");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+  });
+
+  describe('More Arabic search variants', () => {
+    it('should detect "جيب لي"', () => {
+      const result = detectSearchIntent("جيب لي تلفزيون");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "عرض"', () => {
+      const result = detectSearchIntent("عرض المنتجات");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "فيها"', () => {
+      const result = detectSearchIntent("فيها سماعات لاسلكية؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "توجد"', () => {
+      const result = detectSearchIntent("توجد هواتف؟");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "ابحث عن" with two words', () => {
+      const result = detectSearchIntent("ابحث عن حذاء رياضي");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should detect "وريني" with product', () => {
+      const result = detectSearchIntent("وريني العروض");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+  });
+
+  describe('More comparison and category variants', () => {
+    it('should detect "versus"', () => {
+      const result = detectSearchIntent("iPhone versus Pixel");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('comparison');
+    });
+    it('should detect "between"', () => {
+      const result = detectSearchIntent("Difference between A and B?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('comparison');
+    });
+    it('should detect "same as"', () => {
+      const result = detectSearchIntent("Same as the one you showed");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('reference_search');
+    });
+    it('should detect "the other one"', () => {
+      const result = detectSearchIntent("Show the other one");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('reference_search');
+    });
+    it('should detect "kind of"', () => {
+      const result = detectSearchIntent("What kind of laptop is this?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('category_search');
+    });
+    it('should detect "category of"', () => {
+      const result = detectSearchIntent("Category of this item?");
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('category_search');
+    });
+  });
+
+  describe('Edge cases: empty, long, numbers, punctuation', () => {
+    it('should handle empty string', () => {
+      const result = detectSearchIntent('');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle very long message', () => {
+      const long = 'show me laptops '.repeat(150);
+      const result = detectSearchIntent(long);
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('general_search');
+    });
+    it('should handle only numbers', () => {
+      const result = detectSearchIntent('12345');
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('product_number');
+    });
+    it('should handle only punctuation', () => {
+      const result = detectSearchIntent('???');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle mixed Arabic and English', () => {
+      const result = detectSearchIntent('Show me هاتف');
+      expect(result.shouldSearch).toBe(true);
+    });
+    it('should handle RTL-only Arabic question', () => {
+      const result = detectSearchIntent('كم سعر هذا؟');
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should handle single word "price"', () => {
+      const result = detectSearchIntent('price');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle "how much" without product', () => {
+      const result = detectSearchIntent('How much?');
+      expect(result.shouldSearch).toBe(true);
+      expect(result.queryType).toBe('price_inquiry');
+    });
+    it('should handle whitespace-only', () => {
+      const result = detectSearchIntent('   ');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle newlines only', () => {
+      const result = detectSearchIntent('\n\n');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle "product" alone', () => {
+      const result = detectSearchIntent('product');
+      expect(result.shouldSearch).toBe(false);
+    });
+    it('should handle very long 2000-char message', () => {
+      const msg = 'أ'.repeat(2000);
+      const result = detectSearchIntent(msg);
+      expect(typeof result.queryType).toBe('string');
+      expect(typeof result.shouldSearch).toBe('boolean');
+    });
+  });
 });

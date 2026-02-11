@@ -16,13 +16,17 @@ import { Ionicons } from "@expo/vector-icons";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
 import { Header } from "../../components/Header";
 import { useLocale } from "../../contexts/LocaleContext";
+import { useWorkspace } from "../../contexts/WorkspaceContext";
 
 export default function ChatListScreen() {
   const { t, isRTL } = useLocale();
+  const { activePhoneNumberId } = useWorkspace();
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
-  const chats = useQuery(api.chat.listChats);
+  const chats = useQuery(api.chat.listChats, {
+    phoneNumberId: activePhoneNumberId ?? undefined,
+  });
 
   const filteredChats = useMemo(() => {
     if (!chats) return [];

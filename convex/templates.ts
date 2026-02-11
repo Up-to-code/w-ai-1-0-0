@@ -106,11 +106,17 @@ export const deleteInternal = internalMutation({
 });
 
 export const deleteTemplate = action({
-  args: { name: v.string() },
+  args: {
+    name: v.string(),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args): Promise<void> => {
     // 1. Delete from Meta
     try {
-      await ctx.runAction(api.whatsapp.deleteTemplate, { name: args.name });
+      await ctx.runAction(api.whatsapp.deleteTemplate, {
+        name: args.name,
+        phoneNumberId: args.phoneNumberId,
+      });
     } catch (e: any) {
       const errorMessage = e.message || String(e);
       console.error("Failed to delete from Meta:", errorMessage);
@@ -146,10 +152,17 @@ export const createTemplate = action({
     language: v.string(),
     category: v.string(),
     components: v.any(),
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
     // 1. Create in Meta
-    const res = await ctx.runAction(api.whatsapp.createTemplate, args);
+    const res = await ctx.runAction(api.whatsapp.createTemplate, {
+      name: args.name,
+      language: args.language,
+      category: args.category,
+      components: args.components,
+      phoneNumberId: args.phoneNumberId,
+    });
 
     // 2. Upsert in DB (handled by whatsapp.createTemplate calling internal.templates.upsert, 
     // but we can ensure it here if needed. 
@@ -160,10 +173,14 @@ export const createTemplate = action({
 });
 
 export const syncFromMeta = action({
-  args: {},
+  args: {
+    phoneNumberId: v.optional(v.string()), // When set, use this number's token and WABA from DB for Meta API
+  },
   handler: async (ctx, args): Promise<number> => {
-    // 1. Fetch templates from Meta API
-    const metaTemplates: any[] = await ctx.runAction(api.whatsapp.fetchTemplates, {});
+    // 1. Fetch templates from Meta API (use DB token when phoneNumberId provided)
+    const metaTemplates: any[] = await ctx.runAction(api.whatsapp.fetchTemplates, {
+      phoneNumberId: args.phoneNumberId ?? undefined,
+    });
     const metaTemplateNames = metaTemplates.map((t: any) => t.name);
 
     // 2. Upsert each template into local DB

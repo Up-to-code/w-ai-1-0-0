@@ -1,193 +1,238 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Button } from "@/components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Switch } from "@/components/ui/switch"
-import { Badge } from "@/components/ui/badge"
+import Link from "next/link";
+import { useQuery } from "convex/react";
+import { api } from "../../../../convex/_generated/api";
+import { useWorkspace } from "@/contexts/WorkspaceContext";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import {
-  User,
   Building2,
-  Save,
-  Key,
   Webhook,
-  CheckCircle2,
-  AlertCircle,
+  Shield,
+  UserCog,
+  Link2,
   Copy,
-  Eye,
-  EyeOff
-} from "lucide-react"
+  ExternalLink,
+  MessageSquare,
+} from "lucide-react";
+import { toast } from "sonner";
+
+function getWebhookUrl(): string {
+  const base = typeof process.env.NEXT_PUBLIC_CONVEX_URL === "string"
+    ? process.env.NEXT_PUBLIC_CONVEX_URL
+    : "";
+  if (!base) return "";
+  const site = base.replace(".convex.cloud", ".convex.site");
+  return `${site}/whatsapp/webhook`;
+}
+
+type Role = "admin" | "agent" | "user";
 
 export default function SettingsPage() {
-  const [showToken, setShowToken] = useState(false)
-  const [connected, setConnected] = useState(true)
+  const { activeWorkspace, activePhoneNumberId, numbers } = useWorkspace();
+  const currentUser = useQuery(api.users.getCurrentUserRole);
+  const sallaConnection = useQuery(api.salla.getConnection);
+
+  const role: Role | null = currentUser?.role ?? null;
+  const isAdmin = role === "admin";
+  const canManageUsers = isAdmin;
+  const canManageIntegrations = isAdmin;
+  const canSeeWebhook = role === "admin" || role === "agent";
+  const canCopyWebhook = canSeeWebhook;
+
+  const webhookUrl = getWebhookUrl();
+
+  const handleCopyWebhook = () => {
+    if (!webhookUrl) {
+      toast.error("رابط الويب هوك غير متوفر");
+      return;
+    }
+    navigator.clipboard.writeText(webhookUrl);
+    toast.success("تم نسخ الرابط");
+  };
 
   return (
     <div className="space-y-6 max-w-3xl">
       <div>
         <h1 className="text-2xl font-bold text-foreground">الإعدادات</h1>
-        <p className="text-muted-foreground text-sm mt-1">إدارة إعدادات الحساب والاتصال بـ WhatsApp</p>
+        <p className="text-muted-foreground text-sm mt-1">إعدادات النظام والتكاملات</p>
       </div>
 
-      {/* Connection Status */}
-      <Card className={connected ? "border-success/50 bg-success/5" : "border-destructive/50 bg-destructive/5"}>
-        <CardContent className="pt-6">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              {connected ? (
-                <CheckCircle2 className="h-6 w-6 text-success" />
-              ) : (
-                <AlertCircle className="h-6 w-6 text-destructive" />
-              )}
-              <div>
-                <p className="font-medium">{connected ? "متصل بـ WhatsApp Business API" : "غير متصل"}</p>
-                <p className="text-sm text-muted-foreground">
-                  {connected ? "جميع الخدمات تعمل بشكل طبيعي" : "تحقق من إعدادات الاتصال"}
-                </p>
-              </div>
-            </div>
-            <Badge variant={connected ? "default" : "destructive"} className={connected ? "bg-success" : ""}>
-              {connected ? "نشط" : "غير نشط"}
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* WhatsApp API Settings */}
+      {/* 1. Workspace & context */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
-              <Key className="h-5 w-5 text-primary" />
+              <Building2 className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <CardTitle>إعدادات WhatsApp API</CardTitle>
-              <CardDescription>بيانات الاتصال بـ Meta Business</CardDescription>
+              <CardTitle>الفضاء الحالي</CardTitle>
+              <CardDescription>رقم واتساب الأعمال النشط</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <Label>معرف الهاتف (Phone Number ID)</Label>
-            <Input defaultValue="123456789012345" className="font-mono" />
-          </div>
-          <div className="space-y-2">
-            <Label>رمز الوصول (Access Token)</Label>
-            <div className="relative">
-              <Input
-                type={showToken ? "text" : "password"}
-                defaultValue="EAAxxxxxxxxxxxxxxxxxxxxxxxxx"
-                className="font-mono pr-20"
-              />
-              <div className="absolute left-2 top-1/2 -translate-y-1/2 flex gap-1">
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => setShowToken(!showToken)}
-                >
-                  {showToken ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7">
-                  <Copy className="h-4 w-4" />
-                </Button>
+          {activeWorkspace ? (
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
+              <div className="flex items-center gap-3">
+                <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">{activeWorkspace.name}</p>
+                  <p className="text-sm text-muted-foreground">{activeWorkspace.phone}</p>
+                </div>
               </div>
             </div>
-          </div>
-          <div className="space-y-2">
-            <Label>معرف حساب الأعمال (Business Account ID)</Label>
-            <Input defaultValue="987654321098765" className="font-mono" />
-          </div>
-          <Button className="gap-2">
-            <Save className="h-4 w-4" />
-            حفظ الإعدادات
-          </Button>
+          ) : (
+            <p className="text-sm text-muted-foreground">لا يوجد رقم نشط. أضف رقماً من التكاملات.</p>
+          )}
+          {canManageIntegrations && (
+            <Button variant="outline" className="gap-2" asChild>
+              <Link href="/integrations">
+                <Link2 className="h-4 w-4" />
+                إدارة الأرقام
+              </Link>
+            </Button>
+          )}
         </CardContent>
       </Card>
 
-      {/* Webhook Settings */}
+      {/* 2. Integrations */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
-              <Webhook className="h-5 w-5 text-info" />
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Link2 className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <CardTitle>Webhook</CardTitle>
-              <CardDescription>استقبال الرسائل والتحديثات</CardDescription>
+              <CardTitle>التكاملات</CardTitle>
+              <CardDescription>حالة اتصال واتساب وسلة</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="space-y-2">
-            <Label>رابط Webhook</Label>
-            <div className="flex gap-2">
-              <Input
-                value="https://api.chatcb.com/webhook/your-id"
-                readOnly
-                className="font-mono bg-muted"
-              />
-              <Button variant="outline" size="icon">
-                <Copy className="h-4 w-4" />
-              </Button>
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+              <span className="text-sm font-medium">أرقام واتساب</span>
+              <span className="text-sm text-muted-foreground">{numbers.length} متصل</span>
             </div>
-            <p className="text-xs text-muted-foreground">استخدم هذا الرابط في إعدادات Meta Developer</p>
-          </div>
-          <div className="space-y-2">
-            <Label>Verify Token</Label>
-            <div className="flex gap-2">
-              <Input
-                value="chatcb_verify_token_abc123"
-                readOnly
-                className="font-mono bg-muted"
-              />
-              <Button variant="outline" size="icon">
-                <Copy className="h-4 w-4" />
-              </Button>
+            <div className="flex items-center justify-between p-3 rounded-lg border bg-card">
+              <span className="text-sm font-medium">سلة</span>
+              <span className="text-sm text-muted-foreground">
+                {sallaConnection ? "متصل" : "غير متصل"}
+              </span>
             </div>
           </div>
+          {canManageIntegrations && (
+            <Button variant="outline" className="gap-2" asChild>
+              <Link href="/integrations">
+                <ExternalLink className="h-4 w-4" />
+                إدارة التكاملات
+              </Link>
+            </Button>
+          )}
         </CardContent>
       </Card>
 
-      {/* Profile Settings */}
+      {/* 3. Webhook */}
+      {canSeeWebhook && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-info/10 flex items-center justify-center">
+                <Webhook className="h-5 w-5 text-info" />
+              </div>
+              <div>
+                <CardTitle>Webhook</CardTitle>
+                <CardDescription>استقبال الرسائل والتحديثات من Meta</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-sm font-medium">رابط Webhook</p>
+              <div className="flex gap-2">
+                <input
+                  readOnly
+                  value={webhookUrl || "—"}
+                  className="flex h-10 w-full rounded-md border border-input bg-muted px-3 py-2 text-sm font-mono"
+                />
+                {canCopyWebhook && (
+                  <Button variant="outline" size="icon" onClick={handleCopyWebhook}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground">استخدم هذا الرابط في إعدادات تطبيق Meta Developer</p>
+            </div>
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Verify Token</p>
+              <p className="text-xs text-muted-foreground">
+                يُحفظ في قاعدة البيانات من صفحة التكاملات (ربط المتجر). يمكن أيضاً استخدام متغير البيئة <code className="bg-muted px-1 rounded">WHATSAPP_VERIFY_TOKEN</code> في Convex. استخدم نفس القيمة في تحقق الويب هوك في تطبيق Meta.
+              </p>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              يستقبل هذا الويب هوك الرسائل لجميع الأرقام؛ التوجيه يتم حسب phone_number_id من Meta.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* 4. Security & environment */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-warning/10 flex items-center justify-center">
-              <User className="h-5 w-5 text-warning" />
+            <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+              <Shield className="h-5 w-5 text-amber-600 dark:text-amber-400" />
             </div>
             <div>
-              <CardTitle>الملف الشخصي</CardTitle>
-              <CardDescription>معلومات الحساب</CardDescription>
+              <CardTitle>الأمان والبيئة</CardTitle>
+              <CardDescription>إعدادات حساسة</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            الإعدادات الحساسة (رموز الوصول، Verify Token، رابط الويب هوك، App ID) تُخزَّن في قاعدة البيانات من صفحة التكاملات أو في متغيرات بيئة Convex. لا تُدخل أسراراً في هذه الواجهة.
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* 5. Team & permissions */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <UserCog className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle>الفريق والصلاحيات</CardTitle>
+              <CardDescription>إدارة المستخدمين والأدوار</CardDescription>
             </div>
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label>الاسم</Label>
-              <Input defaultValue="المستخدم" />
-            </div>
-            <div className="space-y-2">
-              <Label>البريد الإلكتروني</Label>
-              <Input defaultValue="user@mail.com" type="email" />
-            </div>
-          </div>
-          <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
-            <div>
-              <p className="font-medium">الإشعارات</p>
-              <p className="text-sm text-muted-foreground">استلام تنبيهات البريد الإلكتروني</p>
-            </div>
-            <Switch defaultChecked />
-          </div>
-          <Button variant="outline" className="gap-2">
-            <Save className="h-4 w-4" />
-            تحديث الملف الشخصي
-          </Button>
+          {role && (
+            <p className="text-sm text-muted-foreground">
+              دورك الحالي: <span className="font-medium text-foreground">{role === "admin" ? "مدير" : role === "agent" ? "وكيل" : "مستخدم"}</span>
+            </p>
+          )}
+          <p className="text-sm text-muted-foreground">
+            إدارة من يمكنه الوصول إلى لوحة التحكم وأدوارهم (مدير، وكيل، مستخدم) تتم من صفحة إدارة المستخدمين.
+          </p>
+          {canManageUsers && (
+            <Button variant="outline" className="gap-2" asChild>
+              <Link href="/users">
+                <UserCog className="h-4 w-4" />
+                إدارة المستخدمين والصلاحيات
+              </Link>
+            </Button>
+          )}
+          {!canManageUsers && role === "user" && (
+            <p className="text-xs text-muted-foreground">فقط المديرون يمكنهم إدارة المستخدمين.</p>
+          )}
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

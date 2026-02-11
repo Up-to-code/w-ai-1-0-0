@@ -69,7 +69,7 @@ export const remove = mutation({
 
 // --- Execution Engine ---
 
-async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: string, contactId?: string) {
+async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: string, contactId?: string, phoneNumberId?: string) {
     console.log(`[Workflows] Executing rule "${workflow.name}"`);
 
     // Increment stats
@@ -91,7 +91,8 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
                     name: templateName,
                     language: { code: "ar" },
                     components: []
-                }
+                },
+                phoneNumberId: phoneNumberId ?? undefined,
             });
             console.log(`[Workflows] Scheduled Template: ${templateName}`);
         }
@@ -147,12 +148,24 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
     } else if (workflow.action === "assign_user") {
         const userId = workflow.actionConfig?.userId;
         if (userId) {
-            // Find chat associated with this contact
-            // Note: Schema stores contactPhone in chats
-            const chat = await ctx.db
-                .query("chats")
-                .filter((q: any) => q.eq(q.field("contactPhone"), contactPhone))
-                .first();
+            // Find chat for this contact; when phoneNumberId is provided (message path), scope by number
+            let chat;
+            if (phoneNumberId) {
+                chat = await ctx.db
+                    .query("chats")
+                    .filter((q: any) =>
+                        q.and(
+                            q.eq(q.field("contactPhone"), contactPhone),
+                            q.eq(q.field("phoneNumberId"), phoneNumberId)
+                        )
+                    )
+                    .first();
+            } else {
+                chat = await ctx.db
+                    .query("chats")
+                    .filter((q: any) => q.eq(q.field("contactPhone"), contactPhone))
+                    .first();
+            }
 
             if (chat) {
                 await ctx.db.patch(chat._id, { assignedTo: userId });
@@ -167,6 +180,7 @@ export const checkAndExecuteWorkflows = internalMutation({
         messageId: v.id("messages"),
         content: v.string(),
         contactPhone: v.string(),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         // 1. Fetch Active Workflows
@@ -194,7 +208,7 @@ export const checkAndExecuteWorkflows = internalMutation({
 
             // 3. Execute Action if Matched
             if (matched) {
-                await executeWorkflowAction(ctx, workflow, args.contactPhone);
+                await executeWorkflowAction(ctx, workflow, args.contactPhone, undefined, args.phoneNumberId);
             }
         }
     }

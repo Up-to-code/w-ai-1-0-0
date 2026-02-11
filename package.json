@@ -9,7 +9,9 @@
     "lint": "eslint",
     "convex": "convex dev",
     "test": "vitest",
-    "test:search": "vitest convex/agent.search.test.ts"
+    "test:search": "vitest convex/agent.search.test.ts",
+    "test:search:report": "node scripts/test-agent-report.mjs",
+    "test:agent:llm": "convex run agent:runRealTest"
   },
   "dependencies": {
     "@convex-dev/action-retrier": "^0.3.0",
@@ -48,6 +50,7 @@
     "react-window": "^1.8.10",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.4.0",
+    "xlsx": "^0.18.5",
     "zod": "^4.3.5"
   },
   "devDependencies": {

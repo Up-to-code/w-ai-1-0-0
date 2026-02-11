@@ -9,12 +9,16 @@ import { Search, MessageSquarePlus, CircleDashed } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export function ChatSidebar() {
   const params = useParams()
   const selectedChatId = params?.chatId as string | undefined
+  const { activePhoneNumberId } = useWorkspace()
 
-  const chats = useQuery(api.chat.listChats)
+  const chats = useQuery(api.chat.listChats, {
+    phoneNumberId: activePhoneNumberId ?? undefined,
+  })
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredChats = useMemo(() => {

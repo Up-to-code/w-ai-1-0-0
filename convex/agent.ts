@@ -1,8 +1,40 @@
-import { action, internalAction, internalMutation } from "./_generated/server";
+import { action, internalAction, internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+
+/** Tool registry: add new tools here and implement parsing in LLM response + executeTool/messengerProduct. */
+const TOOL_REGISTRY = [
+  { name: "send_product", handler: "messengerProduct", payload: { name: "string", price: "string", imageUrl: "string", productUrl: "string", description: "string" } },
+  { name: "send_text", handler: "executeTool", payload: { text: "string" } },
+  { name: "send_image", handler: "executeTool", payload: { imageUrl: "string", caption: "string" } },
+  { name: "send_link", handler: "executeTool", payload: { url: "string" } },
+  { name: "send_audio", handler: "executeTool", payload: { audioUrl: "string" } },
+  { name: "transfer_to_human", handler: "transferToHuman", payload: {} },
+] as const;
+
+const HANDOFF_MESSAGE = "تم تحويل المحادثة إلى أحد الموظفين. سنرد عليك قريباً.";
+
+const PRODUCT_DESC_MAX = 250;
+function formatProductMessage(name: string, price: string, description: string, productUrl: string): string {
+  const raw = (description || "").replace(/<[^>]*>/g, "").trim();
+  const desc = raw.length > PRODUCT_DESC_MAX ? raw.slice(0, PRODUCT_DESC_MAX) + "…" : raw;
+  return `*${name}*\n💰 *Price:* ${price}\n\n${desc}\n\n🔗 *Link:* ${productUrl || "N/A"}`;
+}
+
+function cleanText(t: string): string {
+  if (typeof t !== "string") return "";
+  let out = t
+    .replace(/https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?/gi, "")
+    .replace(/ImageURL:\s*\S+/gi, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+  out = out.replace(/\*\*/g, "").replace(/__/g, "").replace(/```[\s\S]*?```/g, "");
+  if (out.length > 4000) out = out.slice(0, 4000);
+  return out.trim();
+}
 
 // --- Tools ---
 
@@ -60,6 +92,129 @@ export const testResponse = internalAction({
     }
 });
 
+/**
+ * Real LLM test: uses current AI config (system prompt + model) and calls OpenRouter.
+ * Use from CLI: npx convex run agent:runRealTest '{"message":"كم سعر الهاتف؟"}'
+ * Requires OPENROUTER_KEY in Convex env.
+ */
+export const runRealTest = action({
+  args: {
+    message: v.optional(v.string()),
+  },
+  handler: async (ctx, args): Promise<{ message: string; model: string; response: string }> => {
+    const apiKey = process.env.OPENROUTER_KEY;
+    if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
+    const config = await ctx.runQuery(api.ai_config.getConfig) as { systemPrompt?: string; model?: string } | null;
+    const systemPrompt = config?.systemPrompt ?? "You are a helpful sales assistant.";
+    const model = config?.model ?? "arcee-ai/trinity-mini:free";
+    const userMessage = (args.message ?? "مرحبا، ما المنتجات المتوفرة؟").trim();
+    const messages = [
+      { role: "system" as const, content: systemPrompt },
+      { role: "user" as const, content: userMessage },
+    ];
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://w-ai.com",
+        "X-Title": "W-AI Agent Real Test",
+      },
+      body: JSON.stringify({ model, messages }),
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`OpenRouter Error: ${err}`);
+    }
+    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    const content = data.choices?.[0]?.message?.content ?? "No response generated.";
+    return { message: userMessage, model, response: content };
+  },
+});
+
+/** Public action for AI Settings page: run a single LLM test (no RAG, no product search). */
+export const runTest = action({
+  args: {
+    message: v.string(),
+    systemPrompt: v.string(),
+    model: v.string(),
+    temperature: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_KEY;
+    if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
+    const messages = [
+      { role: "system", content: args.systemPrompt },
+      { role: "user", content: args.message },
+    ];
+    const body: { model: string; messages: typeof messages; temperature?: number } = {
+      model: args.model,
+      messages,
+    };
+    if (args.temperature !== undefined) body.temperature = args.temperature;
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": "https://w-ai.com",
+        "X-Title": "W-AI Agent Test",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`OpenRouter Error: ${err}`);
+    }
+    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    return data.choices?.[0]?.message?.content ?? "No response generated.";
+  },
+});
+
+// --- Agent feedback (ratings / improving) ---
+
+export const saveFeedback = mutation({
+  args: {
+    source: v.union(v.literal("test"), v.literal("chat")),
+    rating: v.number(),
+    comment: v.optional(v.string()),
+    testInput: v.optional(v.string()),
+    testOutput: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.rating < 1 || args.rating > 5) throw new Error("Rating must be 1–5");
+    await ctx.db.insert("agent_feedback", {
+      source: args.source,
+      rating: args.rating,
+      comment: args.comment,
+      testInput: args.testInput,
+      testOutput: args.testOutput,
+      createdAt: Date.now(),
+    });
+  },
+});
+
+export const listFeedback = query({
+  args: { limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(args.limit ?? 20, 50);
+    return await ctx.db
+      .query("agent_feedback")
+      .withIndex("by_created_at")
+      .order("desc")
+      .take(limit);
+  },
+});
+
+export const feedbackStats = query({
+  handler: async (ctx) => {
+    const all = await ctx.db.query("agent_feedback").collect();
+    if (all.length === 0) return { average: 0, count: 0 };
+    const sum = all.reduce((s, r) => s + r.rating, 0);
+    return { average: sum / all.length, count: all.length };
+  },
+});
+
 export const generateResponse = internalAction({
   args: {
     chatId: v.id("chats"),
@@ -72,13 +227,6 @@ export const generateResponse = internalAction({
       console.error("[Agent] Missing OPENROUTER_KEY");
       return;
     }
-    const cleanText = (t: string) =>
-      t
-        .replace(/https?:\/\/\S+\.(png|jpe?g|webp|gif)(\?\S*)?/gi, "")
-        .replace(/ImageURL:\s*\S+/gi, "")
-        .replace(/\n{3,}/g, "\n\n")
-        .trim();
-
 // Conversation context manager
 interface ConversationContext {
   searchHistory: Array<{
@@ -195,9 +343,25 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
         summaryContext = `\n\nPREVIOUS CONVERSATION SUMMARY:\n${chat.aiSummary}\n\n(Use this summary to understand context, but prioritize recent messages.)`;
     }
 
+    // 2b. RAG: retrieve relevant knowledge base snippets for context
+    let knowledgeContext = "";
+    try {
+      const knowledgeSnippets = await ctx.runAction(internal.ai.searchKnowledge, {
+        query: args.userMessage,
+        limit: 5,
+      });
+      if (knowledgeSnippets && knowledgeSnippets.length > 0) {
+        knowledgeContext = "\n\nRELEVANT DOCUMENTATION (use when answering):\n" + knowledgeSnippets
+          .map((s: { title: string; content: string }) => `## ${s.title}\n${s.content}`)
+          .join("\n\n");
+      }
+    } catch (e) {
+      console.warn("[Agent] Knowledge search failed:", e);
+    }
+
     // 3. Prepare Messages for LLM
     const messages = [
-      { role: "system", content: systemPrompt + summaryContext },
+      { role: "system", content: systemPrompt + summaryContext + knowledgeContext },
       ...recentHistory,
       { role: "user", content: args.userMessage }
     ];
@@ -283,8 +447,8 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
       }
       
       // Context-aware enhancement: Check if this is a follow-up question
-      const isFollowUp = recentHistory.some(msg => 
-        msg.role === 'assistant' && 
+      const isFollowUp = recentHistory.some((msg: { role: string; content: string }) =>
+        msg.role === 'assistant' &&
         (msg.content.includes('product') || msg.content.includes('found') || msg.content.includes('search'))
       );
       
@@ -351,7 +515,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
         // If query becomes too short or generic, enhance with context
         if (cleanQuery.length < 2 || ['this', 'that', 'it', 'one'].includes(cleanQuery.toLowerCase())) {
             // Use conversation history for context
-            const lastProductMention = recentHistory.find(msg => 
+            const lastProductMention = recentHistory.find((msg: { role: string; content: string }) =>
                 msg.role === 'user' && (msg.content.includes('product') || msg.content.includes('item'))
             );
             if (lastProductMention) {
@@ -598,9 +762,24 @@ Description: ${p.description.substring(0, 150)}...
 
         console.log(`[Agent] Response: ${aiText.substring(0, 50)}...`);
 
-        const toolRegex = /<TOOL:send_product>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i;
-        const toolMatch = aiText.match(toolRegex);
         let sentByTool = false;
+
+        // Transfer to human: turn off AI for this chat and send handoff message
+        const transferRegex = /<TOOL:transfer_to_human>\s*/i;
+        if (transferRegex.test(aiText)) {
+            aiText = aiText.replace(transferRegex, "").trim();
+            await ctx.runMutation(internal.chat.transferToHuman, { chatId: args.chatId });
+            await ctx.runMutation(internal.messages.sendAndSave, {
+                chatId: args.chatId,
+                content: HANDOFF_MESSAGE,
+                type: "text",
+                contactPhone: args.contactPhone
+            });
+            sentByTool = true;
+        }
+
+        const toolRegex = /<TOOL:send_product>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i;
+        const toolMatch = !sentByTool && aiText.match(toolRegex);
         if (toolMatch) {
             const jsonText = toolMatch[1];
             let payload: Record<string, unknown> | null = null;
@@ -622,7 +801,7 @@ Description: ${p.description.substring(0, 150)}...
                 if (aiText) {
                     await ctx.runMutation(internal.messages.sendAndSave, {
                         chatId: args.chatId,
-                        content: aiText,
+                        content: cleanText(aiText),
                         type: "text",
                         contactPhone: args.contactPhone
                     });
@@ -697,13 +876,15 @@ Description: ${p.description.substring(0, 150)}...
                 sentByImageTag = true;
             }
         } else {
-            // Normal Text Response
-            await ctx.runMutation(internal.messages.sendAndSave, {
-                chatId: args.chatId,
-                content: cleanText(aiText),
-                type: "text",
-                contactPhone: args.contactPhone
-            });
+            // Normal Text Response (skip if we already sent e.g. transfer_to_human)
+            if (!sentByTool && aiText) {
+                await ctx.runMutation(internal.messages.sendAndSave, {
+                    chatId: args.chatId,
+                    content: cleanText(aiText),
+                    type: "text",
+                    contactPhone: args.contactPhone
+                });
+            }
         }
         // Fallback: Arabic/English "send product" directive, or automatic send if we have selectedProduct
         const arabicSendRegex = /\[?أرسل المنتج\]?/;
@@ -829,8 +1010,7 @@ export const sendProduct = internalAction({
         description: v.string()
     },
     handler: async (ctx, args) => {
-        const desc = args.description.replace(/<[^>]*>/g, "");
-        const text = `*${args.name}*\n💰 *Price:* ${args.price}\n\n${desc}\n\n🔗 *Link:* ${args.productUrl || "N/A"}`;
+        const text = formatProductMessage(args.name, args.price, args.description, args.productUrl);
         await ctx.runMutation(internal.messages.sendAndSave, {
             chatId: args.chatId,
             content: text,
@@ -860,7 +1040,7 @@ export const messengerProduct = internalAction({
         description: v.string()
     },
     handler: async (ctx, args) => {
-        const text = `*${args.name}*\n💰 *Price:* ${args.price}\n\n${args.description.replace(/<[^>]*>/g, "")}\n\n🔗 *Link:* ${args.productUrl || "N/A"}`;
+        const text = formatProductMessage(args.name, args.price, args.description, args.productUrl);
         await ctx.runAction(internal.agent.executeTool, {
             chatId: args.chatId,
             contactPhone: args.contactPhone,
@@ -887,7 +1067,8 @@ export const executeTool = internalAction({
     },
     handler: async (ctx, args) => {
         if (args.tool === "text") {
-            const text = typeof args.payload?.text === "string" ? args.payload.text : String(args.payload || "").trim();
+            const raw = typeof args.payload?.text === "string" ? args.payload.text : String(args.payload || "").trim();
+            const text = cleanText(raw);
             if (text) {
                 await ctx.runMutation(internal.messages.sendAndSave, {
                     chatId: args.chatId,

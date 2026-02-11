@@ -14,12 +14,14 @@ interface ChatWindowProps {
 export function ChatWindow({ chatId }: ChatWindowProps) {
   const markAsRead = useMutation(api.chat.markAsRead)
 
-  // Instant Read Effect
+  const isRealChatId = chatId && chatId !== "new"
+
+  // Instant Read Effect (only for real chat IDs; "new" is the new-chat route)
   useEffect(() => {
-    if (chatId) {
+    if (isRealChatId) {
       markAsRead({ chatId: chatId as any }).catch(console.error)
     }
-  }, [chatId, markAsRead])
+  }, [chatId, isRealChatId, markAsRead])
 
   return (
     <div className="flex flex-col h-full bg-[#efeae2] dark:bg-[#0b141a] relative">

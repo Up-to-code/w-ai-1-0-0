@@ -11,6 +11,7 @@ import {
 } from "react-native";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import { useWorkspace } from "../../contexts/WorkspaceContext";
 import { Ionicons } from "@expo/vector-icons";
 
 interface Message {
@@ -39,8 +40,11 @@ export function ForwardMessageModal({
 }: ForwardMessageModalProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [forwarding, setForwarding] = useState(false);
+  const { activePhoneNumberId } = useWorkspace();
 
-  const chats = useQuery(api.chat.listChats);
+  const chats = useQuery(api.chat.listChats, {
+    phoneNumberId: activePhoneNumberId ?? undefined,
+  });
   const sendMessage = useMutation(api.chat.sendMessage);
 
   const filteredChats = useMemo(() => {

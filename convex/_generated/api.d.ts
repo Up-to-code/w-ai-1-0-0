@@ -31,7 +31,9 @@ import type * as stats from "../stats.js";
 import type * as templates from "../templates.js";
 import type * as users from "../users.js";
 import type * as webhookEvents from "../webhookEvents.js";
+import type * as webhookSettings from "../webhookSettings.js";
 import type * as whatsapp from "../whatsapp.js";
+import type * as whatsappNumbers from "../whatsappNumbers.js";
 import type * as workflows from "../workflows.js";
 
 import type {
@@ -64,7 +66,9 @@ declare const fullApi: ApiFromModules<{
   templates: typeof templates;
   users: typeof users;
   webhookEvents: typeof webhookEvents;
+  webhookSettings: typeof webhookSettings;
   whatsapp: typeof whatsapp;
+  whatsappNumbers: typeof whatsappNumbers;
   workflows: typeof workflows;
 }>;
 

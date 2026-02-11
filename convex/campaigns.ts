@@ -10,6 +10,7 @@ export const create = mutation({
         name: v.string(),
         templateId: v.id("templates"),
         templateName: v.string(), // Cached for recursion
+        phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
         segmentId: v.optional(v.id("segments")),
         targetTags: v.optional(v.array(v.string())),
         targetContactIds: v.optional(v.array(v.id("contacts"))),
@@ -28,6 +29,7 @@ export const create = mutation({
             name: args.name,
             templateId: args.templateId,
             templateName: args.templateName,
+            phoneNumberId: args.phoneNumberId,
             segmentId: args.segmentId,
             targetTags: args.targetTags,
             targetContactIds: args.targetContactIds,
@@ -486,10 +488,11 @@ export const sendToContact = internalAction({
                             console.log(`[Campaign] Card ${i}: Uploading ${headerFormat} from header_handle...`);
                             
                             try {
-                                // Upload media to WhatsApp and get a media ID
+                                // Upload media to WhatsApp and get a media ID (use campaign's number so DB token is used)
                                 const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
                                     url: headerUrl,
                                     type: headerFormat,
+                                    phoneNumberId: campaign.phoneNumberId ?? undefined,
                                 });
                                 mediaIds.push(mediaId);
                                 console.log(`[Campaign] Card ${i}: Got media ID: ${mediaId}`);
@@ -606,7 +609,7 @@ export const sendToContact = internalAction({
                     // If no headers and no variables, empty components array is OK
                 }
             } else {
-                // Standard template: process top-level components
+                // Standard template: process top-level components (HEADER, BODY, BUTTONS)
                 for (const comp of template.components) {
                     console.log(`[Campaign] Processing component:`, {
                         type: comp.type,
@@ -614,12 +617,37 @@ export const sendToContact = internalAction({
                         hasExample: !!comp.example,
                         example: comp.example
                     });
-                    
-                    // Check for HEADER (case-insensitive)
+
                     if (comp.type === "HEADER" || comp.type === "header") {
                         const headerComponent = processHeaderComponent(comp);
-                        if (headerComponent) {
-                            components.push(headerComponent);
+                        if (headerComponent) components.push(headerComponent);
+                    } else if (comp.type === "BODY" || comp.type === "body") {
+                        const hasVariables = comp.text?.includes("{{") || (comp.example?.body_text && comp.example.body_text.length > 0);
+                        if (hasVariables && comp.example?.body_text) {
+                            const texts = (comp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t));
+                            const parameters = texts.map((text: string) => ({ type: "text" as const, text: text || "1" }));
+                            components.push({ type: "body", parameters });
+                        }
+                    } else if (comp.type === "BUTTONS" || comp.type === "buttons") {
+                        const buttons = comp.buttons as { type?: string; url?: string; example?: string[] }[] | undefined;
+                        if (Array.isArray(buttons)) {
+                            buttons.forEach((btn: any, idx: number) => {
+                                const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
+                                if (!hasVariable) return;
+                                const subType = (btn.type === "URL" || btn.type === "url") ? "url" : (btn.type === "COPY_CODE" || btn.type === "copy_code") ? "copy_code" : "url";
+                                let paramText = "1";
+                                if (btn.example && btn.example[0]) {
+                                    const ex = String(btn.example[0]);
+                                    const codeMatch = ex.match(/code=([^&\s]+)/i);
+                                    paramText = codeMatch ? codeMatch[1] : ex;
+                                }
+                                components.push({
+                                    type: "button",
+                                    sub_type: subType,
+                                    index: idx,
+                                    parameters: [{ type: "text" as const, text: paramText }]
+                                });
+                            });
                         }
                     }
                 }
@@ -658,14 +686,16 @@ export const sendToContact = internalAction({
         console.log(`[Campaign] Final components to send:`, JSON.stringify(components, null, 2));
 
         try {
+            const templateLanguage = template.language || "ar";
             const res = await ctx.runAction(api.whatsapp.sendMessage, {
                 to: (contact as { phone?: string }).phone as string,
                 type: "template",
                 content: {
                     name: campaign.templateName,
-                    language: { code: "ar" },
+                    language: { code: templateLanguage },
                     components: components
-                }
+                },
+                phoneNumberId: campaign.phoneNumberId ?? undefined,
             });
             await ctx.runMutation(internal.campaigns.logBatchResults, {
                 campaignId: args.campaignId,
@@ -933,16 +963,40 @@ export const getBatchForProcessing = internalQuery({
         const campaign = await ctx.db.get(args.campaignId);
         if (!campaign) throw new Error("Campaign not found");
 
-        const q = ctx.db.query("contacts").order("desc"); // Deterministic order
+        const templateName = campaign.templateName;
+        const sendingConfig = campaign.sendingConfig;
 
-        // Use pagination
-        const page = await q.paginate({ cursor: args.cursor, numItems: args.limit });
+        // Only send to selected audience: targetContactIds, targetTags, or all
+        if (campaign.targetContactIds && campaign.targetContactIds.length > 0) {
+            const contacts = await Promise.all(
+                campaign.targetContactIds.map(id => ctx.db.get(id))
+            );
+            const list = contacts.filter((c): c is NonNullable<typeof c> => c !== null);
+            const offset = args.cursor != null ? parseInt(args.cursor, 10) : 0;
+            const page = list.slice(offset, offset + args.limit);
+            const nextCursor = offset + args.limit < list.length ? String(offset + args.limit) : null;
+            return { contacts: page, nextCursor, templateName, sendingConfig };
+        }
 
+        if (campaign.targetTags && campaign.targetTags.length > 0) {
+            const all = await ctx.db.query("contacts").take(50000);
+            const list = all.filter(c =>
+                c.tags?.some(tag => campaign.targetTags?.includes(tag))
+            );
+            const offset = args.cursor != null ? parseInt(args.cursor, 10) : 0;
+            const page = list.slice(offset, offset + args.limit);
+            const nextCursor = offset + args.limit < list.length ? String(offset + args.limit) : null;
+            return { contacts: page, nextCursor, templateName, sendingConfig };
+        }
+
+        // No targeting: all contacts, use Convex pagination
+        const q = ctx.db.query("contacts").order("desc");
+        const result = await q.paginate({ cursor: args.cursor, numItems: args.limit });
         return {
-            contacts: page.page,
-            nextCursor: page.continueCursor,
-            templateName: campaign.templateName,
-            sendingConfig: campaign.sendingConfig  // Anti-spam config
+            contacts: result.page,
+            nextCursor: result.continueCursor,
+            templateName,
+            sendingConfig
         };
     }
 });

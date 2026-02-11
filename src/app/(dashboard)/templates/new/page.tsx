@@ -43,6 +43,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 import { ProductPicker } from "../../chat/_components/ProductPicker"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 interface CarouselCard {
     headerType: "IMAGE" | "VIDEO"
@@ -71,7 +72,8 @@ export default function NewTemplatePage() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const editName = searchParams?.get("edit")
-    
+    const { activePhoneNumberId } = useWorkspace()
+
     const createTemplate = useAction(api.templates.createTemplate)
     const existingTemplate = useQuery(api.templates.getByName, editName ? { name: editName } : "skip")
     const uploadTemplateMedia = useAction(api.whatsapp.uploadTemplateMedia)
@@ -182,7 +184,8 @@ export default function NewTemplatePage() {
             // 2. Upload to Meta via Server Action
             const handle = await uploadTemplateMedia({
                 storageId,
-                type: file.type
+                type: file.type,
+                phoneNumberId: activePhoneNumberId ?? undefined,
             })
 
             const previewUrl = URL.createObjectURL(file)
@@ -246,7 +249,8 @@ export default function NewTemplatePage() {
             // 2. Upload to Meta (Backend handles fetch -> upload)
             const handle = await uploadExternalMedia({
                 url: product.image,
-                type: "image/jpeg" // Salla images are usually JPEGs/PNGs
+                type: "image/jpeg", // Salla images are usually JPEGs/PNGs
+                phoneNumberId: activePhoneNumberId ?? undefined,
             })
 
             // 3. Update Handle
@@ -568,7 +572,8 @@ export default function NewTemplatePage() {
                 name: name.toLowerCase().replace(/\s+/g, '_'),
                 category,
                 language,
-                components
+                components,
+                phoneNumberId: activePhoneNumberId ?? undefined,
             })
 
             router.push("/templates?success=true")

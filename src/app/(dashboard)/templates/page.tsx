@@ -36,8 +36,11 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
+import { useWorkspace } from "@/contexts/WorkspaceContext"
+
 export default function TemplatesPage() {
     const templates = useQuery(api.templates.list) || []
+    const { activePhoneNumberId } = useWorkspace()
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
 
@@ -57,7 +60,7 @@ export default function TemplatesPage() {
     const handleSync = async () => {
         setIsSyncing(true)
         try {
-            const count = await syncFromMeta({})
+            const count = await syncFromMeta({ phoneNumberId: activePhoneNumberId ?? undefined })
             showToast("success", `تم مزامنة ${count} قالب بنجاح`)
         } catch (error) {
             console.error("Sync failed:", error)
@@ -71,7 +74,7 @@ export default function TemplatesPage() {
         if (!deleteTemplateData) return
         setIsDeleting(true)
         try {
-            await deleteTemplate({ name: deleteTemplateData.name })
+            await deleteTemplate({ name: deleteTemplateData.name, phoneNumberId: activePhoneNumberId ?? undefined })
             showToast("success", `تم حذف القالب "${deleteTemplateData.name}" بنجاح`)
             setDeleteTemplateData(null)
         } catch (error: any) {

@@ -2,12 +2,26 @@
 
 import { ChatWindow } from "../_components/ChatWindow"
 import { useParams } from "next/navigation"
+import { MessageSquare } from "lucide-react"
 
 export default function ChatConversationPage() {
   const params = useParams()
   const chatId = params?.chatId as string
 
   if (!chatId) return null
+
+  // Never mount ChatWindow with "new" — Convex expects v.id("chats"), not the literal "new"
+  if (chatId === "new") {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[#efeae2] dark:bg-[#0b141a] h-full">
+        <div className="text-center max-w-md px-6">
+          <MessageSquare className="h-24 w-24 text-[#e9edef] dark:text-[#384147] mx-auto mb-8" />
+          <h3 className="text-xl font-light text-[#41525d] dark:text-[#d1d7db] mb-2">New chat</h3>
+          <p className="text-[#667781] dark:text-[#8696a0] text-sm">Select a conversation or start from the sidebar.</p>
+        </div>
+      </div>
+    )
+  }
 
   return <ChatWindow chatId={chatId} />
 }

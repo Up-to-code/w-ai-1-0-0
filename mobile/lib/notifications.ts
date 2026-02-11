@@ -68,9 +68,13 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 }
 
 /**
- * Setup notification handlers for received and tapped notifications
+ * Setup notification handlers for received and tapped notifications.
+ * When onSetActivePhoneNumberId is provided (e.g. from WorkspaceContext), we call it with
+ * data.phoneNumberId before navigating so the correct number's inbox is shown.
  */
-export function setupNotificationHandlers() {
+export function setupNotificationHandlers(
+  onSetActivePhoneNumberId?: (id: string) => void
+) {
   // Handle notification received while app is in foreground
   Notifications.addNotificationReceivedListener((notification) => {
     console.log("Notification received:", notification);
@@ -80,16 +84,24 @@ export function setupNotificationHandlers() {
   // Handle notification tapped
   Notifications.addNotificationResponseReceivedListener((response) => {
     console.log("Notification tapped:", response);
-    
-    const data = response.notification.request.content.data;
-    
+
+    const data = response.notification.request.content.data as {
+      chatId?: string;
+      phoneNumberId?: string;
+    };
+
     // Navigate to chat if chatId is present
-    // Import router dynamically to avoid issues
     if (data?.chatId) {
-      // Use dynamic import to avoid circular dependencies
-      import("expo-router").then(({ router }) => {
-        router.push(`/chat/${data.chatId}`);
-      });
+      const navigate = () => {
+        import("expo-router").then(({ router }) => {
+          router.push(`/chat/${data.chatId}`);
+        });
+      };
+      // Switch to the chat's number first so sidebar shows correct inbox (multi-number)
+      if (data.phoneNumberId && onSetActivePhoneNumberId) {
+        onSetActivePhoneNumberId(data.phoneNumberId);
+      }
+      navigate();
     }
   });
 }

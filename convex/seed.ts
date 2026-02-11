@@ -1,5 +1,22 @@
 import { mutation } from "./_generated/server";
 
+/** One-time backfill: set phoneNumberId on all chats that don't have it (to current WHATSAPP_PHONE_ID). Run from Convex dashboard. */
+export const backfillChatPhoneNumberIds = mutation({
+  handler: async (ctx) => {
+    const phoneId = process.env.WHATSAPP_PHONE_ID;
+    if (!phoneId) throw new Error("WHATSAPP_PHONE_ID not set.");
+    const chats = await ctx.db.query("chats").collect();
+    let updated = 0;
+    for (const chat of chats) {
+      if (chat.phoneNumberId === undefined || chat.phoneNumberId === null || chat.phoneNumberId === "") {
+        await ctx.db.patch(chat._id, { phoneNumberId: phoneId });
+        updated++;
+      }
+    }
+    return { updated, total: chats.length };
+  },
+});
+
 export const seedContacts = mutation({
   handler: async (ctx) => {
     const contacts = [];

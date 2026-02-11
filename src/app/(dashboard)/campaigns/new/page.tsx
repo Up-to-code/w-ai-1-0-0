@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery, useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -38,15 +39,18 @@ import type { Id } from "../../../../../convex/_generated/dataModel"
 
 export default function NewCampaignPage() {
     const router = useRouter()
+    const { numbers, activePhoneNumberId } = useWorkspace()
     const [currentStep, setCurrentStep] = useState(0)
 
     // Form Data
     const [name, setName] = useState("")
+    const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string | null>(null)
     const [scheduledAt, setScheduledAt] = useState<string>("")
     const [recurrenceCronSpec, setRecurrenceCronSpec] = useState<string>("")
     const [selectedTemplate, setSelectedTemplate] = useState<{ _id: string; name: string; components?: { type?: string; text?: string }[]; content?: string } | null>(null)
-    const [targetAudience, setTargetAudience] = useState<"all" | "tags">("all")
+    const [targetAudience, setTargetAudience] = useState<"all" | "tags" | "selected">("all")
     const [selectedTags, setSelectedTags] = useState<string[]>([])
+    const [selectedContactIds, setSelectedContactIds] = useState<Id<"contacts">[]>([])
 
     // Anti-spam sending config
     const [sendingConfig, setSendingConfig] = useState({
@@ -68,10 +72,17 @@ export default function NewCampaignPage() {
     // Derived Stats
     const filteredContacts = contacts?.filter(c => {
         if (targetAudience === 'all') return true
+        if (targetAudience === 'selected') return selectedContactIds.includes(c._id)
         return c.tags?.some(t => selectedTags.includes(t))
     }) || []
 
     const uniqueTags = Array.from(new Set(contacts?.flatMap(c => c.tags || []) || []))
+
+    useEffect(() => {
+        if (numbers.length > 0 && selectedPhoneNumberId === null) {
+            setSelectedPhoneNumberId(activePhoneNumberId ?? numbers[0].businessNumberId)
+        }
+    }, [numbers, activePhoneNumberId, selectedPhoneNumberId])
 
     const handleSubmit = async () => {
         setIsSubmitting(true)
@@ -80,7 +91,9 @@ export default function NewCampaignPage() {
                 name,
                 templateId: selectedTemplate?._id as Id<"templates">,
                 templateName: selectedTemplate?.name || "",
+                phoneNumberId: selectedPhoneNumberId ?? undefined,
                 targetTags: targetAudience === 'tags' ? selectedTags : undefined,
+                targetContactIds: targetAudience === 'selected' && selectedContactIds.length > 0 ? selectedContactIds : undefined,
                 scheduledAt: scheduledAt ? new Date(scheduledAt).getTime() : Date.now(),
                 recurrenceCronSpec: recurrenceCronSpec || undefined,
                 sendingConfig
@@ -155,6 +168,24 @@ export default function NewCampaignPage() {
                                             autoFocus
                                         />
                                     </div>
+
+                                    {numbers.length > 0 && (
+                                        <div className="space-y-2">
+                                            <Label className="text-base">رقم الإرسال</Label>
+                                            <select
+                                                value={selectedPhoneNumberId ?? ""}
+                                                onChange={(e) => setSelectedPhoneNumberId(e.target.value || null)}
+                                                className="flex h-12 w-full rounded-lg border border-input bg-background px-3 py-2 text-base ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            >
+                                                {numbers.map((n) => (
+                                                    <option key={n._id} value={n.businessNumberId}>
+                                                        {n.name} ({n.phone})
+                                                    </option>
+                                                ))}
+                                            </select>
+                                            <p className="text-xs text-muted-foreground">سيتم إرسال رسائل الحملة من هذا الرقم</p>
+                                        </div>
+                                    )}
                                     
                                     <SchedulePicker
                                         value={scheduledAt}
@@ -338,7 +369,7 @@ export default function NewCampaignPage() {
                             {/* Step 2: Audience */}
                             {currentStep === 1 && (
                                 <div className="space-y-6 animate-in slide-in-from-bottom-4 duration-500">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                         <div
                                             className={`relative p-6 border rounded-lg cursor-pointer transition-all overflow-hidden ${targetAudience === 'all' ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                             onClick={() => setTargetAudience('all')}
@@ -369,7 +400,60 @@ export default function NewCampaignPage() {
                                             </div>
                                             {targetAudience === 'tags' && <div className="absolute top-4 left-4 text-primary"><CheckCircle2 className="h-6 w-6" /></div>}
                                         </div>
+
+                                        <div
+                                            className={`relative p-6 border rounded-lg cursor-pointer transition-all overflow-hidden ${targetAudience === 'selected' ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
+                                            onClick={() => setTargetAudience('selected')}
+                                        >
+                                            <div className="relative z-10">
+                                                <div className="w-12 h-12 rounded-xl bg-background flex items-center justify-center mb-4 border">
+                                                    <CheckCircle2 className="h-6 w-6 text-primary" />
+                                                </div>
+                                                <h3 className="text-lg font-bold mb-1">جهات اتصال محددة</h3>
+                                                <p className="text-muted-foreground text-sm">إرسال فقط للمحددين من القائمة</p>
+                                                <div className="mt-4 inline-flex items-center px-3 py-1 rounded-full bg-background text-sm font-medium border">
+                                                    {selectedContactIds.length} محدد
+                                                </div>
+                                            </div>
+                                            {targetAudience === 'selected' && <div className="absolute top-4 left-4 text-primary"><CheckCircle2 className="h-6 w-6" /></div>}
+                                        </div>
                                     </div>
+
+                                    {targetAudience === 'selected' && (
+                                        <div className="space-y-4 bg-muted/30 p-6 rounded-lg border animate-in fade-in zoom-in-95">
+                                            <Label className="text-base">اختر جهات الاتصال المستهدفة</Label>
+                                            <p className="text-sm text-muted-foreground">سيتم إرسال الحملة فقط لهؤلاء المستلمين.</p>
+                                            <ScrollArea className="h-[280px] border rounded-lg p-3">
+                                                <div className="space-y-2">
+                                                    {contacts?.map(c => (
+                                                        <label
+                                                            key={c._id}
+                                                            className="flex items-center gap-3 p-2 rounded-lg hover:bg-muted/50 cursor-pointer"
+                                                        >
+                                                            <Checkbox
+                                                                checked={selectedContactIds.includes(c._id)}
+                                                                onCheckedChange={(checked) => {
+                                                                    if (checked) setSelectedContactIds(prev => [...prev, c._id])
+                                                                    else setSelectedContactIds(prev => prev.filter(id => id !== c._id))
+                                                                }}
+                                                            />
+                                                            <span className="font-medium">{c.name || c.phone || "بدون اسم"}</span>
+                                                            {c.phone && <span className="text-muted-foreground text-sm">{c.phone}</span>}
+                                                        </label>
+                                                    ))}
+                                                    {(!contacts || contacts.length === 0) && <p className="text-muted-foreground text-sm">لا يوجد جهات اتصال</p>}
+                                                </div>
+                                            </ScrollArea>
+                                            <div className="flex gap-2">
+                                                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedContactIds(contacts?.map(c => c._id) ?? [])}>
+                                                    تحديد الكل
+                                                </Button>
+                                                <Button type="button" variant="outline" size="sm" onClick={() => setSelectedContactIds([])}>
+                                                    إلغاء التحديد
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
 
                                     {targetAudience === 'tags' && (
                                         <div className="space-y-4 bg-muted/30 p-6 rounded-lg border animate-in fade-in zoom-in-95">
@@ -504,9 +588,22 @@ export default function NewCampaignPage() {
                                                     <span className="text-lg font-medium">{filteredContacts.length} مستلم</span>
                                                 </div>
                                                 <div className="text-sm text-muted-foreground mt-1">
-                                                    {targetAudience === 'all' ? 'جميع جهات الاتصال' : `التصنيفات: ${selectedTags.join(', ')}`}
+                                                    {targetAudience === 'all' && 'جميع جهات الاتصال'}
+                                                    {targetAudience === 'tags' && `التصنيفات: ${selectedTags.join(', ')}`}
+                                                    {targetAudience === 'selected' && `${selectedContactIds.length} جهة اتصال محددة`}
                                                 </div>
                                             </div>
+                                            {numbers.length > 0 && (
+                                                <div>
+                                                    <Label className="text-muted-foreground text-xs uppercase tracking-wider">رقم الإرسال</Label>
+                                                    <div className="flex items-center gap-2 mt-1">
+                                                        <Smartphone className="h-5 w-5 text-primary" />
+                                                        <span className="text-lg font-medium">
+                                                            {numbers.find((n) => n.businessNumberId === selectedPhoneNumberId)?.name ?? selectedPhoneNumberId ?? "افتراضي"}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="border rounded-lg p-4">
@@ -572,7 +669,7 @@ export default function NewCampaignPage() {
                                         onClick={() => setCurrentStep(currentStep + 1)}
                                         disabled={
                                             (currentStep === 0 && !name) ||
-                                            (currentStep === 1 && filteredContacts.length === 0) ||
+                                            (currentStep === 1 && (filteredContacts.length === 0 || (targetAudience === 'selected' && selectedContactIds.length === 0))) ||
                                             (currentStep === 2 && !selectedTemplate)
                                         }
                                         className="px-8 gap-2"

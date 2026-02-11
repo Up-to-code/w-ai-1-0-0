@@ -2,6 +2,7 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { WorkspaceProvider } from "@/contexts/WorkspaceContext"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -29,6 +30,7 @@ import { DashboardHeaderProvider, useDashboardHeader } from "@/components/Dashbo
 import { Toaster } from "sonner"
 import { GlobalNotification } from "@/components/GlobalNotification"
 import { Suspense } from "react"
+import { WorkspaceSwitcher } from "./_components/WorkspaceSwitcher"
 
 // Sidebar Content Component
 function SidebarContent({ pathname }: { pathname: string }) {
@@ -56,17 +58,9 @@ function SidebarContent({ pathname }: { pathname: string }) {
 
   return (
     <div className="flex flex-col h-full bg-sidebar">
-      {/* Logo */}
-      <div className="p-5 border-b border-sidebar-border">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <MessageSquare className="h-5 w-5 text-primary-foreground" />
-          </div>
-          <div>
-            <h1 className="text-lg font-bold text-sidebar-foreground">ChatCB</h1>
-            <p className="text-xs text-muted-foreground">WhatsApp Business</p>
-          </div>
-        </div>
+      {/* Workspace Switcher */}
+      <div className="p-4 border-b border-sidebar-border">
+        <WorkspaceSwitcher />
       </div>
 
       {/* Menu Section */}
@@ -189,6 +183,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const pathname = usePathname()
 
   return (
+    <WorkspaceProvider>
     <DashboardHeaderProvider>
       <div className="flex h-screen bg-background font-sans" dir="rtl">
         <aside className="hidden md:flex w-64 border-l border-sidebar-border flex-col">
@@ -208,5 +203,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </Suspense>
       </div>
     </DashboardHeaderProvider>
+    </WorkspaceProvider>
   )
 }

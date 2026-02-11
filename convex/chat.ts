@@ -8,8 +8,19 @@ const pushNotifications = new PushNotifications<any>(components.pushNotification
 import { paginationOptsValidator } from "convex/server";
 
 export const getChatByPhone = internalQuery({
-  args: { phone: v.string() },
+  args: { phone: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    if (args.phoneNumberId) {
+      return await ctx.db
+        .query("chats")
+        .filter((q: any) =>
+          q.and(
+            q.eq(q.field("contactPhone"), args.phone),
+            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
+          )
+        )
+        .first();
+    }
     return await ctx.db
       .query("chats")
       .filter((q: any) => q.eq(q.field("contactPhone"), args.phone))
@@ -18,24 +29,43 @@ export const getChatByPhone = internalQuery({
 });
 
 export const getOrCreateChat = mutation({
-  args: { contactPhone: v.string(), contactName: v.string() },
+  args: {
+    contactPhone: v.string(),
+    contactName: v.string(),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("chats")
-      .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
-      .first();
+    let existing;
+    if (args.phoneNumberId) {
+      existing = await ctx.db
+        .query("chats")
+        .filter((q: any) =>
+          q.and(
+            q.eq(q.field("contactPhone"), args.contactPhone),
+            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
+          )
+        )
+        .first();
+    } else {
+      existing = await ctx.db
+        .query("chats")
+        .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
+        .first();
+    }
 
     if (existing) return existing;
 
-    const chatId = await ctx.db.insert("chats", {
-      contactId: args.contactPhone, // WhatsApp ID usually phone
+    const insertPayload: any = {
+      contactId: args.contactPhone,
       contactName: args.contactName,
       contactPhone: args.contactPhone,
       lastMessageTime: Date.now(),
       unreadCount: 0,
       status: "active",
       aiMode: true,
-    });
+    };
+    if (args.phoneNumberId) insertPayload.phoneNumberId = args.phoneNumberId;
+    const chatId = await ctx.db.insert("chats", insertPayload);
 
     return await ctx.db.get(chatId);
   },
@@ -45,6 +75,14 @@ export const toggleAiMode = mutation({
   args: { chatId: v.id("chats"), enabled: v.boolean() },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.chatId, { aiMode: args.enabled });
+  },
+});
+
+/** Called by agent when handing off to human: turn off AI for this chat so humans reply from dashboard. */
+export const transferToHuman = internalMutation({
+  args: { chatId: v.id("chats") },
+  handler: async (ctx, args) => {
+    await ctx.db.patch(args.chatId, { aiMode: false });
   },
 });
 
@@ -129,15 +167,21 @@ export const getLatestGlobalMessage = query({
     // Only interested if it's inbound (someone sent it to us)
     if (message.direction !== "inbound") return null;
 
-    // Fetch sender details
+    // Fetch sender details — ensure the referenced doc is actually a chat (not e.g. an order ID)
     const chat = await ctx.db.get(message.chatId);
     if (!chat) return null;
+    const isChat =
+      "lastMessageTime" in chat &&
+      "contactPhone" in chat &&
+      "unreadCount" in chat;
+    if (!isChat) return null;
 
     return {
       messageId: message._id,
       chatId: chat._id,
       contactName: chat.contactName,
       contactPhone: chat.contactPhone,
+      phoneNumberId: chat.phoneNumberId ?? undefined,
       content: message.content, // Text or Caption
       type: message.type,
       timestamp: message._creationTime, // Use insertion time for notification sync
@@ -145,9 +189,19 @@ export const getLatestGlobalMessage = query({
   }
 });
 
-// Public Query for UI
+// Public Query for UI (optional phoneNumberId: when set, only chats for that business number)
 export const listChats = query({
-  handler: async (ctx) => {
+  args: { phoneNumberId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (args.phoneNumberId) {
+      return await ctx.db
+        .query("chats")
+        .withIndex("by_phoneNumberId_last_message", (q: any) =>
+          q.eq("phoneNumberId", args.phoneNumberId)
+        )
+        .order("desc")
+        .collect();
+    }
     return await ctx.db.query("chats").withIndex("by_last_message").order("desc").collect();
   },
 });
@@ -287,9 +341,35 @@ function buildTemplateComponents(template: any): any[] | null {
           });
         }
       }
+    } else if (comp.type === "BODY" || comp.type === "body") {
+      const hasVariables = comp.text?.includes("{{") || (comp.example?.body_text && comp.example.body_text.length > 0);
+      if (hasVariables && comp.example?.body_text) {
+        const texts = (comp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t));
+        const parameters = texts.map((text: string) => ({ type: "text" as const, text: text || "1" }));
+        components.push({ type: "body", parameters });
+      }
+    } else if (comp.type === "BUTTONS" || comp.type === "buttons") {
+      const buttons = comp.buttons as { type?: string; url?: string; example?: string[] }[] | undefined;
+      if (Array.isArray(buttons)) {
+        buttons.forEach((btn: any, idx: number) => {
+          const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
+          if (!hasVariable) return;
+          const subType = (btn.type === "URL" || btn.type === "url") ? "url" : (btn.type === "COPY_CODE" || btn.type === "copy_code") ? "copy_code" : "url";
+          let paramText = "1";
+          if (btn.example && btn.example[0]) {
+            const ex = String(btn.example[0]);
+            const codeMatch = ex.match(/code=([^&\s]+)/i);
+            paramText = codeMatch ? codeMatch[1] : ex;
+          }
+          components.push({
+            type: "button",
+            sub_type: subType,
+            index: idx,
+            parameters: [{ type: "text" as const, text: paramText }]
+          });
+        });
+      }
     }
-    // Note: BODY and FOOTER components with variables would be handled here if needed
-    // For now, we only handle HEADER as that's what's causing the error
   }
 
   // After constructing components array, check if we missed any HEADER components
@@ -394,6 +474,7 @@ export const sendMessage = mutation({
             templateName: template.name,
             language: args.template!.language,
             template: template,
+            phoneNumberId: chat.phoneNumberId ?? undefined,
           });
           
           // Update chat and return early (message will be sent by the action)
@@ -445,7 +526,8 @@ export const sendMessage = mutation({
       to: chat.contactPhone,
       type: args.type,
       content: payloadContent,
-      messageId: messageId
+      messageId: messageId,
+      phoneNumberId: chat.phoneNumberId ?? undefined,
     }).catch(async (e) => {
       console.error(`[Chat] Failed to schedule WhatsApp send: ${e}`);
       await ctx.db.patch(messageId, { status: "failed" });
@@ -467,6 +549,7 @@ export const buildAndSendCarouselTemplate = internalAction({
     templateName: v.string(),
     language: v.string(),
     template: v.any(),
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
     try {
@@ -554,6 +637,7 @@ export const buildAndSendCarouselTemplate = internalAction({
               const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
                 url: headerUrl,
                 type: headerFormat,
+                phoneNumberId: args.phoneNumberId,
               });
               mediaIds.push(mediaId);
               console.log(`[Chat] Card ${i}: Got media ID: ${mediaId}`);
@@ -691,6 +775,7 @@ export const buildAndSendCarouselTemplate = internalAction({
         type: "template",
         content: payloadContent,
         messageId: args.messageId,
+        phoneNumberId: args.phoneNumberId,
       });
 
       console.log(`[Chat] Carousel template sent successfully`);
@@ -893,7 +978,8 @@ export const markAsRead = mutation({
       const topMsg = unreadMessages[unreadMessages.length - 1];
       if (topMsg.metaMessageId) {
         await ctx.scheduler.runAfter(0, api.whatsapp.markAsRead, {
-          messageId: topMsg.metaMessageId
+          messageId: topMsg.metaMessageId,
+          phoneNumberId: chat.phoneNumberId ?? undefined,
         });
       }
     }

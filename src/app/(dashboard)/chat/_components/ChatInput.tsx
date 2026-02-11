@@ -22,7 +22,8 @@ interface ChatInputProps {
 
 export function ChatInput({ chatId }: ChatInputProps) {
   const templates = useQuery(api.templates.list)
-  const chat = useQuery(api.chat.getChat, { chatId: chatId as any })
+  const isRealChatId = chatId && chatId !== "new"
+  const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip")
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)
@@ -66,7 +67,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
     try {
       const mediaId = await uploadMediaToMeta({
         storageId: fileDoc.storageId,
-        type: fileDoc.mimeType
+        type: fileDoc.mimeType,
+        phoneNumberId: chat?.phoneNumberId ?? undefined,
       })
 
       let type = "document";
@@ -112,6 +114,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
       const mediaId = await uploadMediaToMeta({
         storageId: storageId,
         type: file.type,
+        phoneNumberId: chat?.phoneNumberId ?? undefined,
       })
 
       await sendMessage({
@@ -151,7 +154,8 @@ export function ChatInput({ chatId }: ChatInputProps) {
 
       const mediaId = await uploadMediaToMeta({
         storageId: storageId,
-        type: "audio/webm"
+        type: "audio/webm",
+        phoneNumberId: chat?.phoneNumberId ?? undefined,
       })
 
       await sendMessage({
@@ -194,6 +198,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
       const mediaId = await uploadMediaToMeta({
         storageId: storageId,
         type: mimeType,
+        phoneNumberId: chat?.phoneNumberId ?? undefined,
       })
 
       // 4. Send as Image with Formatted Caption

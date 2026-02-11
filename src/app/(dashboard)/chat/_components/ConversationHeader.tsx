@@ -11,7 +11,8 @@ import { Bot } from "lucide-react"
 import { Label } from "@/components/ui/label"
 
 export function ConversationHeader({ chatId }: { chatId?: string }) {
-  const chat = useQuery(api.chat.getChat, chatId ? { chatId: chatId as any } : "skip")
+  const isRealChatId = chatId && chatId !== "new"
+  const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip")
   const toggleAi = useMutation(api.chat.toggleAiMode)
 
   const content = useMemo(() => {

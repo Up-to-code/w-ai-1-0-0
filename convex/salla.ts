@@ -181,7 +181,9 @@ export const refreshToken = action({
         });
 
         if (!tokenResponse.ok) {
-            throw new Error("Failed to refresh token");
+            const body = await tokenResponse.text();
+            console.error("[Salla] Refresh token failed:", tokenResponse.status, body);
+            throw new Error(`Failed to refresh token: ${tokenResponse.status} ${body || tokenResponse.statusText}`);
         }
 
         const tokens = await tokenResponse.json();
@@ -230,9 +232,18 @@ export const fetchProducts = action({
 
         if (!response.ok) {
             if (response.status === 401) {
-                // Token expired, try to refresh
-                await ctx.runAction("salla:refreshToken" as any, {});
-                return ctx.runAction("salla:fetchProducts" as any, { page, perPage });
+                try {
+                    await ctx.runAction("salla:refreshToken" as any, {});
+                    return ctx.runAction("salla:fetchProducts" as any, { page, perPage, keyword: args.keyword });
+                } catch (refreshErr) {
+                    console.error("[Salla] Token refresh failed in fetchProducts:", refreshErr);
+                    return {
+                        connected: false,
+                        products: [],
+                        pagination: { currentPage: 1, totalPages: 0, totalItems: 0 },
+                        tokenError: true,
+                    };
+                }
             }
             throw new Error("Failed to fetch products");
         }
@@ -289,8 +300,13 @@ export const getProduct = action({
 
         if (!response.ok) {
             if (response.status === 401) {
-                await ctx.runAction("salla:refreshToken" as any, {});
-                return ctx.runAction("salla:getProduct" as any, { id: args.id });
+                try {
+                    await ctx.runAction("salla:refreshToken" as any, {});
+                    return ctx.runAction("salla:getProduct" as any, { id: args.id });
+                } catch (refreshErr) {
+                    console.error("[Salla] Token refresh failed in getProduct:", refreshErr);
+                    throw new Error("Salla token expired. Please reconnect from Integrations.");
+                }
             }
             throw new Error("Failed to fetch product");
         }

@@ -16,14 +16,18 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
 import { Header } from "../../components/Header";
+import { useWorkspace } from "../../contexts/WorkspaceContext";
 
 export default function CustomersScreen() {
   const router = useRouter();
+  const { activePhoneNumberId } = useWorkspace();
   const [searchQuery, setSearchQuery] = useState("");
   const [refreshing, setRefreshing] = useState(false);
 
   const contacts = useQuery(api.contacts.list, { limit: 1000 });
-  const chats = useQuery(api.chat.listChats);
+  const chats = useQuery(api.chat.listChats, {
+    phoneNumberId: activePhoneNumberId ?? undefined,
+  });
 
   // Create map of phone to chat ID
   const chatByPhone = useMemo(() => {

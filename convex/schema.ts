@@ -21,10 +21,20 @@ export default defineSchema({
     attempts: v.number(),
   }).index("by_phone", ["phone"]),
 
+  whatsapp_numbers: defineTable({
+    businessAccountId: v.string(),
+    businessNumberId: v.string(), // Meta phone_number_id; used for routing
+    phone: v.string(),
+    name: v.string(),
+    accessToken: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_business_number_id", ["businessNumberId"]),
+
   chats: defineTable({
-    contactId: v.string(), // WhatsApp Phone Number ID
+    contactId: v.string(), // WhatsApp contact id / phone
     contactName: v.string(),
     contactPhone: v.string(),
+    phoneNumberId: v.optional(v.string()), // Meta phone_number_id; scopes chat to a business number
     lastMessageTime: v.number(),
     unreadCount: v.number(),
     status: v.union(v.literal("active"), v.literal("expired")), // 24h window
@@ -33,7 +43,8 @@ export default defineSchema({
     aiMode: v.optional(v.boolean()), // AI Agent Mode
     aiSummary: v.optional(v.string()), // Compressed conversation history
   }).index("by_last_message", ["lastMessageTime"])
-    .index("by_assigned_to", ["assignedTo"]),
+    .index("by_assigned_to", ["assignedTo"])
+    .index("by_phoneNumberId_last_message", ["phoneNumberId", "lastMessageTime"]),
 
   ai_configs: defineTable({
     systemPrompt: v.string(),
@@ -42,6 +53,15 @@ export default defineSchema({
     isActive: v.boolean(),
     updatedAt: v.number(),
   }),
+
+  agent_feedback: defineTable({
+    source: v.union(v.literal("test"), v.literal("chat")),
+    rating: v.number(),
+    comment: v.optional(v.string()),
+    testInput: v.optional(v.string()),
+    testOutput: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_created_at", ["createdAt"]),
 
   messages: defineTable({
     chatId: v.id("chats"),
@@ -98,9 +118,12 @@ export default defineSchema({
   knowledge_base: defineTable({
     title: v.string(),
     content: v.string(),
-    embedding: v.array(v.float64()), // Vector for RAG
+    embedding: v.array(v.float64()), // Vector for RAG; must match vector index dimensions
     sourceType: v.union(v.literal("text"), v.literal("pdf")),
     createdAt: v.number(),
+  }).vectorIndex("by_embedding", {
+    vectorField: "embedding",
+    dimensions: 1536,
   }),
 
   // Salla OAuth Integration - stores tokens, fetches products on demand
@@ -121,6 +144,7 @@ export default defineSchema({
     phone: v.string(),
     email: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),
+    stage: v.optional(v.string()),
     customFields: v.optional(v.any()), // JSON
     isSubscribed: v.boolean(),
     createdAt: v.number(),
@@ -141,6 +165,7 @@ export default defineSchema({
     name: v.string(),
     templateId: v.id("templates"),
     templateName: v.string(),
+    phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
     segmentId: v.optional(v.id("segments")), // Optional if sending to specific tags/list
     targetTags: v.optional(v.array(v.string())), // Alternative to segment
     targetContactIds: v.optional(v.array(v.id("contacts"))), // Specific list of contacts
@@ -219,6 +244,14 @@ export default defineSchema({
     body: v.any(),
     createdAt: v.number(),
   }).index("by_source_createdAt", ["source", "createdAt"]),
+
+  // Single-row: WhatsApp webhook verify token, app access token, optional App ID (from DB, not env)
+  webhook_settings: defineTable({
+    verifyToken: v.optional(v.string()),
+    accessToken: v.optional(v.string()),
+    appId: v.optional(v.string()),
+    updatedAt: v.number(),
+  }),
 
   orders: defineTable({
     orderNumber: v.string(),

@@ -6,6 +6,7 @@ const USER_ROLE_KEY = "user_role";
 const BIOMETRIC_ENABLED_KEY = "biometric_enabled";
 const LOCALE_KEY = "locale";
 const DIRECTION_KEY = "direction";
+const ACTIVE_PHONE_NUMBER_ID_KEY = "w_ai_active_phone_number_id";
 
 export type UserRole = "admin" | "agent" | "user";
 export type Locale = "ar" | "en";
@@ -80,6 +81,19 @@ export const storage = {
   async getDirection(): Promise<Direction> {
     const value = await SecureStore.getItemAsync(DIRECTION_KEY);
     return (value as Direction) || "rtl"; // Default to RTL
+  },
+
+  // Active WhatsApp number (for multi-number support)
+  async setActivePhoneNumberId(id: string | null): Promise<void> {
+    if (id == null) {
+      await SecureStore.deleteItemAsync(ACTIVE_PHONE_NUMBER_ID_KEY);
+    } else {
+      await SecureStore.setItemAsync(ACTIVE_PHONE_NUMBER_ID_KEY, id);
+    }
+  },
+
+  async getActivePhoneNumberId(): Promise<string | null> {
+    return await SecureStore.getItemAsync(ACTIVE_PHONE_NUMBER_ID_KEY);
   },
 
   // Clear all auth data

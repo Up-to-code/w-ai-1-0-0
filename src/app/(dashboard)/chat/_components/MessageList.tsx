@@ -13,14 +13,17 @@ interface MessageListProps {
     chatId: string
 }
 
+const SKIP = "skip" as const
+
 export function MessageList({ chatId }: MessageListProps) {
     const scrollRef = useRef<HTMLDivElement>(null)
     const [showScrollButton, setShowScrollButton] = useState(false)
     const [isAtBottom, setIsAtBottom] = useState(true)
+    const isRealChatId = chatId && chatId !== "new"
 
     const { results: messagesDesc, status, loadMore, isLoading } = usePaginatedQuery(
         api.chat.getMessagesPage,
-        { chatId: chatId as any },
+        isRealChatId ? { chatId: chatId as any } : SKIP,
         { initialNumItems: 50 }
     )
 

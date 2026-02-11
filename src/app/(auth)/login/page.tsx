@@ -4,6 +4,7 @@ import { useState, Suspense } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -147,7 +148,7 @@ function LoginForm() {
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4 font-sans" dir="rtl">
+    <div className="min-h-screen bg-background flex flex-col items-center justify-center p-4 font-sans" dir="rtl">
       <Suspense fallback={
         <div className="flex items-center justify-center">
           <Loader2 className="animate-spin h-8 w-8 text-primary" />
@@ -155,6 +156,10 @@ export default function LoginPage() {
       }>
         <LoginForm />
       </Suspense>
+      <footer className="mt-8 flex items-center gap-4 text-sm text-muted-foreground">
+        <Link href="/privacy" className="hover:text-foreground underline">سياسة الخصوصية</Link>
+        <Link href="/terms" className="hover:text-foreground underline">الشروط والأحكام</Link>
+      </footer>
     </div>
   );
 }

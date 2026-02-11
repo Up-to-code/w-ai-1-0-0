@@ -10,6 +10,37 @@ import {
 
 const WHATSAPP_API_URL = "https://graph.facebook.com/v21.0";
 
+export type WhatsAppConfig = { accessToken: string; phoneId: string; wabaId?: string };
+
+async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): Promise<WhatsAppConfig> {
+  if (phoneNumberId) {
+    const config = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, { businessNumberId: phoneNumberId });
+    if (config) {
+      const accessToken = config.accessToken ?? process.env.WHATSAPP_ACCESS_TOKEN;
+      const phoneId = config.businessNumberId;
+      if (accessToken && phoneId) return { accessToken, phoneId, wabaId: config.businessAccountId };
+    }
+  }
+  // Default: first number with token from DB, then env
+  const first = await ctx.runQuery(internal.whatsappNumbers.getFirstWithToken, {});
+  if (first?.accessToken?.trim()) {
+    return {
+      accessToken: first.accessToken,
+      phoneId: first.businessNumberId,
+      wabaId: first.businessAccountId,
+    };
+  }
+  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
+  const phoneId = process.env.WHATSAPP_PHONE_ID;
+  const wabaId = process.env.WHATSAPP_WABA_ID;
+  if (!accessToken || !phoneId) {
+    throw new Error(
+      "Missing WhatsApp config. Set an access token on a number in Integrations (ربط المتجر), or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
+    );
+  }
+  return { accessToken, phoneId, wabaId };
+}
+
 // --- Actions (External API Calls) ---
 
 export const sendMessage = action({
@@ -18,15 +49,10 @@ export const sendMessage = action({
     type: v.string(), // text, image, template, etc.
     content: v.any(), // Structure depends on type
     messageId: v.optional(v.id("messages")), // internal DB ID
+    phoneNumberId: v.optional(v.string()), // Meta phone_number_id; when set, use that number's config
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = process.env.WHATSAPP_PHONE_ID;
-
-    if (!accessToken || !phoneId) {
-      console.error("[WhatsApp] Missing Environment Variables");
-      throw new Error("Missing WhatsApp Environment Variables");
-    }
+    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     // Validate and clean phone number
     let recipient: string;
@@ -147,13 +173,15 @@ export const createTemplate = action({
     language: v.string(),
     category: v.string(),
     components: v.any(), // Array of components
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const wabaId = process.env.WHATSAPP_WABA_ID;
-
-    if (!accessToken || !wabaId) {
-      throw new Error("Missing WhatsApp Environment Variables");
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, wabaId } = config;
+    if (!wabaId) {
+      throw new Error(
+        "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
+      );
     }
 
     const payload = {
@@ -197,13 +225,16 @@ export const createTemplate = action({
 });
 
 export const fetchTemplates = action({
-  args: {},
+  args: {
+    phoneNumberId: v.optional(v.string()), // When set, use this number's token and WABA from DB; else first number with token or env
+  },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const wabaId = process.env.WHATSAPP_WABA_ID;
-
-    if (!accessToken || !wabaId) {
-      throw new Error("Missing WhatsApp Environment Variables");
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, wabaId } = config;
+    if (!wabaId) {
+      throw new Error(
+        "Missing WhatsApp config: set a number with access token in Integrations, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_WABA_ID in the environment."
+      );
     }
 
     const response = await fetch(`${WHATSAPP_API_URL}/${wabaId}/message_templates?limit=100`, {
@@ -225,15 +256,12 @@ export const fetchTemplates = action({
 });
 
 export const markAsRead = action({
-  args: { messageId: v.string() },
+  args: {
+    messageId: v.string(),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = process.env.WHATSAPP_PHONE_ID;
-
-    if (!accessToken || !phoneId) {
-      console.error("Missing WhatsApp credentials");
-      return;
-    }
+    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     try {
       await fetch(`https://graph.facebook.com/v21.0/${phoneId}/messages`, {
@@ -257,13 +285,15 @@ export const markAsRead = action({
 export const getTemplate = action({
   args: {
     name: v.string(),
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const wabaId = process.env.WHATSAPP_WABA_ID;
-
-    if (!accessToken || !wabaId) {
-      throw new Error("Missing WhatsApp Environment Variables");
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, wabaId } = config;
+    if (!wabaId) {
+      throw new Error(
+        "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
+      );
     }
 
     const response = await fetch(`${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${args.name}`, {
@@ -287,13 +317,15 @@ export const getTemplate = action({
 export const deleteTemplate = action({
   args: {
     name: v.string(),
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const wabaId = process.env.WHATSAPP_WABA_ID;
-
-    if (!accessToken || !wabaId) {
-      throw new Error("Missing WhatsApp Environment Variables");
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, wabaId } = config;
+    if (!wabaId) {
+      throw new Error(
+        "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
+      );
     }
 
     const response = await fetch(`${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${args.name}`, {
@@ -319,12 +351,10 @@ export const uploadMedia = action({
   args: {
     storageId: v.string(),
     type: v.string(), // image/jpeg, etc.
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = process.env.WHATSAPP_PHONE_ID;
-
-    if (!accessToken || !phoneId) throw new Error("Missing Env Vars");
+    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     // 1. Get File URL from Convex
     const fileUrl = await ctx.storage.getUrl(args.storageId);
@@ -357,10 +387,12 @@ export const uploadMedia = action({
       
       if (errorCode === 190) {
         // Authentication Error (OAuthException)
-        const error = new Error("WhatsApp API Authentication Error: Invalid or expired access token. Please check your WHATSAPP_ACCESS_TOKEN environment variable.") as Error & { code?: number; category?: string };
+        const error = new Error(
+          "WhatsApp API Authentication Error: Invalid or expired access token. Update the access token on the number in Integrations (ربط المتجر), or set WHATSAPP_ACCESS_TOKEN in the environment."
+        ) as Error & { code?: number; category?: string };
         error.code = 190;
         error.category = "AUTH_ERROR";
-        console.error("[WhatsApp] Authentication failed - check access token validity");
+        console.error("[WhatsApp] Authentication failed - check access token (Integrations or env)");
         throw error;
       } else if (errorCode === 131047) {
         // Media type not supported
@@ -399,14 +431,10 @@ export const uploadMediaFromUrl = action({
     url: v.string(),      // External URL to the image/video
     type: v.string(),     // "image" or "video"
     mimeType: v.optional(v.string()), // Optional: specific mime type like "image/jpeg"
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const phoneId = process.env.WHATSAPP_PHONE_ID;
-
-    if (!accessToken || !phoneId) {
-      throw new Error("Missing WhatsApp Env Vars (ACCESS_TOKEN or PHONE_ID)");
-    }
+    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     console.log(`[uploadMediaFromUrl] Fetching media from: ${args.url.substring(0, 80)}...`);
 
@@ -452,12 +480,19 @@ export const uploadTemplateMedia = action({
   args: {
     storageId: v.string(),
     type: v.string(), // image/jpeg, video/mp4, etc.
+    phoneNumberId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const appId = process.env.WHATSAPP_APP_ID;
+  handler: async (ctx, args): Promise<string> => {
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const settings = (await ctx.runQuery(api.webhookSettings.get, {})) as { appId?: string | null };
+    const appId: string | undefined = settings.appId ?? process.env.WHATSAPP_APP_ID ?? undefined;
+    const accessToken = config.accessToken;
 
-    if (!accessToken || !appId) throw new Error("Missing WhatsApp Env Vars (APP_ID or ACCESS_TOKEN)");
+    if (!appId) {
+      throw new Error(
+        "Missing Meta App ID. Set it in Integrations (ربط المتجر) under webhook settings, or set WHATSAPP_APP_ID in the environment."
+      );
+    }
 
     // 1. Get File URL and Content
     const fileUrl = await ctx.storage.getUrl(args.storageId);
@@ -519,12 +554,19 @@ export const uploadExternalTemplateMedia = action({
   args: {
     url: v.string(),
     type: v.string(), // image/jpeg, video/mp4, etc.
+    phoneNumberId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    const appId = process.env.WHATSAPP_APP_ID;
+  handler: async (ctx, args): Promise<string> => {
+    const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const settings = (await ctx.runQuery(api.webhookSettings.get, {})) as { appId?: string | null };
+    const appId: string | undefined = settings.appId ?? process.env.WHATSAPP_APP_ID ?? undefined;
+    const accessToken = config.accessToken;
 
-    if (!accessToken || !appId) throw new Error("Missing WhatsApp Env Vars");
+    if (!appId) {
+      throw new Error(
+        "Missing Meta App ID. Set it in Integrations (ربط المتجر) under webhook settings, or set WHATSAPP_APP_ID in the environment."
+      );
+    }
 
     // 1. Fetch File Content from External URL
     console.log(`[UploadExternal] Fetching from ${args.url}`);
@@ -582,10 +624,12 @@ export const uploadExternalTemplateMedia = action({
 });
 
 export const getMediaUrl = action({
-  args: { mediaId: v.string() },
+  args: {
+    mediaId: v.string(),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
-    const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-    if (!accessToken) throw new Error("Missing Access Token");
+    const { accessToken } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     const response = await fetch(`${WHATSAPP_API_URL}/${args.mediaId}`, {
       headers: { "Authorization": `Bearer ${accessToken}` }
@@ -599,14 +643,18 @@ export const getMediaUrl = action({
 });
 
 export const hydrateIncomingMedia = internalAction({
-  args: { messageId: v.id("messages"), mediaId: v.string() },
+  args: {
+    messageId: v.id("messages"),
+    mediaId: v.string(),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     try {
-      const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-      if (!accessToken) {
-        throw new Error("Missing WHATSAPP_ACCESS_TOKEN");
-      }
-      const downloadUrl = await ctx.runAction(api.whatsapp.getMediaUrl, { mediaId: args.mediaId });
+      const { accessToken } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+      const downloadUrl = await ctx.runAction(api.whatsapp.getMediaUrl, {
+        mediaId: args.mediaId,
+        phoneNumberId: args.phoneNumberId,
+      });
       const response = await fetch(downloadUrl, {
         method: "GET",
         headers: { Authorization: `Bearer ${accessToken}` },
@@ -633,13 +681,14 @@ export const verifyWebhook = internalAction({
     mode: v.optional(v.string()),
     verify_token: v.optional(v.string()),
     challenge: v.optional(v.string()),
+    expected_verify_token: v.optional(v.string()), // from DB (webhook settings form); fallback to env in http handler
   },
   handler: async (ctx, args) => {
-    const verifyToken = process.env.WHATSAPP_VERIFY_TOKEN;
-    console.log("[VerifyWebhook] Env Token:", verifyToken);
+    const verifyToken = args.expected_verify_token ?? process.env.WHATSAPP_VERIFY_TOKEN;
+    console.log("[VerifyWebhook] Expected token from:", args.expected_verify_token != null ? "DB" : "env");
     console.log("[VerifyWebhook] Received:", { mode: args.mode, token: args.verify_token });
 
-    if (args.mode === "subscribe" && args.verify_token === verifyToken) {
+    if (args.mode === "subscribe" && verifyToken && args.verify_token === verifyToken) {
       console.log("Webhook Verified!");
       return { success: true, challenge: args.challenge };
     } else {
@@ -702,9 +751,10 @@ export const processWebhookAction = internalAction({
         const businessPhoneId = value.metadata?.phone_number_id || "unknown";
 
         const messageId = await ctx.runMutation(internal.messages.saveMessage, {
-          contactId: businessPhoneId,
+          contactId: contactPhone,
           contactName,
           contactPhone,
+          phoneNumberId: businessPhoneId !== "unknown" ? businessPhoneId : undefined,
           direction: "inbound",
           type: message.type,
           content,
@@ -718,12 +768,16 @@ export const processWebhookAction = internalAction({
           await ctx.scheduler.runAfter(0, internal.whatsapp.hydrateIncomingMedia, {
             messageId,
             mediaId,
+            phoneNumberId: businessPhoneId !== "unknown" ? businessPhoneId : undefined,
           });
         }
 
         // --- AI Agent Hook ---
-        // Check if chat is in AI Mode
-        const chat = await ctx.runQuery(internal.chat.getChatByPhone, { phone: contactPhone });
+        // Check if chat is in AI Mode (scoped by business number)
+        const chat = await ctx.runQuery(internal.chat.getChatByPhone, {
+          phone: contactPhone,
+          phoneNumberId: businessPhoneId !== "unknown" ? businessPhoneId : undefined,
+        });
         if (chat && chat.aiMode) {
           await ctx.scheduler.runAfter(0, internal.agent.generateResponse, {
             chatId: chat._id,

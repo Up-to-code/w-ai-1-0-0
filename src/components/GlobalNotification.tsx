@@ -7,6 +7,7 @@ import { useSearchParams, usePathname, useRouter } from "next/navigation"
 import { toast } from "sonner"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { MessageSquare, Bell } from "lucide-react"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 const SOUND_URL = "https://assets.mixkit.co/active_storage/sfx/2354/2354-preview.mp3"
 
@@ -14,7 +15,8 @@ export function GlobalNotification() {
     const latestMessage = useQuery(api.chat.getLatestGlobalMessage)
     const notifications = useQuery(api.notifications.list, { limit: 5 })
     const markAsRead = useMutation(api.notifications.markAsRead)
-    
+    const { setActivePhoneNumberId } = useWorkspace()
+
     const searchParams = useSearchParams()
     const pathname = usePathname()
     const router = useRouter()
@@ -23,6 +25,10 @@ export function GlobalNotification() {
     const lastNotificationIdRef = useRef<string | null>(null)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const isFirstRun = useRef(true)
+    const setActivePhoneNumberIdRef = useRef(setActivePhoneNumberId)
+    const routerRef = useRef(router)
+    setActivePhoneNumberIdRef.current = setActivePhoneNumberId
+    routerRef.current = router
 
     // Initialize Audio
     useEffect(() => {
@@ -117,7 +123,8 @@ export function GlobalNotification() {
                 className="w-[360px] cursor-pointer"
                 onClick={() => {
                     toast.dismiss(t)
-                    router.push(`/chat/${latestMessage.chatId}`)
+                    if (latestMessage.phoneNumberId) setActivePhoneNumberIdRef.current?.(latestMessage.phoneNumberId)
+                    routerRef.current.push(`/chat/${latestMessage.chatId}`)
                 }}
             >
                 <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-white/60 to-white/40 dark:from-[#1C1C1E]/70 dark:to-[#2C2C2E]/50 backdrop-blur-[80px] border border-white/30 dark:border-white/10 p-[14px] transition-all hover:brightness-105 active:scale-[0.98] group">

@@ -1,9 +1,10 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { ConvexProvider, useQuery } from "convex/react";
 import { convexClient } from "../lib/convex";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { LocaleProvider, useLocale } from "../contexts/LocaleContext";
+import { WorkspaceProvider, useWorkspace } from "../contexts/WorkspaceContext";
 import { ActivityIndicator, View, I18nManager } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -64,13 +65,26 @@ function AuthGuard() {
   }
 
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(auth)" />
-      <Stack.Screen name="(tabs)" />
-      <Stack.Screen name="chat/[id]" />
-      <Stack.Screen name="customers" />
-    </Stack>
+    <WorkspaceProvider>
+      <NotificationHandlerSetup />
+      <Stack screenOptions={{ headerShown: false }}>
+        <Stack.Screen name="(auth)" />
+        <Stack.Screen name="(tabs)" />
+        <Stack.Screen name="chat/[id]" />
+        <Stack.Screen name="customers" />
+      </Stack>
+    </WorkspaceProvider>
   );
+}
+
+function NotificationHandlerSetup() {
+  const { setActivePhoneNumberId } = useWorkspace();
+  const setterRef = useRef(setActivePhoneNumberId);
+  setterRef.current = setActivePhoneNumberId;
+  useEffect(() => {
+    setupNotificationHandlers((id) => setterRef.current?.(id));
+  }, []);
+  return null;
 }
 
 export default function RootLayout() {
@@ -84,11 +98,6 @@ export default function RootLayout() {
   // Enable RTL by default for Arabic
   useEffect(() => {
     I18nManager.allowRTL(true);
-  }, []);
-
-  // Setup notification handlers
-  useEffect(() => {
-    setupNotificationHandlers();
   }, []);
 
   if (!fontsLoaded) {

@@ -25,6 +25,7 @@ export const create = mutation({
         phone: v.string(),
         email: v.optional(v.string()),
         tags: v.optional(v.array(v.string())),
+        stage: v.optional(v.string()),
         customFields: v.optional(v.any()),
     },
     handler: async (ctx, args) => {
@@ -33,6 +34,7 @@ export const create = mutation({
             phone: args.phone,
             email: args.email,
             tags: args.tags || [],
+            stage: args.stage,
             customFields: args.customFields || {},
             isSubscribed: true,
             createdAt: Date.now(),
@@ -66,6 +68,7 @@ export const update = mutation({
         name: v.optional(v.string()),
         email: v.optional(v.string()),
         tags: v.optional(v.array(v.string())),
+        stage: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const contact = await ctx.db.get(args.id);
@@ -75,7 +78,7 @@ export const update = mutation({
         if (args.tags) {
             const oldTags = contact.tags || [];
             const addedTags = args.tags.filter(t => !oldTags.includes(t));
-            
+
             for (const tag of addedTags) {
                 await ctx.scheduler.runAfter(0, internal.workflows.checkTagWorkflows, {
                     contactId: args.id,
@@ -89,6 +92,7 @@ export const update = mutation({
             name: args.name,
             email: args.email,
             tags: args.tags,
+            stage: args.stage,
         });
     },
 });
@@ -100,6 +104,7 @@ export const bulkCreate = mutation({
             phone: v.string(),
             email: v.optional(v.string()),
             tags: v.optional(v.array(v.string())),
+            stage: v.optional(v.string()),
         }))
     },
     handler: async (ctx, args) => {
@@ -109,6 +114,7 @@ export const bulkCreate = mutation({
                 phone: c.phone,
                 email: c.email,
                 tags: c.tags || [],
+                stage: c.stage,
                 isSubscribed: true,
                 createdAt: Date.now(),
             })

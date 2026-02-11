@@ -28,6 +28,23 @@ export const list = query({
   },
 });
 
+/** For settings page: current user role for permission-aware UI. Uses first user when no auth (single-tenant); later wire to ctx.auth.getUserIdentity() + lookup by tokenIdentifier. */
+export const getCurrentUserRole = query({
+  handler: async (ctx) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (identity?.tokenIdentifier) {
+      const user = await ctx.db
+        .query("users")
+        .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
+        .first();
+      if (user) return { role: user.role as "admin" | "agent" | "user" };
+    }
+    const first = await ctx.db.query("users").first();
+    if (first) return { role: first.role as "admin" | "agent" | "user" };
+    return null;
+  },
+});
+
 export const updateRole = mutation({
   args: { 
     userId: v.id("users"),

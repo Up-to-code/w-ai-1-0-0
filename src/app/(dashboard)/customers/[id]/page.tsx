@@ -12,16 +12,20 @@
  import Link from "next/link"
  import { Users, Phone, Mail, MessageSquare } from "lucide-react"
  import { avatarColorFromString, initialsFromName } from "@/lib/utils"
+ import { useWorkspace } from "@/contexts/WorkspaceContext"
  
  export default function CustomerDetailPage() {
    const params = useParams()
    const id = params?.id as string
+   const { activePhoneNumberId } = useWorkspace()
  
    const contact = useQuery(
      api.contacts.getById,
      id ? { id: id as Id<"contacts"> } : "skip"
    )
-   const chats = useQuery(api.chat.listChats)
+   const chats = useQuery(api.chat.listChats, {
+     phoneNumberId: activePhoneNumberId ?? undefined,
+   })
  
    const chatId = useMemo(() => {
      if (!contact || !chats) return null

@@ -1,10 +1,10 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
-import { internal } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 
 const http = httpRouter();
 
-// GET /whatsapp/webhook: Verification Challenge
+// GET /whatsapp/webhook: Verification Challenge (verify token from DB, fallback to env)
 http.route({
   path: "/whatsapp/webhook",
   method: "GET",
@@ -15,11 +15,14 @@ http.route({
     const challenge = url.searchParams.get("hub.challenge");
 
     if (mode && token && challenge) {
+      const settings = await ctx.runQuery(api.webhookSettings.get, {});
+      const expectedToken = settings.verifyToken ?? process.env.WHATSAPP_VERIFY_TOKEN;
       const result = await ctx.runAction(internal.whatsapp.verifyWebhook, {
         mode,
         verify_token: token,
-        challenge
-      });
+        challenge,
+        expected_verify_token: expectedToken ?? undefined,
+      } as { mode?: string; verify_token?: string; challenge?: string; expected_verify_token?: string });
 
       if (result.success) {
         return new Response(result.challenge, { status: 200 });

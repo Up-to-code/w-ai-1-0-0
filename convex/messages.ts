@@ -11,6 +11,7 @@ export const saveMessage = internalMutation({
         contactId: v.string(),
         contactName: v.string(),
         contactPhone: v.string(),
+        phoneNumberId: v.optional(v.string()), // Meta phone_number_id; scopes chat to a business number
         direction: v.union(v.literal("inbound"), v.literal("outbound")),
         type: v.string(),
         content: v.string(),
@@ -65,14 +66,26 @@ export const saveMessage = internalMutation({
             // Continue saving message even if contact sync fails
         }
 
-        // 1. Find or Create Chat
+        // 1. Find or Create Chat (scoped by phoneNumberId when provided)
         let finalChatId;
         try {
-            // ... logic same as before, simplified for diff
-            let chat = await ctx.db
-                .query("chats")
-                .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
-                .first();
+            let chat;
+            if (args.phoneNumberId !== undefined && args.phoneNumberId !== null && args.phoneNumberId !== "") {
+                chat = await ctx.db
+                    .query("chats")
+                    .filter((q: any) =>
+                        q.and(
+                            q.eq(q.field("contactPhone"), args.contactPhone),
+                            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
+                        )
+                    )
+                    .first();
+            } else {
+                chat = await ctx.db
+                    .query("chats")
+                    .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
+                    .first();
+            }
 
             if (chat) {
                 finalChatId = chat._id;
@@ -82,15 +95,19 @@ export const saveMessage = internalMutation({
                 });
             } else {
                 console.log(`[Messages] Creating new chat for ${args.contactPhone}`);
-                finalChatId = await ctx.db.insert("chats", {
+                const insertPayload: any = {
                     contactId: args.contactId,
                     contactName: args.contactName,
                     contactPhone: args.contactPhone,
                     lastMessageTime: args.timestamp,
                     unreadCount: 1,
                     status: "active",
-                    aiMode: true, // Default to true
-                });
+                    aiMode: true,
+                };
+                if (args.phoneNumberId !== undefined && args.phoneNumberId !== null && args.phoneNumberId !== "") {
+                    insertPayload.phoneNumberId = args.phoneNumberId;
+                }
+                finalChatId = await ctx.db.insert("chats", insertPayload);
             }
         } catch (e) {
             console.error("[Messages] Chat Creation Error:", e);
@@ -116,7 +133,8 @@ export const saveMessage = internalMutation({
             await ctx.scheduler.runAfter(0, internal.workflows.checkAndExecuteWorkflows, {
                 messageId: msgId,
                 content: args.content,
-                contactPhone: args.contactPhone
+                contactPhone: args.contactPhone,
+                phoneNumberId: args.phoneNumberId,
             });
         }
 
@@ -146,7 +164,10 @@ export const saveMessage = internalMutation({
                                 notification: {
                                     title: notifTitle,
                                     body: notifBody,
-                                    data: { chatId: finalChatId },
+                                    data: {
+                                        chatId: finalChatId,
+                                        ...(chat?.phoneNumberId && { phoneNumberId: chat.phoneNumberId }),
+                                    },
                                 },
                             });
                         }
@@ -222,6 +243,7 @@ export const sendAndSave = internalMutation({
         mediaUrl: v.optional(v.string()), // Add support for passing mediaUrl directly
     },
     handler: async (ctx, args) => {
+        const chat = await ctx.db.get(args.chatId);
         // 1. Save to DB
         const messageId = await ctx.db.insert("messages", {
             chatId: args.chatId,
@@ -273,6 +295,7 @@ export const sendAndSave = internalMutation({
             type: args.type,
             content: payloadContent,
             messageId: messageId,
+            phoneNumberId: chat?.phoneNumberId ?? undefined,
         });
 
         // 3. Update Chat
