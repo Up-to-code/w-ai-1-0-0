@@ -1,8 +1,12 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
+import { useQuery } from "convex/react"
+import { api } from "../../../convex/_generated/api"
+import type { Id } from "../../../convex/_generated/dataModel"
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext"
+import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import {
@@ -35,6 +39,14 @@ import { WorkspaceSwitcher } from "./_components/WorkspaceSwitcher"
 
 // Sidebar Content Component
 function SidebarContent({ pathname }: { pathname: string }) {
+  const { userId, logout } = useAuth()
+  const router = useRouter()
+  const user = useQuery(api.auth.getUser, userId ? { userId: userId as Id<"users"> } : "skip")
+
+  const handleLogout = () => {
+    logout()
+    router.push("/login")
+  }
   const menuItems = [
     { href: "/", icon: LayoutDashboard, label: "لوحة التحكم" },
     { href: "/chat", icon: MessageSquare, label: "المحادثات" },
@@ -125,16 +137,23 @@ function SidebarContent({ pathname }: { pathname: string }) {
       <div className="p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-3 p-2 rounded-xl bg-sidebar-accent/50 mb-3">
           <Avatar className="h-9 w-9">
-            <AvatarFallback className="bg-primary text-primary-foreground text-sm">م</AvatarFallback>
+            <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+              {(user?.name || user?.email || "م")[0]}
+            </AvatarFallback>
           </Avatar>
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-sidebar-foreground truncate">المستخدم</p>
-            <p className="text-xs text-muted-foreground truncate">user@mail.com</p>
+            <p className="text-sm font-medium text-sidebar-foreground truncate">
+              {user?.name || "المستخدم"}
+            </p>
+            <p className="text-xs text-muted-foreground truncate" dir="ltr">
+              {user?.email || userId?.slice(0, 8) || "—"}
+            </p>
           </div>
         </div>
         <Button
           variant="ghost"
           className="w-full justify-start gap-3 h-10 text-destructive hover:text-destructive hover:bg-destructive/10"
+          onClick={handleLogout}
         >
           <LogOut className="h-4 w-4" />
           تسجيل الخروج

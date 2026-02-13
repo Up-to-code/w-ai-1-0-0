@@ -26,7 +26,7 @@ import { TemplatePreview } from "@/components/TemplatePreview"
 
 function getBodyPreview(components: unknown[] | undefined): string {
   if (!components || !Array.isArray(components)) return ""
-  const body = components.find((c: { type?: string }) => c.type === "BODY")
+  const body = components.find((c) => (c as { type?: string })?.type === "BODY")
   const text = body && typeof body === "object" && "text" in body ? String((body as { text: string }).text) : ""
   return text.slice(0, 120) + (text.length > 120 ? "…" : "")
 }

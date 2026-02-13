@@ -15,6 +15,7 @@ function toView(config: {
   toolsEnabled?: string[];
   recommendProducts?: boolean;
   fallbackMode?: "no_reply" | "text_only" | "human_handoff";
+  openRouterApiKey?: string;
 }) {
   return {
     phoneNumberId: config.phoneNumberId,
@@ -26,6 +27,7 @@ function toView(config: {
     toolsEnabled: normalizeToolsEnabled(config.toolsEnabled),
     recommendProducts: config.recommendProducts ?? true,
     fallbackMode: config.fallbackMode ?? "text_only",
+    openRouterApiKeyConfigured: !!config.openRouterApiKey?.trim(),
   };
 }
 
@@ -72,13 +74,14 @@ export const upsertByPhoneNumberId = mutation({
     toolsEnabled: v.optional(v.array(v.string())),
     recommendProducts: v.optional(v.boolean()),
     fallbackMode: v.optional(v.union(v.literal("no_reply"), v.literal("text_only"), v.literal("human_handoff"))),
+    openRouterApiKey: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("ai_configs")
       .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
       .first();
-    const patch = {
+    const doc = {
       phoneNumberId: args.phoneNumberId,
       isActive: args.isActive,
       systemPrompt: args.systemPrompt,
@@ -89,12 +92,13 @@ export const upsertByPhoneNumberId = mutation({
       recommendProducts: args.recommendProducts ?? true,
       fallbackMode: args.fallbackMode ?? "text_only",
       updatedAt: Date.now(),
+      ...(args.openRouterApiKey !== undefined && { openRouterApiKey: args.openRouterApiKey?.trim() || undefined }),
     };
     if (existing) {
-      await ctx.db.patch(existing._id, patch);
+      await ctx.db.patch(existing._id, doc);
       return existing._id;
     }
-    return await ctx.db.insert("ai_configs", patch);
+    return await ctx.db.insert("ai_configs", doc);
   },
 });
 

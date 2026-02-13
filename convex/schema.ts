@@ -68,6 +68,7 @@ export default defineSchema({
       v.literal("text_only"),
       v.literal("human_handoff")
     )),
+    openRouterApiKey: v.optional(v.string()),
     updatedAt: v.number(),
   }).index("by_phone_number_id", ["phoneNumberId"]),
 

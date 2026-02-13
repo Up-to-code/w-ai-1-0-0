@@ -3,6 +3,9 @@ import { Cairo, Tajawal } from "next/font/google";
 import "./globals.css";
 import ConvexClientProvider from "@/components/ConvexClientProvider";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { AuthErrorBoundary } from "@/components/AuthErrorBoundary";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { AuthGuard } from "@/components/AuthGuard";
 
 const tajawal = Cairo({
   subsets: ["arabic",
@@ -33,9 +36,13 @@ export default function RootLayout({
         className={`${tajawal.className} antialiased font-sans`}
       >
         <ConvexClientProvider>
-          <ErrorBoundary>
-            {children}
-          </ErrorBoundary>
+          <AuthProvider>
+            <ErrorBoundary>
+              <AuthErrorBoundary>
+                <AuthGuard>{children}</AuthGuard>
+              </AuthErrorBoundary>
+            </ErrorBoundary>
+          </AuthProvider>
         </ConvexClientProvider>
       </body>
     </html>

@@ -228,11 +228,6 @@ export const generateResponse = internalAction({
     userMessage: v.string(),
   },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_KEY;
-    if (!apiKey) {
-      console.error("[Agent] Missing OPENROUTER_KEY");
-      return;
-    }
 // Conversation context manager
 interface ConversationContext {
   searchHistory: Array<{
@@ -338,6 +333,11 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
     const toolsEnabled = normalizeToolsEnabled(config?.toolsEnabled as string[] | undefined);
     const recommendProducts = config?.recommendProducts ?? true;
+    const effectiveApiKey = (config as { openRouterApiKey?: string } | undefined)?.openRouterApiKey?.trim() || process.env.OPENROUTER_KEY;
+    if (!effectiveApiKey) {
+      console.error("[Agent] Missing OPENROUTER_KEY (neither per-number nor env)");
+      return;
+    }
     if (!config?.isActive) {
       console.log(
         `[Agent] Auto-reply skipped: disabled for phoneNumberId=${chat?.phoneNumberId ?? "none"} chatId=${args.chatId}`
@@ -767,7 +767,7 @@ Description: ${p.description.substring(0, 150)}...
         const response = await fetch(OPENROUTER_API_URL, {
             method: "POST",
             headers: {
-                "Authorization": `Bearer ${apiKey}`,
+                "Authorization": `Bearer ${effectiveApiKey}`,
                 "Content-Type": "application/json",
                 "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
                 "X-Title": "W-AI Agent",
@@ -812,7 +812,7 @@ Description: ${p.description.substring(0, 150)}...
                 const rewriteResponse = await fetch(OPENROUTER_API_URL, {
                     method: "POST",
                     headers: {
-                        "Authorization": `Bearer ${apiKey}`,
+                        "Authorization": `Bearer ${effectiveApiKey}`,
                         "Content-Type": "application/json",
                         "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
                         "X-Title": "W-AI Agent Arabic Rewriter",
@@ -1016,7 +1016,8 @@ Description: ${p.description.substring(0, 150)}...
                 { role: "user", content: args.userMessage },
                 { role: "assistant", content: aiText }
             ],
-            model: model
+            model: model,
+            apiKey: effectiveApiKey
         });
 
     } catch (error) {
@@ -1030,10 +1031,11 @@ export const updateSummary = internalAction({
         chatId: v.id("chats"),
         existingSummary: v.string(),
         newMessages: v.array(v.object({ role: v.string(), content: v.string() })),
-        model: v.string()
+        model: v.string(),
+        apiKey: v.optional(v.string())
     },
     handler: async (ctx, args) => {
-        const apiKey = process.env.OPENROUTER_KEY;
+        const apiKey = args.apiKey || process.env.OPENROUTER_KEY;
         if (!apiKey) return;
 
         const summaryPrompt = `

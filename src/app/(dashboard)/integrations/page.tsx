@@ -73,6 +73,7 @@ export default function IntegrationsPage() {
         "send_product",
         "transfer_to_human",
     ])
+    const [agentOpenRouterKey, setAgentOpenRouterKey] = useState("")
 
     useEffect(() => {
         if (webhookSettings !== undefined) {
@@ -128,6 +129,7 @@ export default function IntegrationsPage() {
         setAgentModel(agentConfig.model ?? "arcee-ai/trinity-mini:free")
         setAgentRecommendProducts(agentConfig.recommendProducts ?? true)
         setAgentToolsEnabled(agentConfig.toolsEnabled ?? [])
+        setAgentOpenRouterKey((agentConfig as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured ? "__CONFIGURED__" : "")
     }, [agentConfig])
 
     const handleConnect = () => {
@@ -203,6 +205,7 @@ export default function IntegrationsPage() {
                 model: agentModel.trim() || "arcee-ai/trinity-mini:free",
                 recommendProducts: agentRecommendProducts,
                 toolsEnabled: agentToolsEnabled,
+                ...(agentOpenRouterKey !== "__CONFIGURED__" && { openRouterApiKey: agentOpenRouterKey }),
             })
             setWebhookSaved(true)
             setTimeout(() => setWebhookSaved(false), 2000)
@@ -525,12 +528,27 @@ export default function IntegrationsPage() {
                             <div className="grid sm:grid-cols-2 gap-4">
                                 <div className="space-y-2">
                                     <Label>Agent Name</Label>
-                                    <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} />
+                                    <Input value={agentName} onChange={(e) => setAgentName(e.target.value)} placeholder="Assistant" />
                                 </div>
                                 <div className="space-y-2">
-                                    <Label>Model</Label>
-                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} />
+                                    <Label>Model (LLM)</Label>
+                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} placeholder="arcee-ai/trinity-mini:free" />
+                                    <p className="text-xs text-muted-foreground">OpenRouter model ID. Overrides env default.</p>
                                 </div>
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label>OpenRouter API Key</Label>
+                                <Input
+                                    type="password"
+                                    value={agentOpenRouterKey === "__CONFIGURED__" ? "" : agentOpenRouterKey}
+                                    onChange={(e) => setAgentOpenRouterKey(e.target.value)}
+                                    placeholder={agentOpenRouterKey === "__CONFIGURED__" ? "•••••••••••••••• (configured — enter new key to replace)" : "sk-or-... (optional — leave empty to use system default)"}
+                                    className="font-mono"
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Per-number API key. When set, overrides OPENROUTER_KEY env. Leave empty to use system default.
+                                </p>
                             </div>
 
                             <div className="space-y-2">
