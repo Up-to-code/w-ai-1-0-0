@@ -1,6 +1,8 @@
 import { action, internalAction, internalMutation, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+import { isToolAllowed, normalizeToolsEnabled } from "./agentsUtils";
+import { buildConversationContext } from "./contextBuilder";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
 
@@ -34,6 +36,10 @@ function cleanText(t: string): string {
   out = out.replace(/\*\*/g, "").replace(/__/g, "").replace(/```[\s\S]*?```/g, "");
   if (out.length > 4000) out = out.slice(0, 4000);
   return out.trim();
+}
+
+function hasArabicText(text: string): boolean {
+  return /[\u0600-\u06FF]/.test(text);
 }
 
 // --- Tools ---
@@ -330,46 +336,59 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     });
     const model = config?.model || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
-
-    // 2. Get Chat History (Optimized)
-    const history = await ctx.runQuery(api.messages.list, { chatId: args.chatId });
-    
-    // Take only last 5 messages + Summary
-    const recentHistory = history.slice(0, 5).reverse().map((msg: any) => ({
-      role: msg.direction === "inbound" ? "user" : "assistant",
-      content: msg.content || (msg.type === "image" ? "[Image]" : "")
-    }));
-
-    // Inject Summary if available
-    let summaryContext = "";
-    if (chat?.aiSummary) {
-        summaryContext = `\n\nPREVIOUS CONVERSATION SUMMARY:\n${chat.aiSummary}\n\n(Use this summary to understand context, but prioritize recent messages.)`;
+    const toolsEnabled = normalizeToolsEnabled(config?.toolsEnabled as string[] | undefined);
+    const recommendProducts = config?.recommendProducts ?? true;
+    if (!config?.isActive) {
+      console.log(
+        `[Agent] Auto-reply skipped: disabled for phoneNumberId=${chat?.phoneNumberId ?? "none"} chatId=${args.chatId}`
+      );
+      await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+        body: { chatId: args.chatId, contactPhone: args.contactPhone },
+        processingStatus: "received",
+        eventType: "agent_disabled",
+        resolvedPhoneNumberId: chat?.phoneNumberId ?? undefined,
+        fallbackUsed: false,
+        note: "Agent disabled for this number, response skipped",
+      });
+      return;
     }
+    console.log(
+      `[Agent] Using config for phoneNumberId=${chat?.phoneNumberId ?? "global"} model=${model} recommendProducts=${recommendProducts} tools=${toolsEnabled.join(",")}`
+    );
 
-    // 2b. RAG: retrieve relevant knowledge base snippets for context
-    let knowledgeContext = "";
+    // 2. Gather context inputs (last 5 messages + summary + KB snippets)
+    const recentForContext = await ctx.runQuery(internal.messages.getRecentForContext, {
+      chatId: args.chatId,
+      limit: 5,
+    });
+    let knowledgeSnippets: Array<{ title: string; content: string }> = [];
     try {
-      const knowledgeSnippets = await ctx.runAction(internal.ai.searchKnowledge, {
+      knowledgeSnippets = await ctx.runAction(internal.ai.searchKnowledge, {
         query: args.userMessage,
         limit: 5,
       });
-      if (knowledgeSnippets && knowledgeSnippets.length > 0) {
-        knowledgeContext = "\n\nRELEVANT DOCUMENTATION (use when answering):\n" + knowledgeSnippets
-          .map((s: { title: string; content: string }) => `## ${s.title}\n${s.content}`)
-          .join("\n\n");
-      }
     } catch (e) {
       console.warn("[Agent] Knowledge search failed:", e);
     }
 
-    // 3. Prepare Messages for LLM
+    const builtContext = buildConversationContext({
+      systemPrompt,
+      messages: recentForContext,
+      existingSummary: chat?.aiSummary,
+      knowledgeSnippets,
+    });
+    const recentHistory = builtContext.recentMessages;
+
+    // 3. Prepare messages for LLM with deterministic context contract
     const messages = [
-      { role: "system", content: systemPrompt + summaryContext + knowledgeContext },
+      { role: "system", content: builtContext.finalSystemContext },
       ...recentHistory,
       { role: "user", content: args.userMessage }
     ];
 
-    console.log(`[Agent] Calling ${model} with ${messages.length} messages (Summary: ${!!chat?.aiSummary})`);
+    console.log(
+      `[Agent] Calling ${model} with ${messages.length} messages context={recent:${builtContext.diagnostics.recentMessagesCount},summaryChars:${builtContext.diagnostics.summaryChars},kb:${builtContext.diagnostics.knowledgeSnippetsCount}}`
+    );
 
     // 4. Enhanced Intent Detection & Tool Use
     // Advanced NLP-based query intent recognition with context-aware detection
@@ -467,7 +486,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     };
     
     const intentResult = detectSearchIntent(args.userMessage);
-    const shouldSearch = intentResult.shouldSearch;
+    const shouldSearch = intentResult.shouldSearch && recommendProducts;
 
     if (shouldSearch) {
         // Smart query cleaning based on detected intent and extracted parameters
@@ -696,6 +715,13 @@ Description: ${p.description.substring(0, 150)}...
             // Get contextual suggestions based on conversation history
             const contextualSuggestions = getContextualResponse(args.contactPhone || 'anonymous', intentResult, products.length);
             
+            const toolInstruction = isToolAllowed(toolsEnabled, "send_product")
+              ? `
+            <TOOL:send_product>
+            ${JSON.stringify(toolPayload)}
+            </TOOL:send_product>`
+              : `
+            [SYSTEM: Tool send_product is disabled for this number. Mention the best product in plain text without tool tags.]`;
             const productsContext = `
             ${contextHeader}
             [SYSTEM: I have searched the store and found these products matching the user's ${intentResult.queryType} query:]
@@ -704,9 +730,7 @@ Description: ${p.description.substring(0, 150)}...
             [INSTRUCTION: ${responseTone} Write a contextual response that addresses their specific query type (${intentResult.queryType}). Use the tool tag for the most relevant product. Do NOT include any image URL in your text. Only include the product link in the formatted text. The image must be sent as WhatsApp media using its URL internally. The tool tag will not be shown to the user.]
             
             Based on your ${intentResult.queryType.replace('_', ' ')} request, here's what I found:
-            <TOOL:send_product>
-            ${JSON.stringify(toolPayload)}
-            </TOOL:send_product>
+            ${toolInstruction}
             ${contextualSuggestions}
             `;
             
@@ -755,13 +779,70 @@ Description: ${p.description.substring(0, 150)}...
         });
 
         if (!response.ok) {
-            const err = await response.text();
-            console.error("[Agent] OpenRouter Error:", err);
+            const errText = await response.text();
+            console.error("[Agent] OpenRouter Error:", errText);
+            let parsed: { error?: { code?: number; message?: string } } = {};
+            try {
+                parsed = JSON.parse(errText) as typeof parsed;
+            } catch {
+                // ignore
+            }
+            const code = parsed?.error?.code ?? response.status;
+            const isRateLimit = code === 429 || (typeof parsed?.error?.message === "string" && parsed.error.message.includes("Rate limit"));
+            if (isRateLimit) {
+                const fallback = hasArabicText(args.userMessage)
+                    ? "عذراً، الطلب كثير حالياً. جرّب بعد دقائق أو تواصل معنا لاحقاً."
+                    : "Sorry, we're a bit overloaded. Try again in a few minutes or contact us later.";
+                await ctx.runMutation(internal.messages.sendAndSave, {
+                    chatId: args.chatId,
+                    content: fallback,
+                    type: "text",
+                    contactPhone: args.contactPhone,
+                });
+            }
             return;
         }
 
         const data = await response.json();
         let aiText = data.choices?.[0]?.message?.content || "Sorry, I couldn't generate a response.";
+
+        // Quality guard: if user wrote Arabic but model replied non-Arabic, auto-rewrite in Arabic.
+        if (hasArabicText(args.userMessage) && !hasArabicText(aiText)) {
+            try {
+                const rewriteResponse = await fetch(OPENROUTER_API_URL, {
+                    method: "POST",
+                    headers: {
+                        "Authorization": `Bearer ${apiKey}`,
+                        "Content-Type": "application/json",
+                        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
+                        "X-Title": "W-AI Agent Arabic Rewriter",
+                    },
+                    body: JSON.stringify({
+                        model,
+                        messages: [
+                            {
+                                role: "system",
+                                content:
+                                    "أعد صياغة الرد التالي إلى العربية الفصحى المبسطة، بصياغة قصيرة مناسبة لواتساب (سطرين إلى 4 أسطر)، بدون JSON أو أكواد.",
+                            },
+                            {
+                                role: "user",
+                                content: aiText,
+                            },
+                        ],
+                    }),
+                });
+                if (rewriteResponse.ok) {
+                    const rewriteData = await rewriteResponse.json();
+                    const rewritten = rewriteData.choices?.[0]?.message?.content;
+                    if (typeof rewritten === "string" && hasArabicText(rewritten)) {
+                        aiText = rewritten;
+                    }
+                }
+            } catch (rewriteError) {
+                console.warn("[Agent] Arabic rewrite fallback failed:", rewriteError);
+            }
+        }
 
         console.log(`[Agent] Response: ${aiText.substring(0, 50)}...`);
 
@@ -771,14 +852,16 @@ Description: ${p.description.substring(0, 150)}...
         const transferRegex = /<TOOL:transfer_to_human>\s*/i;
         if (transferRegex.test(aiText)) {
             aiText = aiText.replace(transferRegex, "").trim();
-            await ctx.runMutation(internal.chat.transferToHuman, { chatId: args.chatId });
-            await ctx.runMutation(internal.messages.sendAndSave, {
-                chatId: args.chatId,
-                content: HANDOFF_MESSAGE,
-                type: "text",
-                contactPhone: args.contactPhone
-            });
-            sentByTool = true;
+            if (isToolAllowed(toolsEnabled, "transfer_to_human")) {
+              await ctx.runMutation(internal.chat.transferToHuman, { chatId: args.chatId });
+              await ctx.runMutation(internal.messages.sendAndSave, {
+                  chatId: args.chatId,
+                  content: HANDOFF_MESSAGE,
+                  type: "text",
+                  contactPhone: args.contactPhone
+              });
+              sentByTool = true;
+            }
         }
 
         const toolRegex = /<TOOL:send_product>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i;
@@ -790,7 +873,12 @@ Description: ${p.description.substring(0, 150)}...
                 payload = JSON.parse(jsonText);
             } catch {}
             aiText = aiText.replace(toolMatch[0], "").trim();
-            if (payload && typeof payload.name === "string" && typeof payload.price === "string") {
+            if (
+              payload &&
+              typeof payload.name === "string" &&
+              typeof payload.price === "string" &&
+              isToolAllowed(toolsEnabled, "send_product")
+            ) {
                 await ctx.runAction(internal.agent.messengerProduct, {
                     chatId: args.chatId,
                     contactPhone: args.contactPhone,
@@ -819,17 +907,20 @@ Description: ${p.description.substring(0, 150)}...
             }
         } else {
         // Parse generic tool tags: send_text, send_image, send_link
-        const genericTools: Array<{ type: "text" | "image" | "link" | "audio"; pattern: RegExp }> = [
-            { type: "text", pattern: /<TOOL:send_text>\s*(?:```(?:json|text)\s*)?({[\s\S]*?}|[\s\S]*?)(?:\s*```)?/i },
-            { type: "image", pattern: /<TOOL:send_image>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i },
-            { type: "link", pattern: /<TOOL:send_link>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i },
-            { type: "audio", pattern: /<TOOL:send_audio>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i }
+        const genericTools: Array<{ type: "text" | "image" | "link" | "audio"; gate: "send_text" | "send_image" | "send_link" | "send_audio"; pattern: RegExp }> = [
+            { type: "text", gate: "send_text", pattern: /<TOOL:send_text>\s*(?:```(?:json|text)\s*)?({[\s\S]*?}|[\s\S]*?)(?:\s*```)?/i },
+            { type: "image", gate: "send_image", pattern: /<TOOL:send_image>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i },
+            { type: "link", gate: "send_link", pattern: /<TOOL:send_link>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i },
+            { type: "audio", gate: "send_audio", pattern: /<TOOL:send_audio>\s*(?:```json\s*)?({[\s\S]*?})(?:\s*```)?/i }
         ];
         for (const entry of genericTools) {
             const m = aiText.match(entry.pattern);
             if (!m) continue;
             const raw = m[1];
             aiText = aiText.replace(m[0], "").trim();
+            if (!isToolAllowed(toolsEnabled, entry.gate)) {
+                continue;
+            }
             let payload: any = raw;
             try {
                 payload = JSON.parse(raw);
@@ -895,7 +986,7 @@ Description: ${p.description.substring(0, 150)}...
         if ((arabicSendRegex.test(aiText) || englishSendRegex.test(aiText)) && selectedProduct) {
             aiText = aiText.replace(arabicSendRegex, "").replace(englishSendRegex, "").trim();
         }
-        if (!sentByTool && !sentByImageTag && selectedProduct) {
+        if (!sentByTool && !sentByImageTag && selectedProduct && isToolAllowed(toolsEnabled, "send_product")) {
             await ctx.runAction(internal.agent.messengerProduct, {
                 chatId: args.chatId,
                 contactPhone: args.contactPhone,
@@ -946,21 +1037,26 @@ export const updateSummary = internalAction({
         if (!apiKey) return;
 
         const summaryPrompt = `
-        You are a memory manager for an AI assistant.
-        Your goal is to update the conversation summary with new interactions.
-        
-        EXISTING SUMMARY:
-        "${args.existingSummary || "No previous summary."}"
-        
-        NEW INTERACTION:
+        You are a conversation memory manager.
+        Update memory using only high-signal facts.
+
+        ExistingMemory:
+        ${args.existingSummary || "None"}
+
+        NewTurn:
         User: ${args.newMessages[0].content}
         Assistant: ${args.newMessages[1].content}
-        
-        INSTRUCTIONS:
-        1. Condense the new interaction into the existing summary.
-        2. Keep important details (User's name, preferences, products asked for, what was agreed).
-        3. Remove old irrelevant details if the summary gets too long (keep it under 500 characters).
-        4. Output ONLY the new summary text.
+
+        Output rules:
+        - Return plain text only (no markdown code fences).
+        - Keep under 700 characters.
+        - Use this compact structure:
+          [Preferences] ...
+          [OpenTasks] ...
+          [RecentDecisions] ...
+          [DoNotForget] ...
+        - Keep unresolved requests and promised follow-ups.
+        - Remove stale details and repetition.
         `;
 
         try {
@@ -981,7 +1077,8 @@ export const updateSummary = internalAction({
             if (!response.ok) return;
 
             const data = await response.json();
-            const newSummary = data.choices?.[0]?.message?.content || args.existingSummary;
+            const newSummaryRaw = data.choices?.[0]?.message?.content || args.existingSummary;
+            const newSummary = (newSummaryRaw || "").trim().slice(0, 700);
 
             // Update Chat
             await ctx.runMutation(internal.agent.saveSummary, {

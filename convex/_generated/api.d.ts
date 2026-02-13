@@ -9,12 +9,15 @@
  */
 
 import type * as agent from "../agent.js";
+import type * as agents from "../agents.js";
+import type * as agentsUtils from "../agentsUtils.js";
 import type * as ai from "../ai.js";
 import type * as ai_config from "../ai_config.js";
 import type * as auth from "../auth.js";
 import type * as campaigns from "../campaigns.js";
 import type * as chat from "../chat.js";
 import type * as contacts from "../contacts.js";
+import type * as contextBuilder from "../contextBuilder.js";
 import type * as errorUtils from "../errorUtils.js";
 import type * as files from "../files.js";
 import type * as filesInternal from "../filesInternal.js";
@@ -22,16 +25,20 @@ import type * as http from "../http.js";
 import type * as index from "../index.js";
 import type * as integrations from "../integrations.js";
 import type * as messages from "../messages.js";
+import type * as migrations from "../migrations.js";
+import type * as nodeUtils from "../nodeUtils.js";
 import type * as notifications from "../notifications.js";
 import type * as orders from "../orders.js";
 import type * as products from "../products.js";
 import type * as salla from "../salla.js";
 import type * as seed from "../seed.js";
 import type * as stats from "../stats.js";
+import type * as templateStore from "../templateStore.js";
 import type * as templates from "../templates.js";
 import type * as users from "../users.js";
 import type * as webhookEvents from "../webhookEvents.js";
 import type * as webhookSettings from "../webhookSettings.js";
+import type * as webhookUtils from "../webhookUtils.js";
 import type * as whatsapp from "../whatsapp.js";
 import type * as whatsappNumbers from "../whatsappNumbers.js";
 import type * as workflows from "../workflows.js";
@@ -44,12 +51,15 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   agent: typeof agent;
+  agents: typeof agents;
+  agentsUtils: typeof agentsUtils;
   ai: typeof ai;
   ai_config: typeof ai_config;
   auth: typeof auth;
   campaigns: typeof campaigns;
   chat: typeof chat;
   contacts: typeof contacts;
+  contextBuilder: typeof contextBuilder;
   errorUtils: typeof errorUtils;
   files: typeof files;
   filesInternal: typeof filesInternal;
@@ -57,16 +67,20 @@ declare const fullApi: ApiFromModules<{
   index: typeof index;
   integrations: typeof integrations;
   messages: typeof messages;
+  migrations: typeof migrations;
+  nodeUtils: typeof nodeUtils;
   notifications: typeof notifications;
   orders: typeof orders;
   products: typeof products;
   salla: typeof salla;
   seed: typeof seed;
   stats: typeof stats;
+  templateStore: typeof templateStore;
   templates: typeof templates;
   users: typeof users;
   webhookEvents: typeof webhookEvents;
   webhookSettings: typeof webhookSettings;
+  webhookUtils: typeof webhookUtils;
   whatsapp: typeof whatsapp;
   whatsappNumbers: typeof whatsappNumbers;
   workflows: typeof workflows;

@@ -21,9 +21,9 @@ interface ChatInputProps {
 }
 
 export function ChatInput({ chatId }: ChatInputProps) {
-  const templates = useQuery(api.templates.list)
   const isRealChatId = chatId && chatId !== "new"
   const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip")
+  const templates = useQuery(api.templates.list, chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : {})
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)

@@ -1,4 +1,4 @@
-import { internalMutation, mutation, query } from "./_generated/server";
+import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
 import { PushNotifications } from "@convex-dev/expo-push-notifications";
@@ -73,18 +73,21 @@ export const saveMessage = internalMutation({
             if (args.phoneNumberId !== undefined && args.phoneNumberId !== null && args.phoneNumberId !== "") {
                 chat = await ctx.db
                     .query("chats")
-                    .filter((q: any) =>
-                        q.and(
-                            q.eq(q.field("contactPhone"), args.contactPhone),
-                            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
-                        )
+                    .withIndex("by_phoneNumberId_contactPhone", (q) =>
+                        q.eq("phoneNumberId", args.phoneNumberId).eq("contactPhone", args.contactPhone)
                     )
                     .first();
+                if (chat) {
+                    console.log(`[Messages] Found existing scoped chat: chatId=${chat._id}, businessId=${args.phoneNumberId}`);
+                }
             } else {
                 chat = await ctx.db
                     .query("chats")
                     .filter((q: any) => q.eq(q.field("contactPhone"), args.contactPhone))
                     .first();
+                if (chat) {
+                    console.log(`[Messages] Found existing global chat: chatId=${chat._id}`);
+                }
             }
 
             if (chat) {
@@ -94,7 +97,8 @@ export const saveMessage = internalMutation({
                     unreadCount: args.direction === "inbound" ? (chat.unreadCount || 0) + 1 : chat.unreadCount
                 });
             } else {
-                console.log(`[Messages] Creating new chat for ${args.contactPhone}`);
+                const businessId = (args.phoneNumberId !== undefined && args.phoneNumberId !== null && args.phoneNumberId !== "") ? args.phoneNumberId : 'global';
+                console.log(`[Messages] Creating new chat profile for ${args.contactPhone} (Scoped to: ${businessId})`);
                 const insertPayload: any = {
                     contactId: args.contactId,
                     contactName: args.contactName,
@@ -108,6 +112,7 @@ export const saveMessage = internalMutation({
                     insertPayload.phoneNumberId = args.phoneNumberId;
                 }
                 finalChatId = await ctx.db.insert("chats", insertPayload);
+                console.log(`[Messages] Successfully created chat: chatId=${finalChatId} for businessId=${businessId}`);
             }
         } catch (e) {
             console.error("[Messages] Chat Creation Error:", e);
@@ -121,6 +126,7 @@ export const saveMessage = internalMutation({
             type: args.type as any,
             content: args.content,
             status: args.status as any,
+            mediaHydrationStatus: args.mediaId ? "pending" : undefined,
             timestamp: args.timestamp,
             metaMessageId: args.metaMessageId,
             mediaId: args.mediaId,
@@ -147,7 +153,21 @@ export const saveMessage = internalMutation({
 
                 if (admins.length > 0) {
                     const chat = await ctx.db.get(finalChatId);
-                    const notifTitle = chat?.contactName || args.contactPhone;
+
+                    // Get business name for context
+                    let businessName = "";
+                    if (chat?.phoneNumberId) {
+                        const whatsappNumber = await ctx.db
+                            .query("whatsapp_numbers")
+                            .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
+                            .first();
+                        if (whatsappNumber) {
+                            businessName = ` [${whatsappNumber.name}]`;
+                        }
+                    }
+                    // In-app toast is handled by getLatestGlobalMessage + GlobalNotification (with number switch).
+                    // Skip creating a duplicate system notification to avoid two toasts per message.
+                    const notifTitle = `${chat?.contactName || args.contactPhone}${businessName}`;
                     const notifBody = args.type === "text" ? args.content : `Sent a ${args.type}`;
 
                     for (const admin of admins) {
@@ -228,8 +248,25 @@ export const updateMessageStorageId = internalMutation({
         storageId: v.string(),
     },
     handler: async (ctx, args) => {
-        await ctx.db.patch(args.messageId, { storageId: args.storageId });
+        await ctx.db.patch(args.messageId, {
+            storageId: args.storageId,
+            mediaHydrationStatus: "success",
+            mediaHydrationError: undefined,
+        });
     }
+});
+
+export const updateMediaHydrationFailure = internalMutation({
+    args: {
+        messageId: v.id("messages"),
+        error: v.string(),
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.patch(args.messageId, {
+            mediaHydrationStatus: "failed",
+            mediaHydrationError: args.error,
+        });
+    },
 });
 
 export const sendAndSave = internalMutation({
@@ -313,5 +350,26 @@ export const list = query({
             .withIndex("by_chat", (q) => q.eq("chatId", args.chatId))
             .order("desc")
             .take(50);
+    },
+});
+
+export const getRecentForContext = internalQuery({
+    args: {
+        chatId: v.id("chats"),
+        limit: v.optional(v.number()),
+    },
+    handler: async (ctx, args) => {
+        const limit = Math.min(Math.max(args.limit ?? 5, 1), 20);
+        const rows = await ctx.db
+            .query("messages")
+            .withIndex("by_chat", (q) => q.eq("chatId", args.chatId))
+            .order("desc")
+            .take(limit);
+        return rows.map((msg) => ({
+            direction: msg.direction,
+            type: msg.type,
+            content: msg.content,
+            timestamp: msg.timestamp,
+        }));
     },
 });

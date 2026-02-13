@@ -1,0 +1,152 @@
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+import { DEFAULT_TOOLS_ENABLED, normalizeToolsEnabled } from "./agentsUtils";
+
+const DEFAULT_PROMPT =
+  "You are a helpful sales assistant for this WhatsApp number. Keep replies concise and practical, and recommend relevant store products when useful.";
+
+function toView(config: {
+  phoneNumberId?: string;
+  systemPrompt: string;
+  model: string;
+  isActive: boolean;
+  temperature?: number;
+  agentName?: string;
+  toolsEnabled?: string[];
+  recommendProducts?: boolean;
+  fallbackMode?: "no_reply" | "text_only" | "human_handoff";
+}) {
+  return {
+    phoneNumberId: config.phoneNumberId,
+    systemPrompt: config.systemPrompt,
+    model: config.model,
+    isActive: config.isActive,
+    temperature: config.temperature,
+    agentName: config.agentName ?? "Assistant",
+    toolsEnabled: normalizeToolsEnabled(config.toolsEnabled),
+    recommendProducts: config.recommendProducts ?? true,
+    fallbackMode: config.fallbackMode ?? "text_only",
+  };
+}
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    const rows = await ctx.db.query("ai_configs").collect();
+    return rows.map((row) => toView(row));
+  },
+});
+
+export const getByPhoneNumberId = query({
+  args: { phoneNumberId: v.string() },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("ai_configs")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .first();
+    if (!row) {
+      return {
+        phoneNumberId: args.phoneNumberId,
+        systemPrompt: DEFAULT_PROMPT,
+        model: "arcee-ai/trinity-mini:free",
+        isActive: false,
+        temperature: undefined,
+        agentName: "Assistant",
+        toolsEnabled: DEFAULT_TOOLS_ENABLED,
+        recommendProducts: true,
+        fallbackMode: "text_only" as const,
+      };
+    }
+    return toView(row);
+  },
+});
+
+export const upsertByPhoneNumberId = mutation({
+  args: {
+    phoneNumberId: v.string(),
+    isActive: v.boolean(),
+    systemPrompt: v.string(),
+    model: v.string(),
+    temperature: v.optional(v.number()),
+    agentName: v.optional(v.string()),
+    toolsEnabled: v.optional(v.array(v.string())),
+    recommendProducts: v.optional(v.boolean()),
+    fallbackMode: v.optional(v.union(v.literal("no_reply"), v.literal("text_only"), v.literal("human_handoff"))),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("ai_configs")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .first();
+    const patch = {
+      phoneNumberId: args.phoneNumberId,
+      isActive: args.isActive,
+      systemPrompt: args.systemPrompt,
+      model: args.model,
+      temperature: args.temperature,
+      agentName: args.agentName?.trim() || undefined,
+      toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
+      recommendProducts: args.recommendProducts ?? true,
+      fallbackMode: args.fallbackMode ?? "text_only",
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+      return existing._id;
+    }
+    return await ctx.db.insert("ai_configs", patch);
+  },
+});
+
+export const toggleByPhoneNumberId = mutation({
+  args: {
+    phoneNumberId: v.string(),
+    isActive: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("ai_configs")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .first();
+    if (!existing) {
+      return await ctx.db.insert("ai_configs", {
+        phoneNumberId: args.phoneNumberId,
+        systemPrompt: DEFAULT_PROMPT,
+        model: "arcee-ai/trinity-mini:free",
+        isActive: args.isActive,
+        toolsEnabled: DEFAULT_TOOLS_ENABLED,
+        recommendProducts: true,
+        fallbackMode: "text_only",
+        updatedAt: Date.now(),
+      });
+    }
+    await ctx.db.patch(existing._id, {
+      isActive: args.isActive,
+      updatedAt: Date.now(),
+    });
+    return existing._id;
+  },
+});
+
+export const ensureForPhoneNumber = mutation({
+  args: {
+    phoneNumberId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("ai_configs")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .first();
+    if (existing) return existing._id;
+    return await ctx.db.insert("ai_configs", {
+      phoneNumberId: args.phoneNumberId,
+      systemPrompt: DEFAULT_PROMPT,
+      model: "arcee-ai/trinity-mini:free",
+      isActive: false,
+      toolsEnabled: DEFAULT_TOOLS_ENABLED,
+      recommendProducts: true,
+      fallbackMode: "text_only",
+      updatedAt: Date.now(),
+    });
+  },
+});

@@ -13,11 +13,8 @@ export const getChatByPhone = internalQuery({
     if (args.phoneNumberId) {
       return await ctx.db
         .query("chats")
-        .filter((q: any) =>
-          q.and(
-            q.eq(q.field("contactPhone"), args.phone),
-            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
-          )
+        .withIndex("by_phoneNumberId_contactPhone", (q) =>
+          q.eq("phoneNumberId", args.phoneNumberId).eq("contactPhone", args.phone)
         )
         .first();
     }
@@ -39,11 +36,8 @@ export const getOrCreateChat = mutation({
     if (args.phoneNumberId) {
       existing = await ctx.db
         .query("chats")
-        .filter((q: any) =>
-          q.and(
-            q.eq(q.field("contactPhone"), args.contactPhone),
-            q.eq(q.field("phoneNumberId"), args.phoneNumberId)
-          )
+        .withIndex("by_phoneNumberId_contactPhone", (q) =>
+          q.eq("phoneNumberId", args.phoneNumberId).eq("contactPhone", args.contactPhone)
         )
         .first();
     } else {
@@ -88,7 +82,7 @@ export const transferToHuman = internalMutation({
 
 // Set the active chat for a user
 export const setActiveChat = mutation({
-  args: { 
+  args: {
     chatId: v.id("chats"),
     userId: v.id("users"),
   },
@@ -96,7 +90,7 @@ export const setActiveChat = mutation({
     // Check if record exists
     const existing = await ctx.db
       .query("userActiveChats")
-      .withIndex("by_user_chat", (q) => 
+      .withIndex("by_user_chat", (q) =>
         q.eq("userId", args.userId).eq("chatId", args.chatId)
       )
       .first();
@@ -119,7 +113,7 @@ export const setActiveChat = mutation({
 
 // Clear active chat (when user navigates away)
 export const clearActiveChat = mutation({
-  args: { 
+  args: {
     userId: v.id("users"),
   },
   handler: async (ctx, args) => {
@@ -144,7 +138,7 @@ export const isUserViewingChat = internalQuery({
   handler: async (ctx, args) => {
     const activeChat = await ctx.db
       .query("userActiveChats")
-      .withIndex("by_user_chat", (q) => 
+      .withIndex("by_user_chat", (q) =>
         q.eq("userId", args.userId).eq("chatId", args.chatId)
       )
       .first();
@@ -176,12 +170,28 @@ export const getLatestGlobalMessage = query({
       "unreadCount" in chat;
     if (!isChat) return null;
 
+    // Fetch business name for context
+    let businessName = undefined;
+    let businessPhone = undefined;
+    if (chat.phoneNumberId) {
+      const whatsappNumber = await ctx.db
+        .query("whatsapp_numbers")
+        .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
+        .first();
+      if (whatsappNumber) {
+        businessName = whatsappNumber.name;
+        businessPhone = whatsappNumber.phone;
+      }
+    }
+
     return {
       messageId: message._id,
       chatId: chat._id,
       contactName: chat.contactName,
       contactPhone: chat.contactPhone,
       phoneNumberId: chat.phoneNumberId ?? undefined,
+      businessName,
+      businessPhone,
       content: message.content, // Text or Caption
       type: message.type,
       timestamp: message._creationTime, // Use insertion time for notification sync
@@ -204,6 +214,23 @@ export const listChats = query({
         .collect();
     }
     return await ctx.db.query("chats").withIndex("by_last_message").order("desc").collect();
+  },
+});
+
+export const getUnreadCounts = query({
+  handler: async (ctx) => {
+    const chats = await ctx.db.query("chats").collect();
+    const byNumber: Record<string, number> = {};
+    let total = 0;
+
+    for (const chat of chats) {
+      const unread = chat.unreadCount || 0;
+      total += unread;
+      const key = chat.phoneNumberId || "unassigned";
+      byNumber[key] = (byNumber[key] || 0) + unread;
+    }
+
+    return { total, byNumber };
   },
 });
 
@@ -250,7 +277,7 @@ export const getMessagesPage = query({
         if (msg.storageId) {
           mediaUrl = await ctx.storage.getUrl(msg.storageId);
         }
-        
+
         let replyTo = undefined;
         if (msg.replyTo) {
           const repliedMessage = await ctx.db.get(msg.replyTo);
@@ -263,7 +290,7 @@ export const getMessagesPage = query({
             };
           }
         }
-        
+
         return { ...msg, mediaUrl, replyTo };
       })
     );
@@ -281,14 +308,14 @@ export const getMessagesPage = query({
  */
 function buildTemplateComponents(template: any): any[] | null {
   const components: any[] = [];
-  
+
   if (!template || !template.components) {
     return components;
   }
 
   // Check for CAROUSEL, PRODUCT_CAROUSEL, or CATALOG templates
   // These require special handling with media uploads
-  const hasCarousel = template.components.some((c: any) => 
+  const hasCarousel = template.components.some((c: any) =>
     c.type === "CAROUSEL" || c.type === "carousel" ||
     c.type === "PRODUCT_CAROUSEL" || c.type === "product_carousel" ||
     c.type === "CATALOG" || c.type === "catalog"
@@ -324,9 +351,9 @@ function buildTemplateComponents(template: any): any[] | null {
         });
       } else if (comp.format === "TEXT") {
         // Check if header has variables
-        const hasVariables = comp.text?.includes("{{") || 
-                            (comp.example?.header_text && comp.example.header_text.length > 0);
-        
+        const hasVariables = comp.text?.includes("{{") ||
+          (comp.example?.header_text && comp.example.header_text.length > 0);
+
         if (hasVariables && comp.example?.header_text && comp.example.header_text.length > 0) {
           // Header has variables - include parameters
           components.push({
@@ -376,12 +403,12 @@ function buildTemplateComponents(template: any): any[] | null {
   // After constructing components array, check if we missed any HEADER components
   if (components.length === 0) {
     // Only check for headers in non-carousel templates (carousels are handled separately)
-    const hasHeader = template.components?.some((c: any) => 
+    const hasHeader = template.components?.some((c: any) =>
       (c.type === "HEADER" || c.type === "header")
     );
-    
+
     if (hasHeader) {
-      console.warn(`[Chat] Template has HEADER but no header component was added. Template components:`, 
+      console.warn(`[Chat] Template has HEADER but no header component was added. Template components:`,
         JSON.stringify(template.components, null, 2));
       // Try to add a default header without parameters for static headers
       components.push({
@@ -429,13 +456,14 @@ export const sendMessage = mutation({
     });
 
     let payloadContent: any;
-    
+
     if (args.type === "text") {
       payloadContent = { body: args.content };
     } else if (args.type === "template") {
       // Fetch template from database to get its structure
       const template = await ctx.runQuery(internal.templates.getTemplateByName, {
-        name: args.template!.name
+        name: args.template!.name,
+        phoneNumberId: chat.phoneNumberId ?? undefined,
       });
 
       if (!template) {
@@ -447,7 +475,7 @@ export const sendMessage = mutation({
       }
 
       // Check if this is a carousel template that needs special handling
-      const carouselComp = template.components?.find((c: any) => 
+      const carouselComp = template.components?.find((c: any) =>
         c.type === "CAROUSEL" || c.type === "carousel"
       );
 
@@ -477,7 +505,7 @@ export const sendMessage = mutation({
             template: template,
             phoneNumberId: chat.phoneNumberId ?? undefined,
           });
-          
+
           // Update chat and return early (message will be sent by the action)
           await ctx.db.patch(args.chatId, {
             lastMessageTime: now,
@@ -555,7 +583,7 @@ export const buildAndSendCarouselTemplate = internalAction({
   handler: async (ctx, args): Promise<any> => {
     try {
       const template = args.template;
-      const carouselComp = template.components?.find((c: any) => 
+      const carouselComp = template.components?.find((c: any) =>
         c.type === "CAROUSEL" || c.type === "carousel"
       );
 
@@ -566,7 +594,7 @@ export const buildAndSendCarouselTemplate = internalAction({
       console.log(`[Chat] Processing CAROUSEL template with ${carouselComp.cards.length} cards`);
 
       // Check if template body has variables
-      const bodyComp = template.components.find((c: any) => 
+      const bodyComp = template.components.find((c: any) =>
         c.type === "BODY" || c.type === "body"
       );
       const bodyHasVariables = bodyComp?.text?.includes("{{");
@@ -623,7 +651,7 @@ export const buildAndSendCarouselTemplate = internalAction({
 
         for (let i = 0; i < carouselComp.cards.length; i++) {
           const card = carouselComp.cards[i];
-          const headerComp = card.components?.find((c: any) => 
+          const headerComp = card.components?.find((c: any) =>
             c.type === "HEADER" || c.type === "header"
           );
 
@@ -657,20 +685,20 @@ export const buildAndSendCarouselTemplate = internalAction({
         if (failedUploads > 0) {
           const errorMsg = `Failed to upload ${failedUploads} media items for carousel. The template media URLs may have expired. Please edit the template and re-upload the images.`;
           console.error(`[Chat] ${failedUploads}/${mediaIds.length} media uploads failed - header_handle URLs may be expired`);
-          
+
           // Update message status to failed
           await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
             messageId: args.messageId,
             status: "failed",
           });
-          
+
           throw new Error(errorMsg);
         }
 
         // Build carousel cards with media IDs
         const carouselCards = carouselComp.cards.map((card: any, index: number) => {
           const cardComponents: any[] = [];
-          const headerComp = card.components?.find((c: any) => 
+          const headerComp = card.components?.find((c: any) =>
             c.type === "HEADER" || c.type === "header"
           );
 
@@ -695,7 +723,7 @@ export const buildAndSendCarouselTemplate = internalAction({
           }
 
           // Process body if it has variables (TODO: implement variable substitution)
-          const cardBodyComp = card.components?.find((c: any) => 
+          const cardBodyComp = card.components?.find((c: any) =>
             c.type === "BODY" || c.type === "body"
           );
           if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
@@ -703,11 +731,11 @@ export const buildAndSendCarouselTemplate = internalAction({
           }
 
           // Process buttons if they have variables (TODO: implement)
-          const buttonsComp = card.components?.find((c: any) => 
+          const buttonsComp = card.components?.find((c: any) =>
             c.type === "BUTTONS" || c.type === "buttons"
           );
           if (buttonsComp?.buttons) {
-            const hasButtonVariables = buttonsComp.buttons.some((btn: any) => 
+            const hasButtonVariables = buttonsComp.buttons.some((btn: any) =>
               btn.url?.includes("{{") || btn.example
             );
             if (hasButtonVariables) {
@@ -742,7 +770,7 @@ export const buildAndSendCarouselTemplate = internalAction({
             const cardComponents: any[] = [];
 
             // Process body if it has variables
-            const cardBodyComp = card.components?.find((c: any) => 
+            const cardBodyComp = card.components?.find((c: any) =>
               c.type === "BODY" || c.type === "body"
             );
             if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
@@ -783,7 +811,7 @@ export const buildAndSendCarouselTemplate = internalAction({
       return result;
     } catch (error) {
       console.error(`[Chat] Failed to build and send carousel template:`, error);
-      
+
       // Update message status to failed
       try {
         await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
@@ -793,7 +821,7 @@ export const buildAndSendCarouselTemplate = internalAction({
       } catch (updateError) {
         console.error(`[Chat] Failed to update message status:`, updateError);
       }
-      
+
       throw error;
     }
   },

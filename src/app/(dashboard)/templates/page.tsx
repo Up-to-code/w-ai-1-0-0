@@ -39,7 +39,6 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function TemplatesPage() {
-    const templates = useQuery(api.templates.list) || []
     const { activePhoneNumberId } = useWorkspace()
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
@@ -47,6 +46,8 @@ export default function TemplatesPage() {
     // "__all__" or null = default number. Convex expects undefined, not null.
     const effectivePhoneNumberId =
       !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+    const templates =
+        useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
 
     const [search, setSearch] = useState("")
     const [activeTab, setActiveTab] = useState("all")
@@ -146,6 +147,11 @@ export default function TemplatesPage() {
                     <p className="text-muted-foreground text-lg">إدارة وتخصيص قوالب WhatsApp المعتمدة</p>
                 </div>
                 <div className="flex items-center gap-3">
+                    <Link href="/templates/store">
+                        <Button variant="outline" className="gap-2 rounded-xl">
+                            متجر القوالب
+                        </Button>
+                    </Link>
                     <Button variant="outline" className="gap-2" onClick={handleSync} disabled={isSyncing}>
                         <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
                         مزامنة

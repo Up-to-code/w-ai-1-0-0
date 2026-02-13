@@ -15,20 +15,16 @@ export function GlobalNotification() {
     const latestMessage = useQuery(api.chat.getLatestGlobalMessage)
     const notifications = useQuery(api.notifications.list, { limit: 5 })
     const markAsRead = useMutation(api.notifications.markAsRead)
-    const { setActivePhoneNumberId } = useWorkspace()
+    const { setActivePhoneNumberId, numbers } = useWorkspace()
 
     const searchParams = useSearchParams()
     const pathname = usePathname()
     const router = useRouter()
-    
+
     const lastMessageIdRef = useRef<string | null>(null)
     const lastNotificationIdRef = useRef<string | null>(null)
     const audioRef = useRef<HTMLAudioElement | null>(null)
     const isFirstRun = useRef(true)
-    const setActivePhoneNumberIdRef = useRef(setActivePhoneNumberId)
-    const routerRef = useRef(router)
-    setActivePhoneNumberIdRef.current = setActivePhoneNumberId
-    routerRef.current = router
 
     // Initialize Audio
     useEffect(() => {
@@ -44,7 +40,7 @@ export function GlobalNotification() {
         if (isFirstRun.current && !lastNotificationIdRef.current) {
             // Set the ref to the latest one so we don't alert on existing ones
             if (notifications.length > 0) {
-                 lastNotificationIdRef.current = notifications[0]._id
+                lastNotificationIdRef.current = notifications[0]._id
             }
             // We don't return here because we might want to handle chat messages below
             // But we should flag that we processed notifications
@@ -53,40 +49,39 @@ export function GlobalNotification() {
         // Find the latest unread notification that is NEW (different ID from last seen)
         // We assume the list is ordered by desc createdAt
         const latest = notifications[0]
-        
+
         if (latest && !latest.read && latest._id !== lastNotificationIdRef.current) {
             // It's a new notification!
             if (!isFirstRun.current) { // Only play if not first run (double check)
-                audioRef.current?.play().catch(() => {})
-                
+                audioRef.current?.play().catch(() => { })
+
                 toast.custom((t) => (
                     <div
-                       className="w-[360px] cursor-pointer"
-                       onClick={() => {
-                           toast.dismiss(t)
-                           markAsRead({ id: latest._id })
-                           if (latest.link) router.push(latest.link)
-                       }}
-                   >
-                       <div className="relative overflow-hidden rounded-[22px] bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-black/5 dark:border-white/10 p-4 shadow-2xl transition-all hover:scale-[1.02]">
-                           <div className="flex items-start gap-3">
-                               <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${
-                                   latest.type === 'error' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' :
-                                   latest.type === 'warning' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' :
-                                   latest.type === 'success' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' :
-                                   'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
-                               }`}>
-                                   <Bell className="w-5 h-5" />
-                               </div>
-                               <div className="flex-1 min-w-0">
-                                   <h4 className="font-semibold text-sm text-foreground">{latest.title}</h4>
-                                   <p className="text-sm text-muted-foreground line-clamp-2 mt-0.5">{latest.message}</p>
-                                   <p className="text-[10px] text-muted-foreground/60 mt-2">الآن</p>
-                               </div>
-                           </div>
-                       </div>
-                   </div>
-               ), { duration: 6000, position: "top-right" })
+                        className="w-[360px] cursor-pointer"
+                        onClick={() => {
+                            toast.dismiss(t)
+                            markAsRead({ id: latest._id })
+                            if (latest.link) router.push(latest.link)
+                        }}
+                    >
+                        <div className="relative overflow-hidden rounded-[22px] bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-black/5 dark:border-white/10 p-4 shadow-2xl transition-all hover:scale-[1.02]">
+                            <div className="flex items-start gap-3">
+                                <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${latest.type === 'error' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' :
+                                        latest.type === 'warning' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' :
+                                            latest.type === 'success' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' :
+                                                'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                                    }`}>
+                                    <Bell className="w-5 h-5" />
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                    <h4 className="font-semibold text-sm text-foreground">{latest.title}</h4>
+                                    <p className="text-sm text-muted-foreground line-clamp-2 mt-0.5">{latest.message}</p>
+                                    <p className="text-[10px] text-muted-foreground/60 mt-2">الآن</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ), { duration: 6000, position: "top-right" })
             }
             lastNotificationIdRef.current = latest._id
         }
@@ -118,13 +113,24 @@ export function GlobalNotification() {
         // 4. Play Sound & Show Notification
         audioRef.current?.play().catch(e => console.error("Audio play failed", e))
 
+        const workspaceNumber = latestMessage.phoneNumberId
+            ? numbers.find((n) => n.businessNumberId === latestMessage.phoneNumberId)
+            : null
+        const recipientContext =
+            latestMessage.businessName ||
+            workspaceNumber?.name ||
+            latestMessage.businessPhone ||
+            workspaceNumber?.phone ||
+            latestMessage.phoneNumberId ||
+            "default number"
+
         toast.custom((t) => (
             <div
                 className="w-[360px] cursor-pointer"
                 onClick={() => {
                     toast.dismiss(t)
-                    if (latestMessage.phoneNumberId) setActivePhoneNumberIdRef.current?.(latestMessage.phoneNumberId)
-                    routerRef.current.push(`/chat/${latestMessage.chatId}`)
+                    if (latestMessage.phoneNumberId) setActivePhoneNumberId(latestMessage.phoneNumberId)
+                    router.push(`/chat/${latestMessage.chatId}`)
                 }}
             >
                 <div className="relative overflow-hidden rounded-[22px] bg-gradient-to-br from-white/60 to-white/40 dark:from-[#1C1C1E]/70 dark:to-[#2C2C2E]/50 backdrop-blur-[80px] border border-white/30 dark:border-white/10 p-[14px] transition-all hover:brightness-105 active:scale-[0.98] group">
@@ -137,7 +143,7 @@ export function GlobalNotification() {
                                 <MessageSquare className="w-2.5 h-2.5 text-white fill-current" />
                             </div>
                             <span className="text-[11px] font-semibold tracking-wide text-black/60 dark:text-white/60 uppercase">
-                                MESSAGES
+                                MESSAGES • TO {recipientContext}
                             </span>
                         </div>
                         <span className="text-[11px] font-normal text-black/40 dark:text-white/40">
@@ -173,7 +179,7 @@ export function GlobalNotification() {
             className: "p-0 bg-transparent border-0 shadow-none !bg-transparent !p-0 !m-0",
         })
 
-    }, [latestMessage, pathname, searchParams])
+    }, [latestMessage, pathname, searchParams, numbers, router, setActivePhoneNumberId])
 
     return null
 }

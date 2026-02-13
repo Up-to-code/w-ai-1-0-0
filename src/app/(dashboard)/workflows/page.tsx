@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useQuery, useMutation } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -88,8 +89,11 @@ const ACTIONS = [
 ]
 
 export default function WorkflowsPage() {
-    const workflows = useQuery(api.workflows.list) || []
-    const templates = useQuery(api.templates.list) || []
+    const { activePhoneNumberId } = useWorkspace()
+    const effectivePhoneNumberId =
+        !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+    const workflows = useQuery(api.workflows.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
+    const templates = useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
     const users = useQuery(api.users.list) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
     const updateWorkflow = useMutation(api.workflows.update)
@@ -128,6 +132,7 @@ export default function WorkflowsPage() {
                     triggerConfig,
                     action: selectedAction,
                     actionConfig,
+                    phoneNumberId: effectivePhoneNumberId,
                 })
             } else {
                 await createWorkflow({
@@ -136,6 +141,7 @@ export default function WorkflowsPage() {
                     triggerConfig,
                     action: selectedAction,
                     actionConfig,
+                    phoneNumberId: effectivePhoneNumberId,
                 })
             }
             setIsCreateOpen(false)

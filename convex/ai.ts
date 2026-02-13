@@ -1,4 +1,4 @@
-import { mutation, query, action, internalAction, internalMutation, internalQuery } from "./_generated/server";
+import { query, action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import type { Id } from "./_generated/dataModel";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
@@ -114,6 +114,27 @@ export const searchKnowledge = internalAction({
     const docs: { _id: Id<"knowledge_base">; title: string; content: string }[] = await ctx.runQuery(internal.ai.getKnowledgeByIds, {
       ids: results.map((r) => r._id),
     });
-    return docs.map((d) => ({ title: d.title, content: d.content }));
+
+    // Compact + dedupe snippets for stronger grounding and prompt-budget safety.
+    const seen = new Set<string>();
+    const compact: KnowledgeSnippet[] = [];
+    let charBudget = 2200;
+    for (const d of docs) {
+      const title = (d.title ?? "").trim() || "Untitled";
+      const content = (d.content ?? "").replace(/\s+/g, " ").trim();
+      if (!content) continue;
+      const fp = `${title.toLowerCase()}::${content.slice(0, 120).toLowerCase()}`;
+      if (seen.has(fp)) continue;
+      seen.add(fp);
+
+      const trimmed = content.length > 380 ? `${content.slice(0, 380)}...` : content;
+      const cost = title.length + trimmed.length;
+      if (cost > charBudget) break;
+      compact.push({ title, content: trimmed });
+      charBudget -= cost;
+      if (compact.length >= topK) break;
+    }
+
+    return compact;
   },
 });

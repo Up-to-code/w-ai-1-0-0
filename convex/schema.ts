@@ -44,7 +44,8 @@ export default defineSchema({
     aiSummary: v.optional(v.string()), // Compressed conversation history
   }).index("by_last_message", ["lastMessageTime"])
     .index("by_assigned_to", ["assignedTo"])
-    .index("by_phoneNumberId_last_message", ["phoneNumberId", "lastMessageTime"]),
+    .index("by_phoneNumberId_last_message", ["phoneNumberId", "lastMessageTime"])
+    .index("by_phoneNumberId_contactPhone", ["phoneNumberId", "contactPhone"]),
 
   ai_configs: defineTable({
     phoneNumberId: v.optional(v.string()), // null/undefined = global default; otherwise per-number config
@@ -52,6 +53,21 @@ export default defineSchema({
     model: v.string(),
     temperature: v.optional(v.number()),
     isActive: v.boolean(),
+    agentName: v.optional(v.string()),
+    toolsEnabled: v.optional(v.array(v.union(
+      v.literal("send_text"),
+      v.literal("send_image"),
+      v.literal("send_link"),
+      v.literal("send_audio"),
+      v.literal("send_product"),
+      v.literal("transfer_to_human")
+    ))),
+    recommendProducts: v.optional(v.boolean()),
+    fallbackMode: v.optional(v.union(
+      v.literal("no_reply"),
+      v.literal("text_only"),
+      v.literal("human_handoff")
+    )),
     updatedAt: v.number(),
   }).index("by_phone_number_id", ["phoneNumberId"]),
 
@@ -72,6 +88,8 @@ export default defineSchema({
     mediaId: v.optional(v.string()), // Meta Media ID
     storageId: v.optional(v.string()), // Convex Storage ID
     status: v.union(v.literal("sent"), v.literal("delivered"), v.literal("read"), v.literal("failed")),
+    mediaHydrationStatus: v.optional(v.union(v.literal("pending"), v.literal("success"), v.literal("failed"))),
+    mediaHydrationError: v.optional(v.string()),
     timestamp: v.number(),
     metaMessageId: v.optional(v.string()),
     replyTo: v.optional(v.id("messages")), // Reference to message being replied to
@@ -92,6 +110,7 @@ export default defineSchema({
     .index("by_whatsapp_media_id", ["whatsappMediaId"]),
 
   templates: defineTable({
+    phoneNumberId: v.optional(v.string()), // Meta phone_number_id; template scope per sender number
     name: v.string(),
     language: v.string(),
     category: v.string(),
@@ -100,7 +119,21 @@ export default defineSchema({
     status: v.union(v.literal("APPROVED"), v.literal("REJECTED"), v.literal("PENDING")),
     metaTemplateId: v.optional(v.string()),
     lastSyncedAt: v.number(),
-  }),
+  }).index("by_phone_number_id", ["phoneNumberId"])
+    .index("by_phone_number_id_name", ["phoneNumberId", "name"]),
+
+  // Template store: library of default + user-added template definitions (not yet on Meta)
+  template_store: defineTable({
+    name: v.string(),
+    language: v.string(),
+    category: v.string(),
+    components: v.any(), // Same JSON shape as Meta (BODY, HEADER, BUTTONS, etc.)
+    description: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    isDefault: v.optional(v.boolean()),
+    formSnapshot: v.optional(v.any()), // Form state for pre-fill on "Use template"
+    createdAt: v.optional(v.number()),
+  }).index("by_created_at", ["createdAt"]),
 
   products: defineTable({
     externalId: v.string(), // SOLO ID
@@ -201,6 +234,7 @@ export default defineSchema({
 
   // Workflows (Automation)
   workflows: defineTable({
+    phoneNumberId: v.optional(v.string()), // Undefined means global fallback workflow
     name: v.string(),
     trigger: v.string(), // new_message, keyword, etc.
     triggerConfig: v.any(), // { keyword: "hello" }
@@ -212,7 +246,7 @@ export default defineSchema({
       lastRun: v.optional(v.number())
     }),
     createdAt: v.number(),
-  }),
+  }).index("by_phone_number_id_enabled", ["phoneNumberId", "enabled"]),
 
   campaign_logs: defineTable({
     campaignId: v.id("campaigns"),
@@ -243,6 +277,22 @@ export default defineSchema({
   webhook_events: defineTable({
     source: v.union(v.literal("whatsapp"), v.literal("salla")),
     body: v.any(),
+    processingStatus: v.optional(v.union(
+      v.literal("received"),
+      v.literal("ignored_no_messages"),
+      v.literal("saved"),
+      v.literal("failed")
+    )),
+    eventType: v.optional(v.string()),
+    resolvedPhoneNumberId: v.optional(v.string()),
+    fallbackUsed: v.optional(v.boolean()),
+    hasMessages: v.optional(v.boolean()),
+    messagesCount: v.optional(v.number()),
+    hasStatuses: v.optional(v.boolean()),
+    statusesCount: v.optional(v.number()),
+    metadataPhoneNumberId: v.optional(v.string()),
+    metadataDisplayPhoneNumber: v.optional(v.string()),
+    note: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_source_createdAt", ["source", "createdAt"]),
 
@@ -251,6 +301,7 @@ export default defineSchema({
     verifyToken: v.optional(v.string()),
     accessToken: v.optional(v.string()),
     appId: v.optional(v.string()),
+    defaultPhoneNumberId: v.optional(v.string()),
     updatedAt: v.number(),
   }),
 

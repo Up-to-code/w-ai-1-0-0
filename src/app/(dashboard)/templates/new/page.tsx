@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useAction, useQuery, useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
+import { Id } from "../../../../../convex/_generated/dataModel"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -72,16 +73,27 @@ export default function NewTemplatePage() {
     const router = useRouter()
     const searchParams = useSearchParams()
     const editName = searchParams?.get("edit")
+    const fromStoreId = searchParams?.get("fromStore") as Id<"template_store"> | null
     const { activePhoneNumberId } = useWorkspace()
 
     const createTemplate = useAction(api.templates.createTemplate)
-    const existingTemplate = useQuery(api.templates.getByName, editName ? { name: editName } : "skip")
+    const addToStore = useMutation(api.templateStore.add)
+    const existingTemplate = useQuery(
+        api.templates.getByName,
+        editName ? { name: editName, phoneNumberId: activePhoneNumberId ?? undefined } : "skip"
+    )
+    const storeTemplate = useQuery(
+        api.templateStore.get,
+        fromStoreId ? { id: fromStoreId } : "skip"
+    )
+    const storeAppliedRef = useRef(false)
     const uploadTemplateMedia = useAction(api.whatsapp.uploadTemplateMedia)
     const uploadExternalMedia = useAction(api.whatsapp.uploadExternalTemplateMedia)
     const generateUploadUrl = useMutation(api.files.generateUploadUrl)
 
     const [isSubmitting, setIsSubmitting] = useState(false)
     const [uploadingMedia, setUploadingMedia] = useState(false)
+    const [savingToStore, setSavingToStore] = useState(false)
 
     // Form State
     const [name, setName] = useState("")
@@ -118,52 +130,89 @@ export default function NewTemplatePage() {
     const fileInputRef = useRef<HTMLInputElement>(null)
     const [activeUploadField, setActiveUploadField] = useState<"HEADER" | number | null>(null) // HEADER or Card Index
 
-    // Pre-fill form if editing
+    // Pre-fill form if editing (skip when loading from store)
     useEffect(() => {
-        if (existingTemplate && !name) { // Only fill once
-            setName(existingTemplate.name + "_copy") // Suggest new name
-            setCategory(existingTemplate.category)
-            setLanguage(existingTemplate.language)
-            
-            const components = existingTemplate.components || []
-            
-            // Detect Type
-            const carousel = components.find((c: any) => c.type === "CAROUSEL")
-            if (carousel) {
-                setTemplateType("CAROUSEL")
-                // TODO: Parse carousel cards
-            } else {
+        if (fromStoreId || !existingTemplate || name) return
+        setName(existingTemplate.name + "_copy")
+        setCategory(existingTemplate.category)
+        setLanguage(existingTemplate.language)
+        const components = existingTemplate.components || []
+        const carousel = components.find((c: any) => c.type === "CAROUSEL")
+        if (carousel) {
+            setTemplateType("CAROUSEL")
+        } else {
+            setTemplateType("STANDARD")
+            const header = components.find((c: any) => c.type === "HEADER")
+            if (header) {
+                setHeaderType(header.format)
+                if (header.format === "TEXT") setHeaderText(header.text || "")
+            }
+            const body = components.find((c: any) => c.type === "BODY")
+            if (body) setBodyText(body.text || "")
+            const footer = components.find((c: any) => c.type === "FOOTER")
+            if (footer) setFooterText(footer.text || "")
+            const btns = components.find((c: any) => c.type === "BUTTONS")
+            if (btns && btns.buttons) {
+                setButtons(btns.buttons.map((b: any) => ({
+                    type: b.type,
+                    text: b.text,
+                    url: b.url,
+                    phone_number: b.phone_number,
+                    example: b.example
+                })))
+            }
+        }
+    }, [existingTemplate, fromStoreId, name])
+
+    // Pre-fill from template store (Use template)
+    useEffect(() => {
+        if (!storeTemplate || storeAppliedRef.current) return
+        storeAppliedRef.current = true
+        setName(storeTemplate.name + "_copy")
+        setCategory(storeTemplate.category)
+        setLanguage(storeTemplate.language)
+        const snap = storeTemplate.formSnapshot
+        if (snap && typeof snap === "object") {
+            const s = snap as Record<string, unknown>
+            if (s.templateType === "STANDARD") {
                 setTemplateType("STANDARD")
-                // Header
-                const header = components.find((c: any) => c.type === "HEADER")
-                if (header) {
-                    setHeaderType(header.format)
-                    if (header.format === "TEXT") setHeaderText(header.text || "")
-                    // Note: Handles are not usually retrievable for editing, need re-upload
-                }
-                
-                // Body
-                const body = components.find((c: any) => c.type === "BODY")
-                if (body) setBodyText(body.text || "")
-                
-                // Footer
-                const footer = components.find((c: any) => c.type === "FOOTER")
-                if (footer) setFooterText(footer.text || "")
-                
-                // Buttons
-                const btns = components.find((c: any) => c.type === "BUTTONS")
-                if (btns && btns.buttons) {
-                    setButtons(btns.buttons.map((b: any) => ({
-                        type: b.type,
-                        text: b.text,
+                if (typeof s.headerType === "string") setHeaderType(s.headerType as "NONE" | "TEXT" | "IMAGE" | "VIDEO")
+                if (typeof s.bodyText === "string") setBodyText(s.bodyText)
+                if (typeof s.footerText === "string") setFooterText(s.footerText)
+                if (Array.isArray(s.buttons)) {
+                    setButtons(s.buttons.map((b: any) => ({
+                        type: b.type || "QUICK_REPLY",
+                        text: b.text || "",
                         url: b.url,
                         phone_number: b.phone_number,
-                        example: b.example
+                        example: Array.isArray(b.example) ? b.example[0] : b.example
                     })))
                 }
             }
+        } else {
+            const components = (storeTemplate.components || []) as { type: string; format?: string; text?: string; buttons?: any[] }[]
+            setTemplateType("STANDARD")
+            const header = components.find((c) => c.type === "HEADER")
+            if (header) {
+                setHeaderType((header.format as "TEXT" | "IMAGE" | "VIDEO") || "NONE")
+                if (header.format === "TEXT" && header.text) setHeaderText(header.text)
+            }
+            const body = components.find((c) => c.type === "BODY")
+            if (body?.text) setBodyText(body.text)
+            const footer = components.find((c) => c.type === "FOOTER")
+            if (footer?.text) setFooterText(footer.text)
+            const btns = components.find((c) => c.type === "BUTTONS")
+            if (btns?.buttons) {
+                setButtons(btns.buttons.map((b: any) => ({
+                    type: b.type,
+                    text: b.text,
+                    url: b.url,
+                    phone_number: b.phone_number,
+                    example: Array.isArray(b.example) ? b.example[0] : b.example
+                })))
+            }
         }
-    }, [existingTemplate])
+    }, [storeTemplate])
 
     // --- Media Upload Logic ---
     const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -582,6 +631,59 @@ export default function NewTemplatePage() {
             alert("فشل إنشاء القالب. " + String(error))
         } finally {
             setIsSubmitting(false)
+        }
+    }
+
+    const handleSaveToStore = async () => {
+        if (templateType !== "STANDARD" || !name.trim()) {
+            alert("حفظ المتجر متاح للقوالب القياسية فقط. أدخل اسم القالب.")
+            return
+        }
+        setSavingToStore(true)
+        try {
+            const components: any[] = []
+            if (headerType !== "NONE") {
+                components.push({
+                    type: "HEADER",
+                    format: headerType,
+                    text: headerType === "TEXT" ? headerText : undefined,
+                    example: (headerType === "IMAGE" || headerType === "VIDEO") && headerHandle ? { header_handle: [headerHandle] } : undefined
+                })
+            }
+            components.push({ type: "BODY", text: bodyText })
+            if (footerText) components.push({ type: "FOOTER", text: footerText })
+            if (buttons.length > 0) {
+                components.push({
+                    type: "BUTTONS",
+                    buttons: buttons.map((b) => ({
+                        type: b.type,
+                        text: b.text,
+                        url: b.type === "URL" ? b.url : undefined,
+                        phone_number: b.type === "PHONE_NUMBER" ? b.phone_number : undefined,
+                        example: b.type === "COPY_CODE" ? b.example : undefined
+                    }))
+                })
+            }
+            const formSnapshot = {
+                templateType: "STANDARD",
+                headerType,
+                bodyText,
+                footerText,
+                buttons: buttons.map((b) => ({ type: b.type, text: b.text, url: b.url, phone_number: b.phone_number, example: b.example }))
+            }
+            await addToStore({
+                name: name.toLowerCase().replace(/\s+/g, "_"),
+                language,
+                category,
+                components,
+                formSnapshot
+            })
+            router.push("/templates/store?added=1")
+        } catch (e) {
+            console.error(e)
+            alert("فشل حفظ القالب في المتجر. " + String(e))
+        } finally {
+            setSavingToStore(false)
         }
     }
 
@@ -1197,8 +1299,18 @@ export default function NewTemplatePage() {
                         </CardContent>
                     </Card>
 
-                    <div className="flex justify-end gap-4">
+                    <div className="flex justify-end gap-4 flex-wrap">
                         <Button variant="outline" onClick={() => router.push("/templates")}>إلغاء</Button>
+                        {templateType === "STANDARD" && (
+                            <Button
+                                variant="outline"
+                                onClick={handleSaveToStore}
+                                disabled={savingToStore || !name || !bodyText}
+                            >
+                                {savingToStore ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                                حفظ في المتجر
+                            </Button>
+                        )}
                         <Button 
                             onClick={handleSubmit} 
                             className="bg-[#004D3D] hover:bg-[#003D2D] min-w-[150px]"

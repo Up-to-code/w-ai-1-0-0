@@ -27,6 +27,7 @@ export const create = mutation({
         tags: v.optional(v.array(v.string())),
         stage: v.optional(v.string()),
         customFields: v.optional(v.any()),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const id = await ctx.db.insert("contacts", {
@@ -44,7 +45,8 @@ export const create = mutation({
         await ctx.scheduler.runAfter(0, internal.workflows.checkContactWorkflows, {
             contactId: id,
             contactPhone: args.phone,
-            isNew: true
+            isNew: true,
+            phoneNumberId: args.phoneNumberId,
         });
 
         // Trigger Workflows for added tags
@@ -53,7 +55,8 @@ export const create = mutation({
                 await ctx.scheduler.runAfter(0, internal.workflows.checkTagWorkflows, {
                     contactId: id,
                     contactPhone: args.phone,
-                    addedTag: tag
+                    addedTag: tag,
+                    phoneNumberId: args.phoneNumberId,
                 });
             }
         }
@@ -69,6 +72,7 @@ export const update = mutation({
         email: v.optional(v.string()),
         tags: v.optional(v.array(v.string())),
         stage: v.optional(v.string()),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         const contact = await ctx.db.get(args.id);
@@ -83,7 +87,8 @@ export const update = mutation({
                 await ctx.scheduler.runAfter(0, internal.workflows.checkTagWorkflows, {
                     contactId: args.id,
                     contactPhone: contact.phone,
-                    addedTag: tag
+                    addedTag: tag,
+                    phoneNumberId: args.phoneNumberId,
                 });
             }
         }

@@ -63,7 +63,10 @@ export default function NewCampaignPage() {
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
     // Queries
-    const templates = useQuery(api.templates.list)
+    const templates = useQuery(
+        api.templates.list,
+        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : {}
+    )
     const contacts = useQuery(api.contacts.list, { limit: 1000 })
 
     const createCampaign = useMutation(api.campaigns.create)

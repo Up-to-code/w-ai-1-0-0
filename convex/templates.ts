@@ -3,14 +3,30 @@ import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 
 export const list = query({
-  handler: async (ctx) => {
+  args: { phoneNumberId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    if (args.phoneNumberId) {
+      return await ctx.db
+        .query("templates")
+        .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId!))
+        .order("desc")
+        .collect();
+    }
     return await ctx.db.query("templates").order("desc").collect();
   },
 });
 
 export const getByName = query({
-  args: { name: v.string() },
+  args: { name: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    if (args.phoneNumberId) {
+      return await ctx.db
+        .query("templates")
+        .withIndex("by_phone_number_id_name", (q) =>
+          q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+        )
+        .first();
+    }
     return await ctx.db
       .query("templates")
       .filter((q: any) => q.eq(q.field("name"), args.name))
@@ -26,8 +42,16 @@ export const getById = query({
 });
 
 export const getTemplateByName = internalQuery({
-  args: { name: v.string() },
+  args: { name: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    if (args.phoneNumberId) {
+      return await ctx.db
+        .query("templates")
+        .withIndex("by_phone_number_id_name", (q) =>
+          q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+        )
+        .first();
+    }
     return await ctx.db
       .query("templates")
       .filter((q: any) => q.eq(q.field("name"), args.name))
@@ -37,6 +61,7 @@ export const getTemplateByName = internalQuery({
 
 export const upsert = internalMutation({
   args: {
+    phoneNumberId: v.optional(v.string()),
     name: v.string(),
     language: v.string(),
     category: v.string(),
@@ -45,10 +70,17 @@ export const upsert = internalMutation({
     metaTemplateId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const existing = await ctx.db
-      .query("templates")
-      .filter((q: any) => q.eq(q.field("name"), args.name))
-      .first();
+    const existing = args.phoneNumberId
+      ? await ctx.db
+          .query("templates")
+          .withIndex("by_phone_number_id_name", (q) =>
+            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+          )
+          .first()
+      : await ctx.db
+          .query("templates")
+          .filter((q: any) => q.eq(q.field("name"), args.name))
+          .first();
 
     if (existing) {
       await ctx.db.patch(existing._id, {
@@ -59,6 +91,7 @@ export const upsert = internalMutation({
       return existing._id;
     } else {
       return await ctx.db.insert("templates", {
+        phoneNumberId: args.phoneNumberId,
         name: args.name,
         language: args.language,
         category: args.category,
@@ -75,12 +108,20 @@ export const updateStatus = mutation({
   args: {
     name: v.string(),
     status: v.string(),
+    phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const template = await ctx.db
-      .query("templates")
-      .filter((q: any) => q.eq(q.field("name"), args.name))
-      .first();
+    const template = args.phoneNumberId
+      ? await ctx.db
+          .query("templates")
+          .withIndex("by_phone_number_id_name", (q) =>
+            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+          )
+          .first()
+      : await ctx.db
+          .query("templates")
+          .filter((q: any) => q.eq(q.field("name"), args.name))
+          .first();
 
     if (template) {
       await ctx.db.patch(template._id, {
@@ -92,12 +133,19 @@ export const updateStatus = mutation({
 });
 
 export const deleteInternal = internalMutation({
-  args: { name: v.string() },
+  args: { name: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const template = await ctx.db
-      .query("templates")
-      .filter((q: any) => q.eq(q.field("name"), args.name))
-      .first();
+    const template = args.phoneNumberId
+      ? await ctx.db
+          .query("templates")
+          .withIndex("by_phone_number_id_name", (q) =>
+            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+          )
+          .first()
+      : await ctx.db
+          .query("templates")
+          .filter((q: any) => q.eq(q.field("name"), args.name))
+          .first();
 
     if (template) {
       await ctx.db.delete(template._id);
@@ -142,7 +190,10 @@ export const deleteTemplate = action({
     }
 
     // 2. Delete locally
-    await ctx.runMutation(internal.templates.deleteInternal, { name: args.name });
+    await ctx.runMutation(internal.templates.deleteInternal, {
+      name: args.name,
+      phoneNumberId: args.phoneNumberId,
+    });
   },
 });
 
@@ -186,6 +237,7 @@ export const syncFromMeta = action({
     // 2. Upsert each template into local DB
     for (const t of metaTemplates) {
       await ctx.runMutation(internal.templates.upsert, {
+        phoneNumberId: args.phoneNumberId,
         name: t.name,
         language: t.language,
         category: t.category,
@@ -196,16 +248,24 @@ export const syncFromMeta = action({
     }
 
     // 3. Remove local templates that are not in Meta
-    await ctx.runMutation(internal.templates.pruneLocal, { metaTemplateNames });
+    await ctx.runMutation(internal.templates.pruneLocal, {
+      metaTemplateNames,
+      phoneNumberId: args.phoneNumberId,
+    });
 
     return metaTemplates.length;
   },
 });
 
 export const pruneLocal = internalMutation({
-  args: { metaTemplateNames: v.array(v.string()) },
+  args: { metaTemplateNames: v.array(v.string()), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const localTemplates = await ctx.db.query("templates").collect();
+    const localTemplates = args.phoneNumberId
+      ? await ctx.db
+          .query("templates")
+          .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId!))
+          .collect()
+      : await ctx.db.query("templates").collect();
 
     for (const local of localTemplates) {
       if (!args.metaTemplateNames.includes(local.name)) {

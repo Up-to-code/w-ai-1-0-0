@@ -14,6 +14,8 @@ interface MessageBubbleProps {
     timestamp: number
     status?: "sent" | "delivered" | "read" | "failed"
     mediaId?: string
+    mediaHydrationStatus?: "pending" | "success" | "failed"
+    mediaHydrationError?: string
   }
 }
 
@@ -111,6 +113,19 @@ export function MessageBubble({ message }: MessageBubbleProps) {
                 className="w-full h-auto object-cover max-h-[350px] cursor-pointer hover:opacity-95 transition-opacity"
                 loading="lazy"
               />
+            </div>
+          )}
+          {message.type === "image" && !message.mediaUrl && message.mediaHydrationStatus === "failed" && (
+            <div className="mb-1 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300 min-w-[200px]">
+              تعذر تحميل الصورة من WhatsApp. حاول إعادة الإرسال.
+              {message.mediaHydrationError && (
+                <div className="mt-1 opacity-80 break-words">{message.mediaHydrationError}</div>
+              )}
+            </div>
+          )}
+          {message.type === "image" && !message.mediaUrl && message.mediaHydrationStatus === "pending" && (
+            <div className="mb-1 rounded-md border border-border bg-muted/40 p-3 text-xs text-muted-foreground min-w-[200px]">
+              جاري تحميل الصورة...
             </div>
           )}
 

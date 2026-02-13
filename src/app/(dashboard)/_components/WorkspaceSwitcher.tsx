@@ -1,148 +1,80 @@
 "use client"
 
 import * as React from "react"
-import Link from "next/link"
-import { Check, ChevronsUpDown, PlusCircle, Settings, Store, Layers } from "lucide-react"
 import { cn } from "@/lib/utils"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
-import { Button } from "@/components/ui/button"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { useQuery } from "convex/react"
+import { api } from "../../../../convex/_generated/api"
 
 export function WorkspaceSwitcher() {
-  const { numbers, activeWorkspace, setActivePhoneNumberId, isLoading } = useWorkspace()
+  const { numbers, activePhoneNumberId, setActivePhoneNumberId, isLoading } = useWorkspace()
+  const unreadCounts = useQuery(api.chat.getUnreadCounts)
+  const agents = useQuery(api.agents.list)
+  const activeByNumber = React.useMemo(() => {
+    const map: Record<string, boolean> = {}
+    for (const cfg of agents ?? []) {
+      if (cfg.phoneNumberId) map[cfg.phoneNumberId] = Boolean(cfg.isActive)
+    }
+    return map
+  }, [agents])
 
   if (isLoading || numbers.length === 0) {
     return (
-      <Button
-        variant="ghost"
-        className="w-full justify-between gap-2 px-3 py-6 border border-sidebar-border bg-sidebar-accent/30 rounded-xl"
-      >
-        <div className="flex items-center gap-3 text-right">
-          <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-muted shrink-0">
-            <Store className="h-5 w-5 text-muted-foreground" />
-          </div>
-          <div className="flex flex-col text-right overflow-hidden">
-            <span className="text-sm text-muted-foreground">جاري التحميل...</span>
-          </div>
-        </div>
-      </Button>
+      <div className="p-1">
+        <div className="h-12 bg-muted/20 animate-pulse rounded-xl border border-border/10" />
+      </div>
     )
   }
 
-  const isAllSelected = !activeWorkspace
-  const displayWorkspace = activeWorkspace ?? numbers[0]
-
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button
-          variant="ghost"
-          className="w-full justify-between gap-2 px-3 py-6 hover:bg-sidebar-accent transition-all border border-sidebar-border bg-sidebar-accent/30 rounded-xl"
-        >
-          <div className="flex items-center gap-3 text-right">
-            <div className={cn(
-              "flex h-10 w-10 items-center justify-center rounded-lg shrink-0 shadow-lg",
-              isAllSelected ? "bg-muted text-muted-foreground" : "bg-primary text-primary-foreground"
-            )}>
-              {isAllSelected ? <Layers className="h-5 w-5" /> : <Store className="h-5 w-5" />}
-            </div>
-            <div className="flex flex-col text-right overflow-hidden">
-              <span className="text-sm font-bold text-sidebar-foreground truncate">
-                {isAllSelected ? "جميع الأرقام" : displayWorkspace.name}
+    <div className="flex flex-col gap-2">
+      <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1">
+        الرقم النشط
+      </p>
+      <div className="flex bg-muted/30 p-1 rounded-xl border border-border/10 gap-1">
+        {numbers.map((ws) => {
+          const isActive = activePhoneNumberId === ws.businessNumberId
+          return (
+            <button
+              key={ws._id}
+              onClick={() => setActivePhoneNumberId(ws.businessNumberId)}
+              className={cn(
+                "flex-1 flex flex-col items-center justify-center py-2 px-2 rounded-lg transition-all duration-300 relative overflow-hidden group",
+                isActive
+                  ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-1 ring-primary/20"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+              )}
+            >
+              {isActive && (
+                <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none" />
+              )}
+              <span className="text-[12px] font-bold truncate w-full text-center mb-0.5">
+                {ws.name}
               </span>
-              <span className="text-[10px] text-muted-foreground truncate" dir="ltr">
-                {isAllSelected ? "كل المحادثات والعملاء" : displayWorkspace.phone}
+              <span className={cn(
+                "text-[10px] font-semibold mb-0.5",
+                activeByNumber[ws.businessNumberId] ? "text-emerald-500" : "text-amber-500"
+              )}>
+                {activeByNumber[ws.businessNumberId] ? "AI ON" : "AI OFF"}
               </span>
-            </div>
-          </div>
-          <ChevronsUpDown className="h-4 w-4 text-muted-foreground shrink-0" />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent
-        className="w-[240px] p-2 rounded-xl"
-        align="start"
-        side="bottom"
-        sideOffset={8}
-      >
-        <DropdownMenuLabel className="text-xs text-muted-foreground px-2 py-1.5 Arabic-Regular">
-          بيئة العمل النشطة
-        </DropdownMenuLabel>
-        <DropdownMenuItem
-          onClick={() => setActivePhoneNumberId(null)}
-          className={cn(
-            "flex items-center justify-between gap-2 p-3 rounded-lg cursor-pointer focus:bg-primary/10 transition-colors",
-            isAllSelected && "bg-primary/10"
-          )}
-        >
-          <div className="flex items-center gap-3">
-            <div className={cn(
-              "flex h-8 w-8 items-center justify-center rounded-md",
-              isAllSelected ? "bg-primary text-primary-foreground" : "bg-sidebar-accent text-sidebar-foreground"
-            )}>
-              <Layers className="h-4 w-4" />
-            </div>
-            <div className="flex flex-col overflow-hidden">
-              <span className="text-sm font-medium truncate">جميع الأرقام</span>
-              <span className="text-[10px] text-muted-foreground truncate">كل المحادثات والعملاء</span>
-            </div>
-          </div>
-          {isAllSelected && <Check className="h-4 w-4 text-primary shrink-0" />}
-        </DropdownMenuItem>
-        {numbers.map((ws) => (
-          <DropdownMenuItem
-            key={ws._id}
-            onClick={() => setActivePhoneNumberId(ws.businessNumberId)}
-            className="flex items-center justify-between gap-2 p-3 rounded-lg cursor-pointer focus:bg-primary/10 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <div
-                className={cn(
-                  "flex h-8 w-8 items-center justify-center rounded-md bg-sidebar-accent text-sidebar-foreground",
-                  activeWorkspace?.businessNumberId === ws.businessNumberId &&
-                    "bg-primary text-primary-foreground"
-                )}
-              >
-                <Store className="h-4 w-4" />
-              </div>
-              <div className="flex flex-col overflow-hidden">
-                <span className="text-sm font-medium truncate">{ws.name}</span>
-                <span className="text-[10px] text-muted-foreground truncate" dir="ltr">
-                  {ws.phone}
+              <span className={cn(
+                "text-[10px] truncate w-full text-center font-medium",
+                isActive ? "text-primary-foreground/90" : "text-muted-foreground/60"
+              )} dir="ltr">
+                {ws.phone}
+              </span>
+              {(unreadCounts?.byNumber?.[ws.businessNumberId] ?? 0) > 0 && (
+                <span className={cn(
+                  "absolute -top-1 -left-1 h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
+                  isActive ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
+                )}>
+                  {unreadCounts?.byNumber?.[ws.businessNumberId]}
                 </span>
-              </div>
-            </div>
-            {activeWorkspace?.businessNumberId === ws.businessNumberId && (
-              <Check className="h-4 w-4 text-primary shrink-0" />
-            )}
-          </DropdownMenuItem>
-        ))}
-        <DropdownMenuSeparator className="my-2" />
-        <DropdownMenuItem asChild>
-          <Link
-            href="/integrations"
-            className="flex items-center gap-2 p-2 rounded-lg cursor-pointer text-primary hover:text-primary hover:bg-primary/5 transition-colors"
-          >
-            <PlusCircle className="h-4 w-4" />
-            <span className="text-sm">إضافة بيئة عمل جديدة</span>
-          </Link>
-        </DropdownMenuItem>
-        <DropdownMenuItem asChild>
-          <Link
-            href="/integrations"
-            className="flex items-center gap-2 p-2 rounded-lg cursor-pointer text-muted-foreground hover:text-foreground transition-colors"
-          >
-            <Settings className="h-4 w-4" />
-            <span className="text-sm">إدارة بيئات العمل</span>
-          </Link>
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
+              )}
+            </button>
+          )
+        })}
+      </div>
+    </div>
   )
 }

@@ -22,7 +22,8 @@ import {
   Link2,
   ShoppingBag,
   Bot,
-  UserCog
+  UserCog,
+  Store
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -41,6 +42,7 @@ function SidebarContent({ pathname }: { pathname: string }) {
     { href: "/products", icon: Package, label: "المنتجات" },
     { href: "/campaigns", icon: Megaphone, label: "الحملات" },
     { href: "/templates", icon: FileText, label: "القوالب" },
+    { href: "/templates/store", icon: Store, label: "متجر القوالب" },
     { href: "/workflows", icon: Zap, label: "الأتمتة" },
     { href: "/ai-settings", icon: Bot, label: "الذكاء الاصطناعي" },
     { href: "/users", icon: UserCog, label: "إدارة المستخدمين" },

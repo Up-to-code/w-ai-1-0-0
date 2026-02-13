@@ -34,32 +34,31 @@ http.route({
   }),
 });
 
-/** Verify Meta webhook POST signature (X-Hub-Signature-256). Uses HMAC-SHA256 with app secret; digest is hex. */
-function verifyWebhookSignature(rawBody: string, signatureHeader: string | null, appSecret: string): boolean {
-  if (!signatureHeader?.startsWith("sha256=")) return false;
-  const crypto = require("crypto");
-  const expectedHex = crypto.createHmac("sha256", appSecret).update(rawBody, "utf8").digest("hex");
-  const expected = "sha256=" + expectedHex;
-  if (signatureHeader.length !== expected.length) return false;
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signatureHeader, "utf8"), Buffer.from(expected, "utf8"));
-  } catch {
-    return false;
-  }
-}
-
 // POST /whatsapp/webhook: Incoming Events
 http.route({
   path: "/whatsapp/webhook",
   method: "POST",
   handler: httpAction(async (ctx, request) => {
+    console.log(`[HTTP Webhook] Incoming POST request to ${request.url}`);
+    console.log(`[HTTP Webhook] Signature Header: ${request.headers.get("X-Hub-Signature-256")}`);
+
     const appSecret = process.env.WHATSAPP_APP_SECRET;
     const rawBody = await request.text();
     const signatureHeader = request.headers.get("X-Hub-Signature-256");
 
-    if (appSecret) {
-      if (!signatureHeader || !verifyWebhookSignature(rawBody, signatureHeader, appSecret)) {
-        console.error("[HTTP] Webhook signature verification failed");
+    console.log(`[HTTP Webhook] appSecret present: ${!!appSecret}, signatureHeader present: ${!!signatureHeader}`);
+
+    if (appSecret && signatureHeader) {
+      const isValid = await ctx.runAction(internal.nodeUtils.verifySignature, {
+        rawBody,
+        signatureHeader,
+        appSecret,
+      });
+      if (!isValid) {
+        console.error("[HTTP] Webhook signature verification failed", {
+          headerPrefix: signatureHeader.slice(0, 20),
+          bodyLength: rawBody.length,
+        });
         return new Response("Unauthorized", { status: 401 });
       }
     }

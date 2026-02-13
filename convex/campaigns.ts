@@ -1081,27 +1081,23 @@ export const updateMessageStatus = internalMutation({
         status: v.string(),
     },
     handler: async (ctx, args) => {
-        console.log(`[Campaigns] updateMessageStatus called for ${args.metaMessageId} with status ${args.status}`);
         const log = await ctx.db
             .query("campaign_logs")
             .withIndex("by_message_id", (q) => q.eq("metaMessageId", args.metaMessageId))
             .first();
 
         if (!log) {
-            console.log(`[Campaigns] Log not found for metaMessageId: ${args.metaMessageId}`);
+            // Expected for non-campaign messages (e.g. agent/chat); no log noise.
             return false;
         }
 
         // Ignore if status is same
         if (log.status === args.status) {
-             console.log(`[Campaigns] Status already ${args.status}, skipping.`);
-             return true;
+            return true;
         }
 
         const oldStatus = log.status;
         const newStatus = args.status;
-
-        console.log(`[Campaigns] Updating status from ${oldStatus} to ${newStatus}`);
 
         // Valid statuses from Meta: sent, delivered, read, failed
         // Map to our schema types

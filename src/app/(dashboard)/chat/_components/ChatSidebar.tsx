@@ -21,6 +21,7 @@ export function ChatSidebar() {
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
   const chats = useQuery(api.chat.listChats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
+  const unreadCounts = useQuery(api.chat.getUnreadCounts)
   const [searchQuery, setSearchQuery] = useState("")
 
   const filteredChats = useMemo(() => {
@@ -51,6 +52,9 @@ export function ChatSidebar() {
             <MessageSquarePlus className="h-6 w-6" />
           </AvatarFallback>
         </Avatar>
+        <div className="text-xs font-medium text-muted-foreground">
+          غير المقروء: <span className="text-foreground">{unreadCounts?.total ?? 0}</span>
+        </div>
       </div>
 
       {/* Search */}

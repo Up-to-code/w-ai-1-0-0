@@ -1,5 +1,6 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
+import { DEFAULT_TOOLS_ENABLED, normalizeToolsEnabled } from "./agentsUtils";
 
 const DEFAULT_SYSTEM_PROMPT = `You are a sales assistant for a store. Recommend products from the store (Salla/catalog), suggest related or complementary items when relevant, and help the customer choose. Answer concisely and in a helpful, professional tone.
 When the customer asks to speak to a human, has a complaint, or has a complex request (e.g. refund, custom order), output exactly: <TOOL:transfer_to_human> and reply briefly that you are transferring the conversation to a team member. Examples: they say "أريد التحدث مع شخص" or "speak to agent" or "talk to human" or express a complaint or refund request — use the transfer tool.
@@ -9,7 +10,11 @@ const DEFAULT_CONFIG = {
   systemPrompt: DEFAULT_SYSTEM_PROMPT,
   model: "arcee-ai/trinity-mini:free",
   temperature: undefined as number | undefined,
-  isActive: true,
+  isActive: false,
+  agentName: "Default Assistant",
+  toolsEnabled: DEFAULT_TOOLS_ENABLED,
+  recommendProducts: true,
+  fallbackMode: "text_only" as const,
 };
 
 /**
@@ -22,24 +27,42 @@ export const getConfig = query({
   },
   handler: async (ctx, args) => {
     const phoneNumberId = args.phoneNumberId ?? undefined;
-    // If phoneNumberId provided, try to find per-number config first
+    // If phoneNumberId provided, use strict per-number isolation with default OFF fallback.
     if (phoneNumberId) {
       const perNumberConfig = await ctx.db
         .query("ai_configs")
         .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
         .first();
       if (perNumberConfig) {
-        return perNumberConfig;
+        return {
+          ...perNumberConfig,
+          toolsEnabled: normalizeToolsEnabled(perNumberConfig.toolsEnabled),
+          recommendProducts: perNumberConfig.recommendProducts ?? true,
+          fallbackMode: perNumberConfig.fallbackMode ?? "text_only",
+          agentName: perNumberConfig.agentName ?? "Assistant",
+        };
       }
+      return {
+        ...DEFAULT_CONFIG,
+        phoneNumberId,
+        isActive: false,
+      };
     }
     
-    // Fallback to global config (phoneNumberId = undefined)
+    // Global config (phoneNumberId = undefined)
     const globalConfig = await ctx.db
       .query("ai_configs")
       .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", undefined))
       .first();
     
-    return globalConfig || DEFAULT_CONFIG;
+    if (!globalConfig) return DEFAULT_CONFIG;
+    return {
+      ...globalConfig,
+      toolsEnabled: normalizeToolsEnabled(globalConfig.toolsEnabled),
+      recommendProducts: globalConfig.recommendProducts ?? true,
+      fallbackMode: globalConfig.fallbackMode ?? "text_only",
+      agentName: globalConfig.agentName ?? "Default Assistant",
+    };
   },
 });
 
@@ -54,6 +77,10 @@ export const updateConfig = mutation({
     model: v.string(),
     temperature: v.optional(v.number()),
     isActive: v.boolean(),
+    agentName: v.optional(v.string()),
+    toolsEnabled: v.optional(v.array(v.string())),
+    recommendProducts: v.optional(v.boolean()),
+    fallbackMode: v.optional(v.union(v.literal("no_reply"), v.literal("text_only"), v.literal("human_handoff"))),
   },
   handler: async (ctx, args) => {
     const phoneNumberId = args.phoneNumberId ?? undefined;
@@ -70,6 +97,10 @@ export const updateConfig = mutation({
       isActive: args.isActive,
       updatedAt: Date.now(),
       ...(args.temperature !== undefined && { temperature: args.temperature }),
+      agentName: args.agentName?.trim() || undefined,
+      toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
+      recommendProducts: args.recommendProducts ?? true,
+      fallbackMode: args.fallbackMode ?? "text_only",
     };
     
     if (existing) {
@@ -82,6 +113,10 @@ export const updateConfig = mutation({
         isActive: args.isActive,
         updatedAt: Date.now(),
         ...(args.temperature !== undefined && { temperature: args.temperature }),
+        agentName: args.agentName?.trim() || undefined,
+        toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
+        recommendProducts: args.recommendProducts ?? true,
+        fallbackMode: args.fallbackMode ?? "text_only",
       });
     }
   },
@@ -96,15 +131,26 @@ export const getInternalConfig = internalQuery({
   },
   handler: async (ctx, args) => {
     const phoneNumberId = args.phoneNumberId ?? undefined;
-    // Try per-number config first
+    // Strict per-number isolation: no global fallback when number is specified.
     if (phoneNumberId) {
       const perNumberConfig = await ctx.db
         .query("ai_configs")
         .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", phoneNumberId))
         .first();
       if (perNumberConfig) {
-        return perNumberConfig;
+        return {
+          ...perNumberConfig,
+          toolsEnabled: normalizeToolsEnabled(perNumberConfig.toolsEnabled),
+          recommendProducts: perNumberConfig.recommendProducts ?? true,
+          fallbackMode: perNumberConfig.fallbackMode ?? "text_only",
+          agentName: perNumberConfig.agentName ?? "Assistant",
+        };
       }
+      return {
+        ...DEFAULT_CONFIG,
+        phoneNumberId,
+        isActive: false,
+      };
     }
     
     // Fallback to global config
@@ -113,6 +159,13 @@ export const getInternalConfig = internalQuery({
       .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", undefined))
       .first();
     
-    return globalConfig || DEFAULT_CONFIG;
+    if (!globalConfig) return DEFAULT_CONFIG;
+    return {
+      ...globalConfig,
+      toolsEnabled: normalizeToolsEnabled(globalConfig.toolsEnabled),
+      recommendProducts: globalConfig.recommendProducts ?? true,
+      fallbackMode: globalConfig.fallbackMode ?? "text_only",
+      agentName: globalConfig.agentName ?? "Default Assistant",
+    };
   },
 });

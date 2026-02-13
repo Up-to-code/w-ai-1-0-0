@@ -3,7 +3,15 @@ import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 
 export const list = query({
-    handler: async (ctx) => {
+    args: { phoneNumberId: v.optional(v.string()) },
+    handler: async (ctx, args) => {
+        if (args.phoneNumberId) {
+            return await ctx.db
+                .query("workflows")
+                .filter((q: any) => q.eq(q.field("phoneNumberId"), args.phoneNumberId))
+                .order("desc")
+                .collect();
+        }
         return await ctx.db.query("workflows").order("desc").collect();
     }
 });
@@ -15,9 +23,11 @@ export const create = mutation({
         triggerConfig: v.any(),
         action: v.string(),
         actionConfig: v.any(),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         return await ctx.db.insert("workflows", {
+            phoneNumberId: args.phoneNumberId,
             name: args.name,
             trigger: args.trigger,
             triggerConfig: args.triggerConfig,
@@ -48,9 +58,11 @@ export const update = mutation({
         triggerConfig: v.any(),
         action: v.string(),
         actionConfig: v.any(),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
         await ctx.db.patch(args.id, {
+            phoneNumberId: args.phoneNumberId,
             name: args.name,
             trigger: args.trigger,
             triggerConfig: args.triggerConfig,
@@ -84,17 +96,69 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
     if (workflow.action === "send_template") {
         const templateName = workflow.actionConfig?.template;
         if (templateName) {
-            await ctx.scheduler.runAfter(0, api.whatsapp.sendMessage, {
-                to: contactPhone,
-                type: "template",
-                content: {
+            try {
+                const scopedPhoneNumberId = phoneNumberId ?? workflow.phoneNumberId ?? undefined;
+                const template = await ctx.runQuery(internal.templates.getTemplateByName, {
                     name: templateName,
-                    language: { code: "ar" },
-                    components: []
-                },
-                phoneNumberId: phoneNumberId ?? undefined,
-            });
-            console.log(`[Workflows] Scheduled Template: ${templateName}`);
+                    phoneNumberId: scopedPhoneNumberId,
+                });
+                if (!template) {
+                    await ctx.scheduler.runAfter(0, internal.notifications.create, {
+                        type: "warning",
+                        title: "Workflow Template Missing",
+                        message: `Template "${templateName}" was not found for the selected number.`,
+                        link: "/templates",
+                    });
+                    return;
+                }
+
+                if (template.status !== "APPROVED") {
+                    await ctx.scheduler.runAfter(0, internal.notifications.create, {
+                        type: "warning",
+                        title: "Workflow Template Not Approved",
+                        message: `Template "${template.name}" status is ${template.status}.`,
+                        link: "/templates",
+                    });
+                    return;
+                }
+
+                const components: any[] = [];
+                for (const comp of template.components || []) {
+                    if ((comp.type === "BODY" || comp.type === "body") && comp.example?.body_text) {
+                        const texts = (comp.example.body_text as (string | string[])[]).flat();
+                        components.push({
+                            type: "body",
+                            parameters: texts.map((t: string) => ({ type: "text", text: t || "1" })),
+                        });
+                    }
+                    if ((comp.type === "HEADER" || comp.type === "header") && comp.format === "TEXT" && comp.example?.header_text) {
+                        components.push({
+                            type: "header",
+                            parameters: comp.example.header_text.map((t: string) => ({ type: "text", text: t || "1" })),
+                        });
+                    }
+                }
+
+                await ctx.scheduler.runAfter(0, api.whatsapp.sendMessage, {
+                    to: contactPhone,
+                    type: "template",
+                    content: {
+                        name: template.name,
+                        language: { code: template.language || "ar" },
+                        components,
+                    },
+                    phoneNumberId: scopedPhoneNumberId,
+                });
+                console.log(`[Workflows] Scheduled Template: ${templateName}`);
+            } catch (error: any) {
+                console.error(`[Workflows] send_template failed for "${templateName}"`, error);
+                await ctx.scheduler.runAfter(0, internal.notifications.create, {
+                    type: "error",
+                    title: "Workflow Send Failed",
+                    message: error?.message || `Failed to schedule template "${templateName}"`,
+                    link: "/workflows",
+                });
+            }
         }
     } else if (workflow.action === "add_tag") {
         const tag = workflow.actionConfig?.tag;
@@ -184,16 +248,15 @@ export const checkAndExecuteWorkflows = internalMutation({
     },
     handler: async (ctx, args) => {
         // 1. Fetch Active Workflows
-        const workflows = await ctx.db
-            .query("workflows")
-            .filter((q: any) => q.eq(q.field("enabled"), true))
-            .collect();
+        const workflows = await ctx.db.query("workflows").collect();
 
         if (workflows.length === 0) return;
 
         console.log(`[Workflows] Checking ${workflows.length} rules for message: ${args.messageId}`);
 
         for (const workflow of workflows) {
+            if (!workflow.enabled) continue;
+            if (workflow.phoneNumberId && workflow.phoneNumberId !== args.phoneNumberId) continue;
             let matched = false;
 
             // 2. Check Triggers
@@ -219,16 +282,16 @@ export const checkContactWorkflows = internalMutation({
         contactId: v.id("contacts"),
         contactPhone: v.string(),
         isNew: v.boolean(),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
-        const workflows = await ctx.db
-            .query("workflows")
-            .filter((q: any) => q.eq(q.field("enabled"), true))
-            .collect();
+        const workflows = await ctx.db.query("workflows").collect();
 
         for (const workflow of workflows) {
+            if (!workflow.enabled) continue;
+            if (workflow.phoneNumberId && workflow.phoneNumberId !== args.phoneNumberId) continue;
             if (workflow.trigger === "contact_created" && args.isNew) {
-                await executeWorkflowAction(ctx, workflow, args.contactPhone, args.contactId);
+                await executeWorkflowAction(ctx, workflow, args.contactPhone, args.contactId, args.phoneNumberId);
             }
         }
     }
@@ -238,21 +301,21 @@ export const checkTagWorkflows = internalMutation({
         contactId: v.id("contacts"),
         contactPhone: v.string(),
         addedTag: v.string(),
+        phoneNumberId: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
-        const workflows = await ctx.db
-            .query("workflows")
-            .filter((q: any) => q.eq(q.field("enabled"), true))
-            .collect();
+        const workflows = await ctx.db.query("workflows").collect();
 
         for (const workflow of workflows) {
+            if (!workflow.enabled) continue;
+            if (workflow.phoneNumberId && workflow.phoneNumberId !== args.phoneNumberId) continue;
             if (workflow.trigger === "tag_added") {
                 // Check if this is the specific tag we are looking for (optional, if UI supports specific tag trigger)
                 // Assuming triggerConfig.tag might exist, or it triggers on ANY tag if empty
                 const targetTag = workflow.triggerConfig?.tag;
 
                 if (!targetTag || targetTag === args.addedTag) {
-                    await executeWorkflowAction(ctx, workflow, args.contactPhone, args.contactId);
+                    await executeWorkflowAction(ctx, workflow, args.contactPhone, args.contactId, args.phoneNumberId);
                 }
             }
         }
