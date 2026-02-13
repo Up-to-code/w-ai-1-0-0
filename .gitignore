@@ -17,9 +17,6 @@
 /.next/
 /out/
 
-# mobile app (web-only in repo)
-/mobile
-
 # production
 /build
 
