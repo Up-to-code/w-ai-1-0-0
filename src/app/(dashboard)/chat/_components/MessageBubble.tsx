@@ -85,19 +85,19 @@ export function MessageBubble({ message }: MessageBubbleProps) {
             : "ms-auto bg-white dark:bg-[#202c33] text-[#111b21] dark:text-[#e9edef]"
         )}
       >
-        {/* WhatsApp-style bubble tail */}
+        {/* WhatsApp-style bubble tail - RTL-aware (start/end) */}
         <div
           className={cn(
             "absolute top-0 w-3 h-3 overflow-hidden",
-            isOutbound ? "-left-2" : "-right-2"
+            isOutbound ? "-start-2" : "-end-2"
           )}
         >
           <div
             className={cn(
               "absolute w-3 h-3 rotate-45 transform",
               isOutbound
-                ? "bg-[#d9fdd3] dark:bg-[#005c4b] -right-1.5 top-0"
-                : "bg-white dark:bg-[#202c33] -left-1.5 top-0"
+                ? "bg-[#d9fdd3] dark:bg-[#005c4b] -end-1.5 top-0"
+                : "bg-white dark:bg-[#202c33] -start-1.5 top-0"
             )}
           />
         </div>
@@ -167,7 +167,7 @@ export function MessageBubble({ message }: MessageBubbleProps) {
           )}
 
           {caption && (
-            <p className="whitespace-pre-wrap break-words text-[14.5px] leading-[20px] px-1.5 py-1">
+            <p className="whitespace-pre-wrap break-words text-[14.5px] leading-[20px] px-1.5 py-1 text-start">
               {renderTextWithLinks(caption)}
             </p>
           )}

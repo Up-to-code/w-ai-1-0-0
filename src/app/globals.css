@@ -172,4 +172,15 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* RTL: Ensure Arabic text alignment (start = right in RTL) */
+  html[dir="rtl"] {
+    text-align: right;
+  }
+  input, textarea, [contenteditable="true"] {
+    text-align: inherit;
+  }
+  /* Fix number/phone display to stay LTR within RTL layout */
+  [dir="ltr"] {
+    text-align: left;
+  }
 }

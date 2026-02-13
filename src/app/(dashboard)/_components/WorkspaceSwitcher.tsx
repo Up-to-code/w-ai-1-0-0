@@ -27,11 +27,11 @@ export function WorkspaceSwitcher() {
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="flex flex-col gap-2 w-full">
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1">
         الرقم النشط
       </p>
-      <div className="flex bg-muted/30 p-1 rounded-xl border border-border/10 gap-1">
+      <div className="flex overflow-x-auto overflow-y-hidden gap-2 p-1.5 bg-muted/30 rounded-xl border border-border/10 min-h-[76px] [scrollbar-width:thin]">
         {numbers.map((ws) => {
           const isActive = activePhoneNumberId === ws.businessNumberId
           return (
@@ -39,7 +39,7 @@ export function WorkspaceSwitcher() {
               key={ws._id}
               onClick={() => setActivePhoneNumberId(ws.businessNumberId)}
               className={cn(
-                "flex-1 flex flex-col items-center justify-center py-2 px-2 rounded-lg transition-all duration-300 relative overflow-hidden group",
+                "flex flex-col items-center justify-center py-2.5 px-4 rounded-lg transition-all duration-300 relative overflow-hidden group min-w-[100px] sm:min-w-0 sm:flex-1 shrink-0 touch-manipulation",
                 isActive
                   ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-1 ring-primary/20"
                   : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
@@ -65,7 +65,7 @@ export function WorkspaceSwitcher() {
               </span>
               {(unreadCounts?.byNumber?.[ws.businessNumberId] ?? 0) > 0 && (
                 <span className={cn(
-                  "absolute -top-1 -left-1 h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
+                  "absolute -top-1 -start-1 h-5 min-w-[20px] px-1.5 rounded-full text-[10px] font-bold flex items-center justify-center",
                   isActive ? "bg-primary-foreground text-primary" : "bg-primary text-primary-foreground"
                 )}>
                   {unreadCounts?.byNumber?.[ws.businessNumberId]}

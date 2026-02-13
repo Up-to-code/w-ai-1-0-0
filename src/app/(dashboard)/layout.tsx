@@ -156,7 +156,7 @@ function DashboardHeader({ pathname }: { pathname: string }) {
               <Menu className="h-5 w-5" />
             </Button>
           </SheetTrigger>
-          <SheetContent side="right" className="p-0 border-l border-sidebar-border w-72">
+          <SheetContent side="right" className="p-0 border-l border-sidebar-border w-[min(320px,90vw)] sm:w-80">
             <SidebarContent pathname={pathname} />
           </SheetContent>
         </Sheet>
@@ -165,8 +165,8 @@ function DashboardHeader({ pathname }: { pathname: string }) {
           <div className="flex-1 min-w-0">{content}</div>
         ) : (
           <div className="relative max-w-md w-full hidden sm:block">
-            <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-            <Input placeholder="البحث..." className="pr-10 bg-background border-border" />
+            <Search className="absolute end-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+            <Input placeholder="البحث..." className="pe-10 ps-4 bg-background border-border text-start" />
           </div>
         )}
       </div>
@@ -174,7 +174,7 @@ function DashboardHeader({ pathname }: { pathname: string }) {
       <div className="flex items-center gap-2">
         <Button variant="ghost" size="icon" className="relative">
           <Bell className="h-5 w-5 text-muted-foreground" />
-          <span className="absolute top-1 right-1 w-2 h-2 bg-destructive rounded-full" />
+          <span className="absolute top-1 end-1 w-2 h-2 bg-destructive rounded-full" />
         </Button>
       </div>
     </header>
