@@ -20,40 +20,57 @@ async function withAppSecretProof(ctx: any, url: string, accessToken: string): P
   return parsed.toString();
 }
 
+function normalizeToken(token: string | null | undefined): string | null {
+  const t = token?.trim();
+  return t && t.length > 0 ? t : null;
+}
+
 async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): Promise<WhatsAppConfig> {
   if (phoneNumberId) {
     const config = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, { businessNumberId: phoneNumberId });
     if (config) {
-      const accessToken = config.accessToken ?? process.env.WHATSAPP_ACCESS_TOKEN;
-      const phoneId = config.businessNumberId;
-      if (accessToken && phoneId) return { accessToken, phoneId, wabaId: config.businessAccountId };
+      const accessToken = normalizeToken(config.accessToken);
+      const phoneId = config.businessNumberId?.trim();
+      if (!accessToken) {
+        throw new Error(`Number "${config.name ?? phoneNumberId}" has no access token. Set it in Integrations (ربط المتجر).`);
+      }
+      if (!phoneId) {
+        throw new Error(`Number ${phoneNumberId} has invalid configuration. Check Integrations (ربط المتجر).`);
+      }
+      return { accessToken, phoneId, wabaId: config.businessAccountId };
+    } else {
+      throw new Error(`Number ${phoneNumberId} is not configured. Add it in Integrations (ربط المتجر) and set its access token.`);
     }
   }
-  // Default: first number with token from DB, then env
+  // Default: first number with token from DB, then env, then webhook settings
   const first = await ctx.runQuery(internal.whatsappNumbers.getFirstWithToken, {});
-  if (first?.accessToken?.trim()) {
+  const firstToken = normalizeToken(first?.accessToken);
+  if (firstToken && first?.businessNumberId?.trim()) {
+    console.log(`[WhatsApp Config] Using first number with token: ${first.name ?? first.businessNumberId}`);
     return {
-      accessToken: first.accessToken,
+      accessToken: firstToken,
       phoneId: first.businessNumberId,
       wabaId: first.businessAccountId,
     };
   }
-  const accessToken = process.env.WHATSAPP_ACCESS_TOKEN;
-  const phoneId = process.env.WHATSAPP_PHONE_ID;
-  const wabaId = process.env.WHATSAPP_WABA_ID;
-  if (!accessToken || !phoneId) {
-    const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
-    const fallbackToken = webhook?.accessToken ?? undefined;
-    const fallbackPhoneId = webhook?.defaultPhoneNumberId ?? process.env.WHATSAPP_PHONE_ID;
-    const fallbackWabaId = process.env.WHATSAPP_WABA_ID;
-    if (fallbackToken && fallbackPhoneId) {
-      return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId };
-    }
-    throw new Error(
-      "Missing WhatsApp config. Set an access token on a number in Integrations (ربط المتجر), or set webhook Access Token and WHATSAPP_PHONE_ID, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
-    );
+  const accessToken = normalizeToken(process.env.WHATSAPP_ACCESS_TOKEN);
+  const phoneId = (process.env.WHATSAPP_PHONE_ID ?? "").trim();
+  const wabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
+  if (accessToken && phoneId) {
+    console.log(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
+    return { accessToken, phoneId, wabaId };
   }
-  return { accessToken, phoneId, wabaId };
+  const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
+  const fallbackToken = normalizeToken(webhook?.accessToken ?? undefined);
+  const fallbackPhoneId = webhook?.defaultPhoneNumberId?.trim() || (process.env.WHATSAPP_PHONE_ID ?? "").trim();
+  const fallbackWabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
+  if (fallbackToken && fallbackPhoneId) {
+    console.log(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
+    return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId };
+  }
+  throw new Error(
+    "Missing WhatsApp config. Add an access token: go to Integrations (ربط المتجر), add a number and set its Access Token, or set Access Token and Default Phone Number in Webhook settings, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
+  );
 }
 
 async function resolveInboundPhoneNumberId(ctx: any, candidate?: string): Promise<{ phoneNumberId?: string; usedFallback: boolean }> {
@@ -112,9 +129,22 @@ export const sendMessage = action({
       const data = await response.json();
 
       if (!response.ok) {
-        const errorCode = data.error?.code || response.status;
-        const errorMessage = data.error?.message || "Unknown error";
+        const errorCode = data.error?.code ?? response.status;
+        const errorMessage = data.error?.message ?? "Unknown error";
+
+        if (response.status === 401 || response.status === 403) {
+          const authMsg =
+            "Access token is invalid or expired. Update the token in Integrations (ربط المتجر) or Webhook settings.";
+          console.error("[WhatsApp] Auth error:", response.status, errorMessage);
+          throw new Error(authMsg);
+        }
+
         const errorCategory = categorizeWhatsAppError(errorCode, errorMessage);
+        const suggestedAction = errorCategory.suggestedAction ?? "Review error message and retry";
+        const userMessage =
+          suggestedAction && !errorMessage.includes(suggestedAction)
+            ? `${errorMessage} — ${suggestedAction}`
+            : errorMessage;
 
         console.error(
           `[WhatsApp] API Error (${errorCategory.category}):`,
@@ -130,9 +160,8 @@ export const sendMessage = action({
         errorReport.code = errorCode;
         console.error("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
 
-        // Create and throw a typed error
-        // Ensure properties are enumerable so they survive serialization across action boundaries
-        const error = new Error(errorMessage) as Error & {
+        // Create and throw a typed error with user-friendly message (includes suggested action)
+        const error = new Error(userMessage) as Error & {
           code?: number;
           category?: string;
           retryable?: boolean;
@@ -839,6 +868,19 @@ export const processWebhookAction = internalAction({
           typeof value?.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : undefined;
         const metadataDisplayPhoneNumber =
           typeof value?.metadata?.display_phone_number === "string" ? value.metadata.display_phone_number : undefined;
+
+        // Validate: when using metadata.phone_number_id (not fallback), number must be in whatsapp_numbers
+        if (resolvedPhoneNumberId && !resolvedNumber.usedFallback) {
+          const numberInDb = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+            businessNumberId: resolvedPhoneNumberId,
+          });
+          if (!numberInDb) {
+            console.warn(
+              `[Webhook Action] Number ${resolvedPhoneNumberId} (${metadataDisplayPhoneNumber ?? "unknown"}) is not configured. Add it in Integrations and set access token. Sending replies will fail until configured.`
+            );
+          }
+        }
+
         console.log(
           `[Webhook Action] field="${field}" businessId="${businessPhoneId}" fallback=${resolvedNumber.usedFallback} hasMessages=${hasMessages} messagesCount=${messages.length} hasStatuses=${hasStatuses} statusesCount=${statuses.length} metadataPhoneNumberId=${metadataPhoneNumberId ?? "none"}`
         );
@@ -966,9 +1008,12 @@ export const processWebhookAction = internalAction({
           console.log(
             `[Webhook Action] Status-only or non-message payload for field=${field ?? "unknown"} messagesCount=${messages.length} statusesCount=${statuses.length}`
           );
+          const statusNote = hasStatuses
+            ? "Status-only payload; processing status updates"
+            : "Change has no value.messages (metadata-only or empty)";
           await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
             body: change,
-            processingStatus: "ignored_no_messages",
+            processingStatus: hasStatuses ? "received" : "ignored_no_messages",
             eventType: field ?? "unknown",
             resolvedPhoneNumberId: resolvedPhoneNumberId,
             fallbackUsed: resolvedNumber.usedFallback,
@@ -978,7 +1023,7 @@ export const processWebhookAction = internalAction({
             statusesCount: statuses.length,
             metadataPhoneNumberId,
             metadataDisplayPhoneNumber,
-            note: "Change has no value.messages (status-only or metadata-only event)",
+            note: statusNote,
           });
         }
 
@@ -997,7 +1042,7 @@ export const processWebhookAction = internalAction({
             if (!msgSuccess && !campaignSuccess) {
               const attempt = args.attempt || 1;
               if (attempt < 3) {
-                console.log(`[Webhook] Message ${status.id} not found. scheduling retry #${attempt + 1}`);
+                console.log(`[Webhook] Message ${status.id} not found. Scheduling retry #${attempt + 1}`);
                 await ctx.scheduler.runAfter(2000, internal.whatsapp.processWebhookAction, {
                   body: args.body,
                   attempt: attempt + 1,
@@ -1005,6 +1050,8 @@ export const processWebhookAction = internalAction({
                 return;
               }
               console.warn(`[Webhook] Message ${status.id} not found after 3 attempts`);
+            } else {
+              console.log(`[Webhook Action] Status updated for message ${status.id} -> ${status.status}`);
             }
           }
         }
@@ -1021,4 +1068,55 @@ export const processWebhookAction = internalAction({
         }
     }
   }
+});
+
+/** Test access token in DB: validates token by calling Meta Graph API. Use from dashboard or Integrations page. */
+export const testAccessToken = action({
+  args: {
+    phoneNumberId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    try {
+      const config = await getWhatsAppConfig(ctx, args.phoneNumberId ?? undefined);
+      const url = await withAppSecretProof(
+        ctx,
+        `${WHATSAPP_API_URL}/${config.phoneId}?fields=id,display_phone_number`,
+        config.accessToken
+      );
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${config.accessToken}` },
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        const code = data.error?.code ?? response.status;
+        const msg = data.error?.message ?? data.error?.error_user_msg ?? response.statusText ?? "Unknown error";
+        if (response.status === 401 || response.status === 403) {
+          return {
+            success: false,
+            error: "Access token is invalid or expired. Update the token in Integrations or Webhook settings.",
+            details: msg,
+          };
+        }
+        return {
+          success: false,
+          error: `API error (${code}): ${msg}`,
+          details: data,
+        };
+      }
+
+      return {
+        success: true,
+        phoneId: config.phoneId,
+        displayPhoneNumber: data.display_phone_number ?? null,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return {
+        success: false,
+        error: message,
+        details: null,
+      };
+    }
+  },
 });

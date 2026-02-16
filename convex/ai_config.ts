@@ -124,6 +124,7 @@ export const updateConfig = mutation({
 
 /**
  * Internal query for agent: get config by phoneNumberId with fallback to global.
+ * When a number has no per-number config, falls back to global config so new numbers inherit AI settings.
  */
 export const getInternalConfig = internalQuery({
   args: {
@@ -131,7 +132,6 @@ export const getInternalConfig = internalQuery({
   },
   handler: async (ctx, args) => {
     const phoneNumberId = args.phoneNumberId ?? undefined;
-    // Strict per-number isolation: no global fallback when number is specified.
     if (phoneNumberId) {
       const perNumberConfig = await ctx.db
         .query("ai_configs")
@@ -146,19 +146,15 @@ export const getInternalConfig = internalQuery({
           agentName: perNumberConfig.agentName ?? "Assistant",
         };
       }
-      return {
-        ...DEFAULT_CONFIG,
-        phoneNumberId,
-        isActive: false,
-      };
+      // No per-number config: fall back to global so new numbers inherit AI settings
     }
-    
-    // Fallback to global config
+
+    // Global config (used when no phoneNumberId or no per-number config)
     const globalConfig = await ctx.db
       .query("ai_configs")
       .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", undefined))
       .first();
-    
+
     if (!globalConfig) return DEFAULT_CONFIG;
     return {
       ...globalConfig,
@@ -166,6 +162,7 @@ export const getInternalConfig = internalQuery({
       recommendProducts: globalConfig.recommendProducts ?? true,
       fallbackMode: globalConfig.fallbackMode ?? "text_only",
       agentName: globalConfig.agentName ?? "Default Assistant",
+      ...(phoneNumberId && { phoneNumberId }),
     };
   },
 });

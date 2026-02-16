@@ -60,12 +60,15 @@ export const getByBusinessNumberId = internalQuery({
   },
 });
 
-/** First number that has an access token (for default config when no phoneNumberId is provided). */
+/** First number that has an access token (for default config when no phoneNumberId is provided). Deterministic: sorted by createdAt. */
 export const getFirstWithToken = internalQuery({
   args: {},
   handler: async (ctx) => {
     const all = await ctx.db.query("whatsapp_numbers").collect();
-    return all.find((n) => n.accessToken?.trim()) ?? null;
+    const sorted = [...all].sort(
+      (a, b) => (a.createdAt ?? 0) - (b.createdAt ?? 0)
+    );
+    return sorted.find((n) => n.accessToken?.trim()) ?? null;
   },
 });
 
@@ -81,7 +84,10 @@ export const update = mutation({
     const filtered: Record<string, unknown> = {};
     if (updates.name !== undefined) filtered.name = updates.name;
     if (updates.phone !== undefined) filtered.phone = updates.phone;
-    if (updates.accessToken !== undefined) filtered.accessToken = updates.accessToken;
+    if (updates.accessToken !== undefined) {
+      const t = updates.accessToken?.trim();
+      filtered.accessToken = t && t.length > 0 ? t : undefined;
+    }
     if (Object.keys(filtered).length === 0) return id;
     await ctx.db.patch(id, filtered);
     return id;

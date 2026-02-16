@@ -29,7 +29,8 @@ function RegisterForm() {
     setError("")
 
     try {
-      if (!email.trim() || !password.trim()) {
+      const normalizedEmail = email.trim().toLowerCase()
+      if (!normalizedEmail || !password.trim()) {
         throw new Error("يرجى ملء جميع الحقول المطلوبة")
       }
       if (password.length < 6) {
@@ -40,13 +41,14 @@ function RegisterForm() {
       }
 
       const userId = await registerMutation({
-        email: email.trim(),
+        email: normalizedEmail,
         password,
         name: name.trim() || undefined,
       })
       if (userId) {
-        login(userId, userId)
-        router.push("/")
+        const id = String(userId)
+        login(id, id)
+        setTimeout(() => router.push("/"), 0)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "فشل إنشاء الحساب")

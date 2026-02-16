@@ -23,7 +23,8 @@ import {
   MoreVertical,
   Trash2,
   Calendar as CalendarIcon,
-  Play
+  Play,
+  Smartphone
 } from "lucide-react"
 import Link from "next/link"
 import { useMemo, useState } from "react"
@@ -39,7 +40,7 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function CampaignsPage() {
-  const { activePhoneNumberId } = useWorkspace()
+  const { activePhoneNumberId, numbers } = useWorkspace()
   
   // "__all__" or null = show all. Convex expects undefined, not null.
   const effectivePhoneNumberId =
@@ -101,10 +102,12 @@ export default function CampaignsPage() {
   const handleQuickCampaign = async () => {
     const approved = (templates || []).find(t => t.status === "APPROVED") as { _id: Id<"templates">; name: string } | undefined
     if (!approved) return
+    const phoneNumberId = effectivePhoneNumberId ?? activePhoneNumberId ?? numbers[0]?.businessNumberId ?? undefined
     await createCampaign({
       name: `حملة سريعة ${format(new Date(), "d MMM", { locale: ar })}`,
       templateId: approved._id,
       templateName: approved.name,
+      phoneNumberId,
       scheduledAt: Date.now()
     })
   }
@@ -251,7 +254,7 @@ export default function CampaignsPage() {
                                   {campaign.status}
                                 </Badge>
                               </div>
-                              <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
                                 <span className="flex items-center gap-1.5">
                                   <CalendarIcon className="h-3.5 w-3.5" />
                                   {format(campaign.createdAt, "d MMM yyyy", { locale: ar })}
@@ -260,6 +263,12 @@ export default function CampaignsPage() {
                                   <Users className="h-3.5 w-3.5" />
                                   {campaign.stats.total} مستلم
                                 </span>
+                                {numbers.length > 1 && (
+                                  <span className="flex items-center gap-1.5" dir="ltr">
+                                    <Smartphone className="h-3.5 w-3.5" />
+                                    من: {numbers.find((n) => n.businessNumberId === campaign.phoneNumberId)?.name ?? campaign.phoneNumberId ?? "افتراضي"}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>

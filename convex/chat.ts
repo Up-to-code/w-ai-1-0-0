@@ -827,7 +827,10 @@ export const buildAndSendCarouselTemplate = internalAction({
   },
 });
 
-// Internal Mutation called by Webhook
+/**
+ * @deprecated Webhook now uses messages.saveMessage instead. This uses contactId-based chat lookup
+ * and does not support phoneNumberId. Kept for reference; safe to remove if no external callers exist.
+ */
 export const saveIncomingMessage = internalMutation({
   args: {
     contactId: v.string(),
@@ -947,11 +950,15 @@ export const saveIncomingMessage = internalMutation({
   },
 });
 
+/**
+ * @deprecated Only used by saveIncomingMessage (deprecated). Webhook uses whatsapp.hydrateIncomingMedia
+ * which passes phoneNumberId. This calls getMediaUrl without phoneNumberId.
+ */
 export const hydrateMedia = internalAction({
   args: { messageId: v.id("messages"), mediaId: v.string() },
   handler: async (ctx, args) => {
     try {
-      // 1. Get Download URL from Meta
+      // 1. Get Download URL from Meta (legacy: no phoneNumberId)
       const url = await ctx.runAction(api.whatsapp.getMediaUrl, { mediaId: args.mediaId });
 
       // 2. Download File

@@ -18,7 +18,7 @@ function isPublicRoute(pathname: string): boolean {
 }
 
 export function AuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, loading, userId, setRole } = useAuth()
+  const { isAuthenticated, loading, userId, setRole, logout } = useAuth()
   const pathname = usePathname()
   const router = useRouter()
 
@@ -32,6 +32,15 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       setRole(user.role as "admin" | "agent" | "user")
     }
   }, [user?.role, setRole])
+
+  // Stale or invalid userId (user deleted or corrupt storage): clear auth and send to login
+  useEffect(() => {
+    if (!isAuthenticated || !userId || user === undefined) return
+    if (user === null) {
+      logout()
+      router.replace("/login")
+    }
+  }, [isAuthenticated, userId, user, logout, router])
 
   useEffect(() => {
     if (loading) return
@@ -70,8 +79,16 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         </div>
       )
     }
+    // User not found (null) - handled above; will redirect after logout
+    if (user === null) {
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-background">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      )
+    }
     // User loaded: only admins can access the web app
-    if (user && user.role !== "admin") {
+    if (user.role !== "admin") {
       return <AccessDenied />
     }
   }

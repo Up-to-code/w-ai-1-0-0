@@ -25,6 +25,21 @@ export const create = mutation({
         })),
     },
     handler: async (ctx, args) => {
+        // Validate template exists for the selected phone number when phoneNumberId is provided
+        if (args.phoneNumberId) {
+            const template = await ctx.db.get(args.templateId);
+            if (!template) {
+                throw new Error("Template not found. Please select a valid template.");
+            }
+            const templateScopedToNumber = template.phoneNumberId !== undefined && template.phoneNumberId !== null && template.phoneNumberId !== "";
+            if (templateScopedToNumber && template.phoneNumberId !== args.phoneNumberId) {
+                throw new Error(
+                    `Template "${args.templateName}" is not available for the selected number. ` +
+                    "Please select a template synced for this number, or change the sending number."
+                );
+            }
+        }
+
         const id = await ctx.db.insert("campaigns", {
             name: args.name,
             templateId: args.templateId,

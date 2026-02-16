@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
+import type { Id } from "../../../../convex/_generated/dataModel"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -25,7 +26,9 @@ import {
     XCircle,
     MessageSquare,
     Webhook,
-    Lock
+    Lock,
+    Key,
+    Loader2
 } from "lucide-react"
 
 export default function IntegrationsPage() {
@@ -40,6 +43,8 @@ export default function IntegrationsPage() {
     const webhookSettings = useQuery(api.webhookSettings.get)
     const setWebhookSettings = useMutation(api.webhookSettings.set)
     const runHealthCheck = useAction(api.whatsappNumbers.checkHealth)
+    const testAccessToken = useAction(api.whatsapp.testAccessToken)
+    const updateWhatsappNumber = useMutation(api.whatsappNumbers.update)
     const numbers = useQuery(api.whatsappNumbers.list) ?? []
     const agentConfig = useQuery(
         api.agents.getByPhoneNumberId,
@@ -57,6 +62,8 @@ export default function IntegrationsPage() {
     const [defaultPhoneNumberId, setDefaultPhoneNumberId] = useState("")
     const [webhookSaving, setWebhookSaving] = useState(false)
     const [webhookSaved, setWebhookSaved] = useState(false)
+    const [tokenTestLoading, setTokenTestLoading] = useState(false)
+    const [tokenTestResult, setTokenTestResult] = useState<{ success: boolean; phoneId?: string; displayPhoneNumber?: string | null; error?: string; details?: unknown } | null>(null)
     const [health, setHealth] = useState<Record<string, { appSubscribed: boolean; profileReadable: boolean; mediaEndpointReadable: boolean; issues: string[] }>>({})
     const [healthLoading, setHealthLoading] = useState(false)
     const [agentSaving, setAgentSaving] = useState(false)
@@ -74,6 +81,11 @@ export default function IntegrationsPage() {
         "transfer_to_human",
     ])
     const [agentOpenRouterKey, setAgentOpenRouterKey] = useState("")
+    const [editingTokenFor, setEditingTokenFor] = useState<Id<"whatsapp_numbers"> | null>(null)
+    const [numberTokenValue, setNumberTokenValue] = useState("")
+    const [numberTokenSaving, setNumberTokenSaving] = useState(false)
+    const [tokenTestLoadingFor, setTokenTestLoadingFor] = useState<string | null>(null)
+    const [tokenTestByNumber, setTokenTestByNumber] = useState<Record<string, { success: boolean; phoneId?: string; displayPhoneNumber?: string | null; error?: string; details?: unknown }>>({})
 
     useEffect(() => {
         if (webhookSettings !== undefined) {
@@ -167,6 +179,7 @@ export default function IntegrationsPage() {
         e.preventDefault()
         setWebhookSaving(true)
         setWebhookSaved(false)
+        setTokenTestResult(null)
         try {
             await setWebhookSettings({
                 verifyToken: webhookVerifyToken.trim() || undefined,
@@ -176,8 +189,67 @@ export default function IntegrationsPage() {
             })
             setWebhookSaved(true)
             setTimeout(() => setWebhookSaved(false), 3000)
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setTokenTestResult({ success: false, error: msg })
         } finally {
             setWebhookSaving(false)
+        }
+    }
+
+    const handleTestAccessToken = async () => {
+        setTokenTestLoading(true)
+        setTokenTestResult(null)
+        try {
+            const result = await testAccessToken({ phoneNumberId: defaultPhoneNumberId || undefined })
+            setTokenTestResult(
+                result.success
+                    ? { success: true, phoneId: result.phoneId, displayPhoneNumber: result.displayPhoneNumber ?? null }
+                    : { success: false, error: (result as { error?: string }).error ?? "Unknown", details: (result as { details?: unknown }).details }
+            )
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setTokenTestResult({ success: false, error: msg })
+        } finally {
+            setTokenTestLoading(false)
+        }
+    }
+
+    const handleSaveNumberToken = async (id: Id<"whatsapp_numbers">) => {
+        setNumberTokenSaving(true)
+        try {
+            await updateWhatsappNumber({ id, accessToken: numberTokenValue.trim() || undefined })
+            setEditingTokenFor(null)
+            setNumberTokenValue("")
+            setTokenTestByNumber((prev) => {
+                const next = { ...prev }
+                const num = numbers.find((n) => n._id === id)
+                if (num) delete next[num.businessNumberId]
+                return next
+            })
+        } finally {
+            setNumberTokenSaving(false)
+        }
+    }
+
+    const handleTestNumberToken = async (businessNumberId: string) => {
+        setTokenTestLoadingFor(businessNumberId)
+        try {
+            const result = await testAccessToken({ phoneNumberId: businessNumberId })
+            setTokenTestByNumber((prev) => ({
+                ...prev,
+                [businessNumberId]: result.success
+                    ? { success: true, phoneId: result.phoneId, displayPhoneNumber: result.displayPhoneNumber ?? null }
+                    : { success: false, error: (result as { error?: string }).error ?? "Unknown error", details: (result as { details?: unknown }).details },
+            }))
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setTokenTestByNumber((prev) => ({
+                ...prev,
+                [businessNumberId]: { success: false, error: msg },
+            }))
+        } finally {
+            setTokenTestLoadingFor(null)
         }
     }
 
@@ -332,33 +404,105 @@ export default function IntegrationsPage() {
                             {numbers.map((n) => (
                                 <div
                                     key={n._id}
-                                    className="group flex items-center justify-between p-4 rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/50 transition-colors"
+                                    className="rounded-xl bg-muted/30 border border-border/50 hover:bg-muted/50 transition-colors overflow-hidden"
                                 >
-                                    <div className="flex items-center gap-4">
-                                        <div className="w-10 h-10 rounded-full bg-background border flex items-center justify-center">
-                                            <Check className="h-5 w-5 text-success" />
-                                        </div>
-                                        <div>
-                                            <p className="font-bold text-sm tracking-tight">{n.name}</p>
-                                            <p className="text-xs text-muted-foreground font-mono" dir="ltr">{n.phone}</p>
-                                        </div>
-                                    </div>
-                                    <div className="flex flex-col items-end gap-1">
-                                        <div className="bg-success/10 text-[10px] px-2 py-0.5 rounded-full text-success font-bold uppercase tracking-widest">
-                                            Active
-                                        </div>
-                                        <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${n.accessToken ? "bg-blue-500/10 text-blue-600" : "bg-amber-500/10 text-amber-700"}`}>
-                                            {n.accessToken ? "Token Ready" : "Token Missing"}
-                                        </div>
-                                        {defaultPhoneNumberId === n.businessNumberId && (
-                                            <div className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest bg-primary/10 text-primary">
-                                                Default Fallback
+                                    <div className="group flex flex-wrap items-center justify-between gap-4 p-4">
+                                        <div className="flex items-center gap-4">
+                                            <div className="w-10 h-10 rounded-full bg-background border flex items-center justify-center">
+                                                <Check className="h-5 w-5 text-success" />
                                             </div>
-                                        )}
-                                        <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${(health[n.businessNumberId]?.appSubscribed && health[n.businessNumberId]?.profileReadable) ? "bg-green-500/10 text-green-700" : "bg-red-500/10 text-red-700"}`}>
-                                            {healthLoading ? "Checking..." : (health[n.businessNumberId]?.appSubscribed && health[n.businessNumberId]?.profileReadable) ? "Webhook Ready" : "Needs Fix"}
+                                            <div>
+                                                <p className="font-bold text-sm tracking-tight">{n.name}</p>
+                                                <p className="text-xs text-muted-foreground font-mono" dir="ltr">{n.phone}</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-1">
+                                            <div className="bg-success/10 text-[10px] px-2 py-0.5 rounded-full text-success font-bold uppercase tracking-widest">
+                                                Active
+                                            </div>
+                                            <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${n.accessToken ? "bg-blue-500/10 text-blue-600" : "bg-amber-500/10 text-amber-700"}`}>
+                                                {n.accessToken ? "Token Ready" : "Token Missing"}
+                                            </div>
+                                            {defaultPhoneNumberId === n.businessNumberId && (
+                                                <div className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest bg-primary/10 text-primary">
+                                                    Default Fallback
+                                                </div>
+                                            )}
+                                            <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${(health[n.businessNumberId]?.appSubscribed && health[n.businessNumberId]?.profileReadable) ? "bg-green-500/10 text-green-700" : "bg-red-500/10 text-red-700"}`}>
+                                                {healthLoading ? "Checking..." : (health[n.businessNumberId]?.appSubscribed && health[n.businessNumberId]?.profileReadable) ? "Webhook Ready" : "Needs Fix"}
+                                            </div>
+                                            <div className="flex gap-1">
+                                                <Button
+                                                    type="button"
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                                    onClick={() => {
+                                                        setEditingTokenFor(editingTokenFor === n._id ? null : n._id)
+                                                        setNumberTokenValue("")
+                                                    }}
+                                                >
+                                                    <Key className="h-3.5 w-3.5" />
+                                                    {n.accessToken ? "تحديث الرمز" : "تعيين الرمز"}
+                                                </Button>
+                                                {n.accessToken && (
+                                                    <Button
+                                                        type="button"
+                                                        variant="ghost"
+                                                        size="sm"
+                                                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground"
+                                                        onClick={() => handleTestNumberToken(n.businessNumberId)}
+                                                        disabled={tokenTestLoadingFor === n.businessNumberId}
+                                                    >
+                                                        {tokenTestLoadingFor === n.businessNumberId ? (
+                                                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                        ) : (
+                                                            "اختبار"
+                                                        )}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                            {tokenTestByNumber[n.businessNumberId] && (() => {
+                                                const t = tokenTestByNumber[n.businessNumberId]
+                                                return (
+                                                    <div className={`text-[10px] mt-1 ${t?.success ? "text-green-600" : "text-red-600"}`}>
+                                                        {t?.success ? `✓ ${t.displayPhoneNumber ?? "صالح"}` : `✗ ${t?.error ?? "خطأ"}`}
+                                                    </div>
+                                                )
+                                            })()}
                                         </div>
                                     </div>
+                                    {editingTokenFor === n._id && (
+                                        <div className="border-t border-border/50 p-4 space-y-2">
+                                            <Label className="text-xs">رمز الوصول (Access Token) لهذا الرقم</Label>
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    type="password"
+                                                    placeholder="EAAxxxxx..."
+                                                    className="font-mono text-sm"
+                                                    value={numberTokenValue}
+                                                    onChange={(e) => setNumberTokenValue(e.target.value)}
+                                                    dir="ltr"
+                                                />
+                                                <Button
+                                                    type="button"
+                                                    size="sm"
+                                                    onClick={() => handleSaveNumberToken(n._id)}
+                                                    disabled={numberTokenSaving || !numberTokenValue.trim()}
+                                                >
+                                                    {numberTokenSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : "حفظ"}
+                                                </Button>
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => { setEditingTokenFor(null); setNumberTokenValue("") }}
+                                                >
+                                                    إلغاء
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             ))}
                         </div>
@@ -379,8 +523,8 @@ export default function IntegrationsPage() {
                         <div className="p-4 rounded-xl bg-primary/5 border border-primary/10 flex items-start gap-4 mt-2">
                             <Lock className="h-5 w-5 text-primary shrink-0 mt-0.5" />
                             <p className="text-xs text-muted-foreground leading-relaxed">
-                                تم تهيئة هذه الأرقام مسبقاً من قبل النظام.
-                                لإضافة أرقام جديدة أو تعديل الحالية، يرجى التواصل مع الدعم الفني.
+                                يمكنك تعيين أو تحديث رمز الوصول (Access Token) لكل رقم باستخدام زر «تعيين الرمز» أو «تحديث الرمز» أعلاه.
+                                لإضافة أرقام جديدة أو تعديل الاسم/الرقم، يرجى التواصل مع الدعم الفني.
                             </p>
                         </div>
                     </CardContent>
@@ -483,20 +627,65 @@ export default function IntegrationsPage() {
                             </div>
                         )}
 
-                        <Button
-                            type="submit"
-                            disabled={webhookSaving}
-                            className="h-11 px-8 rounded-xl relative overflow-hidden group shadow-lg shadow-primary/20"
-                        >
-                            <div className="relative z-10 flex items-center gap-2">
-                                {webhookSaving ? (
-                                    <RefreshCw className="h-4 w-4 animate-spin" />
-                                ) : webhookSaved ? (
-                                    <Check className="h-4 w-4" />
+                        <div className="flex flex-wrap items-center gap-3">
+                            <Button
+                                type="submit"
+                                disabled={webhookSaving}
+                                className="h-11 px-8 rounded-xl relative overflow-hidden group shadow-lg shadow-primary/20"
+                            >
+                                <div className="relative z-10 flex items-center gap-2">
+                                    {webhookSaving ? (
+                                        <RefreshCw className="h-4 w-4 animate-spin" />
+                                    ) : webhookSaved ? (
+                                        <Check className="h-4 w-4" />
+                                    ) : null}
+                                    {webhookSaving ? "جاري الحفظ..." : webhookSaved ? "تم الحفظ" : "حفظ التغييرات"}
+                                </div>
+                            </Button>
+                            <Button
+                                type="button"
+                                variant="outline"
+                                disabled={tokenTestLoading || webhookSaving}
+                                className="h-11 px-6 rounded-xl"
+                                onClick={handleTestAccessToken}
+                            >
+                                {tokenTestLoading ? (
+                                    <RefreshCw className="h-4 w-4 animate-spin ml-2" />
                                 ) : null}
-                                {webhookSaving ? "جاري الحفظ..." : webhookSaved ? "تم الحفظ" : "حفظ التغييرات"}
+                                {tokenTestLoading ? "جاري التحقق..." : "اختبار رمز الوصول"}
+                            </Button>
+                        </div>
+
+                        {tokenTestResult && (
+                            <div
+                                className={`p-4 rounded-xl border text-sm ${
+                                    tokenTestResult.success
+                                        ? "bg-success/10 border-success/20 text-success-foreground"
+                                        : "bg-destructive/10 border-destructive/20 text-destructive"
+                                }`}
+                            >
+                                {tokenTestResult.success ? (
+                                    <p className="font-medium flex items-center gap-2">
+                                        <CheckCircle2 className="h-5 w-5 shrink-0" />
+                                        رمز الوصول صالح. الرقم: {tokenTestResult.displayPhoneNumber ?? tokenTestResult.phoneId ?? "—"}
+                                    </p>
+                                ) : (
+                                    <div>
+                                        <p className="font-medium flex items-center gap-2">
+                                            <XCircle className="h-5 w-5 shrink-0" />
+                                            {tokenTestResult.error}
+                                        </p>
+                                        {"details" in tokenTestResult && tokenTestResult.details != null && (
+                                            <p className="mt-2 text-xs opacity-90">
+                                                {typeof tokenTestResult.details === "string"
+                                                    ? tokenTestResult.details
+                                                    : JSON.stringify(tokenTestResult.details)}
+                                            </p>
+                                        )}
+                                    </div>
+                                )}
                             </div>
-                        </Button>
+                        )}
                     </form>
                 </CardContent>
             </Card>

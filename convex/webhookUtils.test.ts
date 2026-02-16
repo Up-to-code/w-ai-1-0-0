@@ -70,4 +70,25 @@ describe("resolvePhoneNumberCandidate", () => {
       usedFallback: true,
     });
   });
+
+  it("treats empty string as missing", () => {
+    expect(resolvePhoneNumberCandidate("", "default-id", "first-id")).toEqual({
+      phoneNumberId: "default-id",
+      usedFallback: true,
+    });
+  });
+
+  it("treats whitespace-only as missing", () => {
+    expect(resolvePhoneNumberCandidate("   ", undefined, "first-id")).toEqual({
+      phoneNumberId: "first-id",
+      usedFallback: true,
+    });
+  });
+
+  it("accepts incoming number with extra whitespace", () => {
+    expect(resolvePhoneNumberCandidate("  inbound-id  ", "default-id", "first-id")).toEqual({
+      phoneNumberId: "  inbound-id  ",
+      usedFallback: false,
+    });
+  });
 });

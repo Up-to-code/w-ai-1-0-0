@@ -27,14 +27,17 @@ function LoginForm() {
     setError("")
 
     try {
-      if (!email.trim() || !password.trim()) {
+      const normalizedEmail = email.trim().toLowerCase()
+      if (!normalizedEmail || !password.trim()) {
         throw new Error("يرجى ملء جميع الحقول")
       }
 
-      const userId = await loginMutation({ email: email.trim(), password })
+      const userId = await loginMutation({ email: normalizedEmail, password })
       if (userId) {
-        login(userId, userId)
-        router.push("/")
+        const id = String(userId)
+        login(id, id)
+        // Defer redirect so auth state and storage are committed before navigation
+        setTimeout(() => router.push("/"), 0)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "فشل تسجيل الدخول")

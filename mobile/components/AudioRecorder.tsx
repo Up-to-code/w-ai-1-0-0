@@ -36,22 +36,32 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
         // Request permissions
         const { granted } = await requestRecordingPermissionsAsync();
         if (!granted) {
-          console.error("[AudioRecorder] Recording permission denied");
+          console.warn("[AudioRecorder] Recording permission denied");
           onCancel();
           return;
         }
 
-        // Set audio mode
+        // Set audio mode for recording (exclusive focus so we can activate the session)
         await setAudioModeAsync({
           allowsRecording: true,
           playsInSilentMode: true,
+          interruptionMode: "doNotMix",
+          shouldPlayInBackground: false,
         });
+
+        // Brief delay to let the audio session activate before preparing the recorder
+        await new Promise((r) => setTimeout(r, 100));
 
         // Prepare and start recording
         await recorder.prepareToRecordAsync();
         recorder.record();
       } catch (error) {
-        console.error("Failed to start recording", error);
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn("[AudioRecorder] Failed to start recording:", message);
+        // Session activation often fails if another app is using audio (e.g. music, call)
+        if (message.includes("Session activation") || message.includes("configure audio session")) {
+          console.warn("[AudioRecorder] Tip: close other audio apps (music, calls) and try again.");
+        }
         onCancel();
       }
     };

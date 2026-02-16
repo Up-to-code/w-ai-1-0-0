@@ -1,13 +1,14 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { ConvexProvider, useQuery } from "convex/react";
-import { convexClient } from "../lib/convex";
+import { convexClient, hasConvexUrl } from "../lib/convex";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
-import { LocaleProvider, useLocale } from "../contexts/LocaleContext";
+import { LocaleProvider } from "../contexts/LocaleContext";
 import { WorkspaceProvider, useWorkspace } from "../contexts/WorkspaceContext";
-import { ActivityIndicator, View, I18nManager } from "react-native";
+import { ActivityIndicator, View, I18nManager, Text, StyleSheet } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
+import * as SplashScreen from "expo-splash-screen";
 import { AccessDenied } from "../components/AccessDenied";
 import { AuthErrorBoundary } from "../components/AuthErrorBoundary";
 import { api } from "../../convex/_generated/api";
@@ -19,6 +20,9 @@ import {
   Cairo_700Bold,
 } from "@expo-google-fonts/cairo";
 import { setupNotificationHandlers } from "../lib/notifications";
+
+// Keep native splash visible until we explicitly hide it
+SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthGuard() {
   const { isAuthenticated, isAdmin, loading, userId, setRole } = useAuth();
@@ -73,7 +77,7 @@ function AuthGuard() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="chat/[id]" />
         <Stack.Screen name="customers" />
-        <Stack.Screen name="users" />
+        <Stack.Screen name="users/index" />
       </Stack>
     </WorkspaceProvider>
   );
@@ -89,29 +93,60 @@ function NotificationHandlerSetup() {
   return null;
 }
 
+const FONT_LOAD_TIMEOUT_MS = 5000;
+
 export default function RootLayout() {
-  // Load Cairo font for Arabic
-  const [fontsLoaded] = useFonts({
+  const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
+
+  // Load Cairo font for Arabic - may hang on Android release; use timeout fallback
+  const [fontsLoaded, fontError] = useFonts({
     Cairo_400Regular,
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
+
+  // Fallback: proceed after timeout if fonts hang (known Android EAS build issue)
+  useEffect(() => {
+    const t = setTimeout(() => setFontTimeoutElapsed(true), FONT_LOAD_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, []);
+
+  const canProceed = fontsLoaded || !!fontError || fontTimeoutElapsed;
 
   // Enable RTL by default for Arabic
   useEffect(() => {
     I18nManager.allowRTL(true);
   }, []);
 
-  if (!fontsLoaded) {
+  // Hide splash when we're ready to render
+  useEffect(() => {
+    if (canProceed) {
+      SplashScreen.hideAsync().catch(() => {});
+    }
+  }, [canProceed]);
+
+  if (!canProceed) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center", backgroundColor: "#FFFFFF" }}>
+      <View style={styles.loadingRoot}>
         <ActivityIndicator size="large" color="#007AFF" />
       </View>
     );
   }
 
+  if (!hasConvexUrl) {
+    return (
+      <View style={styles.errorRoot}>
+        <Text style={styles.errorTitle}>Configuration Error</Text>
+        <Text style={styles.errorText}>
+          EXPO_PUBLIC_CONVEX_URL is not set. For EAS builds, run: eas secret:create
+          --name EXPO_PUBLIC_CONVEX_URL --value https://YOUR-DEPLOYMENT.convex.cloud
+        </Text>
+      </View>
+    );
+  }
+
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
+    <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
         <LocaleProvider>
           <AuthProvider>
@@ -126,3 +161,22 @@ export default function RootLayout() {
     </GestureHandlerRootView>
   );
 }
+
+const styles = StyleSheet.create({
+  root: { flex: 1, backgroundColor: "#FFFFFF" },
+  loadingRoot: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+  },
+  errorRoot: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#FFFFFF",
+    padding: 24,
+  },
+  errorTitle: { fontSize: 18, fontWeight: "600", marginBottom: 12, color: "#333" },
+  errorText: { fontSize: 14, color: "#666", textAlign: "center" },
+});

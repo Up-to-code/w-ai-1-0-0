@@ -88,11 +88,11 @@ export const WHATSAPP_ERROR_CODES: Record<number, WhatsAppErrorCode> = {
   },
   132001: {
     code: 132001,
-    name: "Template not found",
+    name: "Template not in translation",
     category: "INVALID_TEMPLATE",
     retryable: false,
-    description: "The template does not exist",
-    suggestedAction: "Verify the template name and that it's approved",
+    description: "Template name does not exist in the requested language",
+    suggestedAction: "Use a template name and language that exist in your WABA. In Meta Business Manager, check Templates and ensure the template is approved for the language you send (e.g. en, ar).",
   },
   132012: {
     code: 132012,
