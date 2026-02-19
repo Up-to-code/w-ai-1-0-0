@@ -123,8 +123,8 @@ export const updateConfig = mutation({
 });
 
 /**
- * Internal query for agent: get config by phoneNumberId with fallback to global.
- * When a number has no per-number config, falls back to global config so new numbers inherit AI settings.
+ * Internal query for agent: get config by phoneNumberId.
+ * Strict isolation: if a number has no dedicated config, return a disabled default for that number.
  */
 export const getInternalConfig = internalQuery({
   args: {
@@ -146,10 +146,14 @@ export const getInternalConfig = internalQuery({
           agentName: perNumberConfig.agentName ?? "Assistant",
         };
       }
-      // No per-number config: fall back to global so new numbers inherit AI settings
+      return {
+        ...DEFAULT_CONFIG,
+        phoneNumberId,
+        isActive: false,
+      };
     }
 
-    // Global config (used when no phoneNumberId or no per-number config)
+    // Global config (used only when no phoneNumberId is supplied)
     const globalConfig = await ctx.db
       .query("ai_configs")
       .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", undefined))

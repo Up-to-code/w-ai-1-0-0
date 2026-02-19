@@ -4,6 +4,7 @@ import { api, internal } from "./_generated/api";
 import { extractSallaEventType, resolveSallaWebhookToken } from "./sallaWebhookUtils";
 
 const http = httpRouter();
+const DEFAULT_SALLA_NT_TOKEN = "acdaf24fca9fe870b6cc6fafebbe5846e2b04bb60ff2fa5039d2181d064053d6";
 
 // GET /whatsapp/webhook: Verification Challenge (verify token from DB, fallback to env)
 http.route({
@@ -150,7 +151,10 @@ http.route({
       }
     ) => Promise<unknown>;
 
-    const expectedToken = process.env.SALLA_WEBHOOK_TOKEN?.trim();
+    const expectedToken =
+      process.env.SALLA_WEBHOOK_TOKEN?.trim() ||
+      process.env.SALLA_ACCESS_TOKEN?.trim() ||
+      DEFAULT_SALLA_NT_TOKEN;
     const url = new URL(request.url);
     const providedToken = resolveSallaWebhookToken({
       authorizationHeader: request.headers.get("authorization"),

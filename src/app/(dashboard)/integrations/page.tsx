@@ -47,7 +47,6 @@ export default function IntegrationsPage() {
     const addWhatsappNumber = useMutation(api.whatsappNumbers.add)
     const numbersQuery = useQuery(api.whatsappNumbers.list)
     const numbers = useMemo(() => numbersQuery ?? [], [numbersQuery])
-    const agents = useQuery(api.agents.list)
     const upsertAgent = useMutation(api.agents.upsertByPhoneNumberId)
     const toggleAgent = useMutation(api.agents.toggleByPhoneNumberId)
 
@@ -101,16 +100,12 @@ export default function IntegrationsPage() {
             if (activePhoneNumberId && numbers.some((n) => n.businessNumberId === activePhoneNumberId)) {
                 return activePhoneNumberId
             }
-            if (current === "__all__") return current
             if (current && numbers.some((n) => n.businessNumberId === current)) return current
-            if (!activePhoneNumberId) return "__all__"
             return numbers[0].businessNumberId
         })
     }, [activePhoneNumberId, numbers])
 
-    const isAllAgentScope = agentPhoneNumberId === "__all__"
-    const effectiveAgentPhoneNumberId =
-        !isAllAgentScope && agentPhoneNumberId ? agentPhoneNumberId : undefined
+    const effectiveAgentPhoneNumberId = agentPhoneNumberId || undefined
     const selectedAgentWorkspace =
         numbers.find((n) => n.businessNumberId === effectiveAgentPhoneNumberId) ?? null
     const agentConfig = useQuery(
@@ -165,43 +160,6 @@ export default function IntegrationsPage() {
     }, [numbers.length, runHealthCheck])
 
     useEffect(() => {
-        if (isAllAgentScope) {
-            const scopedConfigs = (agents ?? []).filter(
-                (cfg) => cfg.phoneNumberId && numbers.some((n) => n.businessNumberId === cfg.phoneNumberId)
-            )
-            if (scopedConfigs.length === 0) {
-                setAgentEnabled(false)
-                setAgentName("Assistant")
-                setAgentPrompt("")
-                setAgentModel("arcee-ai/trinity-mini:free")
-                setAgentRecommendProducts(true)
-                setAgentToolsEnabled([
-                    "send_text",
-                    "send_image",
-                    "send_link",
-                    "send_audio",
-                    "send_product",
-                    "transfer_to_human",
-                ])
-                setAgentOpenRouterKey("")
-                return
-            }
-
-            const first = scopedConfigs[0]
-            setAgentEnabled(scopedConfigs.every((cfg) => cfg.isActive))
-            setAgentName(first.agentName ?? "Assistant")
-            setAgentPrompt(first.systemPrompt ?? "")
-            setAgentModel(first.model ?? "arcee-ai/trinity-mini:free")
-            setAgentRecommendProducts(first.recommendProducts ?? true)
-            setAgentToolsEnabled(first.toolsEnabled ?? [])
-            setAgentOpenRouterKey(
-                scopedConfigs.some((cfg) => Boolean((cfg as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured))
-                    ? "__CONFIGURED__"
-                    : ""
-            )
-            return
-        }
-
         if (!agentConfig) return
         setAgentEnabled(agentConfig.isActive)
         setAgentName(agentConfig.agentName ?? "Assistant")
@@ -210,7 +168,7 @@ export default function IntegrationsPage() {
         setAgentRecommendProducts(agentConfig.recommendProducts ?? true)
         setAgentToolsEnabled(agentConfig.toolsEnabled ?? [])
         setAgentOpenRouterKey((agentConfig as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured ? "__CONFIGURED__" : "")
-    }, [isAllAgentScope, agents, numbers, agentConfig])
+    }, [agentConfig])
 
     const handleConnect = () => {
         setIsConnecting(true)
@@ -469,11 +427,7 @@ export default function IntegrationsPage() {
     }
 
     const handleToggleAgent = async (next: boolean) => {
-        const targetNumberIds = isAllAgentScope
-            ? numbers.map((n) => n.businessNumberId)
-            : effectiveAgentPhoneNumberId
-              ? [effectiveAgentPhoneNumberId]
-              : []
+        const targetNumberIds = effectiveAgentPhoneNumberId ? [effectiveAgentPhoneNumberId] : []
         if (targetNumberIds.length === 0) return
         setAgentEnabled(next)
         await Promise.all(
@@ -490,11 +444,7 @@ export default function IntegrationsPage() {
     }
 
     const handleSaveAgentSettings = async () => {
-        const targetNumberIds = isAllAgentScope
-            ? numbers.map((n) => n.businessNumberId)
-            : effectiveAgentPhoneNumberId
-              ? [effectiveAgentPhoneNumberId]
-              : []
+        const targetNumberIds = effectiveAgentPhoneNumberId ? [effectiveAgentPhoneNumberId] : []
         if (targetNumberIds.length === 0) return
         setAgentSaving(true)
         try {
@@ -1055,11 +1005,9 @@ export default function IntegrationsPage() {
                 <CardHeader>
                     <CardTitle className="text-lg">Agent Settings</CardTitle>
                     <CardDescription>
-                        {isAllAgentScope
-                            ? `Editing all numbers (${numbers.length})`
-                            : selectedAgentWorkspace
-                              ? `Editing number: ${selectedAgentWorkspace.phone}`
-                              : "Choose a number below to configure its assistant"}
+                        {selectedAgentWorkspace
+                            ? `Editing number: ${selectedAgentWorkspace.phone}`
+                            : "Choose a number below to configure its assistant"}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -1074,7 +1022,6 @@ export default function IntegrationsPage() {
                                 <option value="">No numbers configured</option>
                             ) : (
                                 <>
-                                    <option value="__all__">All numbers</option>
                                     {numbers.map((n) => (
                                         <option key={n._id} value={n.businessNumberId}>
                                             {n.phone}
@@ -1084,11 +1031,11 @@ export default function IntegrationsPage() {
                             )}
                         </select>
                         <p className="text-xs text-muted-foreground">
-                            You can apply settings to one number or all numbers at once.
+                            Configure each number separately to keep brand identity isolated.
                         </p>
                     </div>
 
-                    {!isAllAgentScope && !effectiveAgentPhoneNumberId ? (
+                    {!effectiveAgentPhoneNumberId ? (
                         <p className="text-sm text-muted-foreground">No active number selected.</p>
                     ) : (
                         <>

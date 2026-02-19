@@ -23,8 +23,8 @@ import { useWorkspace } from "@/contexts/WorkspaceContext";
 export default function AiSettingsPage() {
   const { activePhoneNumberId, activeWorkspace, isLoading: workspaceLoading } = useWorkspace();
   
-  // Use activePhoneNumberId for per-number config; "__all__" or undefined/null means global config
-  const effectivePhoneNumberId = (activePhoneNumberId === "__all__" || !activePhoneNumberId) ? undefined : activePhoneNumberId;
+  // Use activePhoneNumberId for strict per-number config.
+  const effectivePhoneNumberId = activePhoneNumberId || undefined;
   
   const config = useQuery(api.ai_config.getConfig, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {});
   const updateConfig = useMutation(api.ai_config.updateConfig);
@@ -205,7 +205,7 @@ export default function AiSettingsPage() {
               {activeWorkspace ? (
                 <>إعدادات: <strong className="text-foreground">{activeWorkspace.phone}</strong></>
               ) : (
-                <>إعدادات: <strong className="text-foreground">عامة (كل الأرقام)</strong></>
+                <>إعدادات: <strong className="text-foreground">رقم غير محدد</strong></>
               )}
             </span>
           </div>
