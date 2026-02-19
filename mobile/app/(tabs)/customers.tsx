@@ -16,7 +16,15 @@ import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
 import { Header } from "../../components/Header";
+import { WorkspaceSwitcher } from "../../components/WorkspaceSwitcher";
 import { useWorkspace } from "../../contexts/WorkspaceContext";
+
+type ContactRow = {
+  _id: string;
+  name: string;
+  phone: string;
+  email?: string;
+};
 
 export default function CustomersScreen() {
   const router = useRouter();
@@ -44,7 +52,12 @@ export default function CustomersScreen() {
     if (!contacts) return [];
 
     const query = searchQuery.toLowerCase();
-    const filtered = contacts.filter(
+    const scopeFiltered =
+      activePhoneNumberId == null
+        ? contacts
+        : contacts.filter((contact) => chatByPhone.has(contact.phone));
+
+    const filtered = (scopeFiltered as ContactRow[]).filter(
       (contact) =>
         contact.name.toLowerCase().includes(query) ||
         contact.phone.includes(query) ||
@@ -52,7 +65,7 @@ export default function CustomersScreen() {
     );
 
     return filtered;
-  }, [contacts, searchQuery]);
+  }, [contacts, searchQuery, activePhoneNumberId, chatByPhone]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -61,7 +74,7 @@ export default function CustomersScreen() {
   };
 
   const renderItem = useCallback(
-    ({ item }: { item: any }) => (
+    ({ item }: { item: ContactRow }) => (
       <CustomerItem contact={item} chatId={chatByPhone.get(item.phone)} />
     ),
     [chatByPhone]
@@ -91,6 +104,7 @@ export default function CustomersScreen() {
   return (
     <ScreenWrapper edges={["top"]}>
       <Header title="Customers" rightAction={addButton} />
+      <WorkspaceSwitcher />
 
       {/* Search Bar */}
       <View style={styles.searchContainer}>

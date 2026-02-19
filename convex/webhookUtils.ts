@@ -17,14 +17,17 @@ export function resolvePhoneNumberCandidate(
   defaultPhoneNumberId?: string | null,
   firstAvailablePhoneNumberId?: string | null
 ): { phoneNumberId?: string; usedFallback: boolean } {
-  if (incomingPhoneNumberId?.trim()) {
-    return { phoneNumberId: incomingPhoneNumberId, usedFallback: false };
+  const incoming = incomingPhoneNumberId?.trim();
+  if (incoming) {
+    return { phoneNumberId: incoming, usedFallback: false };
   }
-  if (defaultPhoneNumberId?.trim()) {
-    return { phoneNumberId: defaultPhoneNumberId, usedFallback: true };
+  const fallback = defaultPhoneNumberId?.trim();
+  if (fallback) {
+    return { phoneNumberId: fallback, usedFallback: true };
   }
-  if (firstAvailablePhoneNumberId?.trim()) {
-    return { phoneNumberId: firstAvailablePhoneNumberId, usedFallback: true };
+  const first = firstAvailablePhoneNumberId?.trim();
+  if (first) {
+    return { phoneNumberId: first, usedFallback: true };
   }
   return { phoneNumberId: undefined, usedFallback: true };
 }

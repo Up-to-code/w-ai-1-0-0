@@ -13,6 +13,32 @@ export const logWhatsappWebhook = internalMutation({
   },
 });
 
+export const logSallaWebhook = internalMutation({
+  args: {
+    body: v.any(),
+    processingStatus: v.optional(
+      v.union(
+        v.literal("received"),
+        v.literal("ignored_no_messages"),
+        v.literal("saved"),
+        v.literal("failed")
+      )
+    ),
+    eventType: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    await ctx.db.insert("webhook_events", {
+      source: "salla",
+      body: args.body,
+      processingStatus: args.processingStatus,
+      eventType: args.eventType,
+      note: args.note,
+      createdAt: Date.now(),
+    });
+  },
+});
+
 export const logWhatsappProcessing = internalMutation({
   args: {
     body: v.any(),
@@ -75,4 +101,3 @@ export const latestWhatsappProcessing = query({
     return rows.filter((row) => row.processingStatus !== undefined);
   },
 });
-

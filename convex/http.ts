@@ -1,6 +1,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
+import { extractSallaEventType, resolveSallaWebhookToken } from "./sallaWebhookUtils";
 
 const http = httpRouter();
 
@@ -131,6 +132,61 @@ http.route({
       const redirectUrl = `${process.env.NEXT_PUBLIC_APP_URL || ""}/integrations?error=token_exchange_failed`;
       return Response.redirect(redirectUrl, 302);
     }
+  }),
+});
+
+// POST /salla/nt: Salla notifications webhook endpoint
+http.route({
+  path: "/salla/nt",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const runSallaWebhookLog = ctx.runMutation as unknown as (
+      name: string,
+      args: {
+        body: unknown;
+        processingStatus?: "received" | "failed";
+        eventType?: string;
+        note?: string;
+      }
+    ) => Promise<unknown>;
+
+    const expectedToken = process.env.SALLA_WEBHOOK_TOKEN?.trim();
+    const url = new URL(request.url);
+    const providedToken = resolveSallaWebhookToken({
+      authorizationHeader: request.headers.get("authorization"),
+      xSallaTokenHeader: request.headers.get("x-salla-token"),
+      queryToken: url.searchParams.get("token"),
+    });
+
+    if (expectedToken && providedToken !== expectedToken) {
+      await runSallaWebhookLog("webhookEvents:logSallaWebhook", {
+        body: { reason: "unauthorized", url: request.url },
+        processingStatus: "failed",
+        note: "Invalid Salla notification token",
+      });
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    const rawBody = await request.text();
+    let body: unknown = {};
+    try {
+      body = rawBody ? JSON.parse(rawBody) : {};
+    } catch {
+      body = { rawBody };
+    }
+
+    const eventType = extractSallaEventType(body);
+    await runSallaWebhookLog("webhookEvents:logSallaWebhook", {
+      body,
+      eventType,
+      processingStatus: "received",
+      note: "/salla/nt",
+    });
+
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   }),
 });
 

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { useQuery, useMutation, useAction } from "convex/react"
@@ -36,8 +36,7 @@ export default function IntegrationsPage() {
     const success = searchParams.get("success")
     const error = searchParams.get("error")
 
-    const { activePhoneNumberId, activeWorkspace } = useWorkspace()
-    const effectivePhoneNumberId = activePhoneNumberId || undefined
+    const { activePhoneNumberId } = useWorkspace()
     const connection = useQuery(api.salla.getConnection)
     const disconnect = useMutation(api.salla.disconnect)
     const webhookSettings = useQuery(api.webhookSettings.get)
@@ -45,11 +44,10 @@ export default function IntegrationsPage() {
     const runHealthCheck = useAction(api.whatsappNumbers.checkHealth)
     const testAccessToken = useAction(api.whatsapp.testAccessToken)
     const updateWhatsappNumber = useMutation(api.whatsappNumbers.update)
-    const numbers = useQuery(api.whatsappNumbers.list) ?? []
-    const agentConfig = useQuery(
-        api.agents.getByPhoneNumberId,
-        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
-    )
+    const addWhatsappNumber = useMutation(api.whatsappNumbers.add)
+    const numbersQuery = useQuery(api.whatsappNumbers.list)
+    const numbers = useMemo(() => numbersQuery ?? [], [numbersQuery])
+    const agents = useQuery(api.agents.list)
     const upsertAgent = useMutation(api.agents.upsertByPhoneNumberId)
     const toggleAgent = useMutation(api.agents.toggleByPhoneNumberId)
 
@@ -67,6 +65,7 @@ export default function IntegrationsPage() {
     const [health, setHealth] = useState<Record<string, { appSubscribed: boolean; profileReadable: boolean; mediaEndpointReadable: boolean; issues: string[] }>>({})
     const [healthLoading, setHealthLoading] = useState(false)
     const [agentSaving, setAgentSaving] = useState(false)
+    const [agentPhoneNumberId, setAgentPhoneNumberId] = useState("")
     const [agentEnabled, setAgentEnabled] = useState(false)
     const [agentName, setAgentName] = useState("Assistant")
     const [agentPrompt, setAgentPrompt] = useState("")
@@ -84,8 +83,40 @@ export default function IntegrationsPage() {
     const [editingTokenFor, setEditingTokenFor] = useState<Id<"whatsapp_numbers"> | null>(null)
     const [numberTokenValue, setNumberTokenValue] = useState("")
     const [numberTokenSaving, setNumberTokenSaving] = useState(false)
+    const [syncingFromMeta, setSyncingFromMeta] = useState(false)
+    const [addingNumber, setAddingNumber] = useState(false)
+    const [newNumberName, setNewNumberName] = useState("")
+    const [newNumberPhone, setNewNumberPhone] = useState("")
+    const [newBusinessNumberId, setNewBusinessNumberId] = useState("")
+    const [newBusinessAccountId, setNewBusinessAccountId] = useState("")
     const [tokenTestLoadingFor, setTokenTestLoadingFor] = useState<string | null>(null)
     const [tokenTestByNumber, setTokenTestByNumber] = useState<Record<string, { success: boolean; phoneId?: string; displayPhoneNumber?: string | null; error?: string; details?: unknown }>>({})
+
+    useEffect(() => {
+        if (numbers.length === 0) {
+            setAgentPhoneNumberId("")
+            return
+        }
+        setAgentPhoneNumberId((current) => {
+            if (activePhoneNumberId && numbers.some((n) => n.businessNumberId === activePhoneNumberId)) {
+                return activePhoneNumberId
+            }
+            if (current === "__all__") return current
+            if (current && numbers.some((n) => n.businessNumberId === current)) return current
+            if (!activePhoneNumberId) return "__all__"
+            return numbers[0].businessNumberId
+        })
+    }, [activePhoneNumberId, numbers])
+
+    const isAllAgentScope = agentPhoneNumberId === "__all__"
+    const effectiveAgentPhoneNumberId =
+        !isAllAgentScope && agentPhoneNumberId ? agentPhoneNumberId : undefined
+    const selectedAgentWorkspace =
+        numbers.find((n) => n.businessNumberId === effectiveAgentPhoneNumberId) ?? null
+    const agentConfig = useQuery(
+        api.agents.getByPhoneNumberId,
+        effectiveAgentPhoneNumberId ? { phoneNumberId: effectiveAgentPhoneNumberId } : "skip"
+    )
 
     useEffect(() => {
         if (webhookSettings !== undefined) {
@@ -134,6 +165,43 @@ export default function IntegrationsPage() {
     }, [numbers.length, runHealthCheck])
 
     useEffect(() => {
+        if (isAllAgentScope) {
+            const scopedConfigs = (agents ?? []).filter(
+                (cfg) => cfg.phoneNumberId && numbers.some((n) => n.businessNumberId === cfg.phoneNumberId)
+            )
+            if (scopedConfigs.length === 0) {
+                setAgentEnabled(false)
+                setAgentName("Assistant")
+                setAgentPrompt("")
+                setAgentModel("arcee-ai/trinity-mini:free")
+                setAgentRecommendProducts(true)
+                setAgentToolsEnabled([
+                    "send_text",
+                    "send_image",
+                    "send_link",
+                    "send_audio",
+                    "send_product",
+                    "transfer_to_human",
+                ])
+                setAgentOpenRouterKey("")
+                return
+            }
+
+            const first = scopedConfigs[0]
+            setAgentEnabled(scopedConfigs.every((cfg) => cfg.isActive))
+            setAgentName(first.agentName ?? "Assistant")
+            setAgentPrompt(first.systemPrompt ?? "")
+            setAgentModel(first.model ?? "arcee-ai/trinity-mini:free")
+            setAgentRecommendProducts(first.recommendProducts ?? true)
+            setAgentToolsEnabled(first.toolsEnabled ?? [])
+            setAgentOpenRouterKey(
+                scopedConfigs.some((cfg) => Boolean((cfg as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured))
+                    ? "__CONFIGURED__"
+                    : ""
+            )
+            return
+        }
+
         if (!agentConfig) return
         setAgentEnabled(agentConfig.isActive)
         setAgentName(agentConfig.agentName ?? "Assistant")
@@ -142,7 +210,7 @@ export default function IntegrationsPage() {
         setAgentRecommendProducts(agentConfig.recommendProducts ?? true)
         setAgentToolsEnabled(agentConfig.toolsEnabled ?? [])
         setAgentOpenRouterKey((agentConfig as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured ? "__CONFIGURED__" : "")
-    }, [agentConfig])
+    }, [isAllAgentScope, agents, numbers, agentConfig])
 
     const handleConnect = () => {
         setIsConnecting(true)
@@ -232,6 +300,153 @@ export default function IntegrationsPage() {
         }
     }
 
+    const handleSyncFromMeta = async () => {
+        const token =
+            webhookAccessToken.trim() ||
+            numbers.find((n) => n.accessToken?.trim())?.accessToken?.trim() ||
+            ""
+        if (!token) {
+            setTokenTestResult({
+                success: false,
+                error: "لا يوجد Access Token. أضفه أولاً ثم أعد المزامنة.",
+            })
+            return
+        }
+        const wabaIds = Array.from(
+            new Set(
+                numbers
+                    .map((n) => n.businessAccountId?.trim() || "")
+                    .filter((id) => id.length > 0)
+            )
+        )
+        if (wabaIds.length === 0) {
+            setTokenTestResult({
+                success: false,
+                error: "لا يوجد WABA ID. حدّث businessAccountId لأحد الأرقام أولاً.",
+            })
+            return
+        }
+
+        setSyncingFromMeta(true)
+        try {
+            let discovered = 0
+            let inserted = 0
+            let updated = 0
+            const existingById = new Map(numbers.map((n) => [n.businessNumberId, n]))
+
+            for (const wabaId of wabaIds) {
+                const url = new URL(`https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`)
+                url.searchParams.set("fields", "id,display_phone_number,verified_name")
+                url.searchParams.set("access_token", token)
+                const response = await fetch(url.toString())
+                const json = await response.json().catch(() => ({}))
+
+                if (!response.ok) {
+                    const msg =
+                        (json &&
+                            typeof json === "object" &&
+                            "error" in json &&
+                            typeof json.error === "object" &&
+                            json.error &&
+                            "message" in json.error &&
+                            typeof json.error.message === "string"
+                            ? json.error.message
+                            : `HTTP ${response.status}`)
+                    setTokenTestResult({ success: false, error: `Meta error (${wabaId}): ${msg}`, details: json })
+                    return
+                }
+
+                const rows = Array.isArray((json as { data?: unknown[] }).data)
+                    ? ((json as { data?: unknown[] }).data as Array<Record<string, unknown>>)
+                    : []
+
+                for (const row of rows) {
+                    const id = String(row.id ?? "").trim().replace(/^\+/, "")
+                    if (!id) continue
+                    discovered += 1
+                    const phone = String(row.display_phone_number ?? "").trim() || `+${id}`
+                    const name = String(row.verified_name ?? "").trim() || `WhatsApp ${id.slice(-4)}`
+                    const existing = existingById.get(id)
+                    if (!existing) {
+                        await addWhatsappNumber({
+                            businessAccountId: wabaId,
+                            businessNumberId: id,
+                            phone,
+                            name,
+                            accessToken: token,
+                        })
+                        inserted += 1
+                        continue
+                    }
+                    const patch: {
+                        id: Id<"whatsapp_numbers">
+                        name?: string
+                        phone?: string
+                        businessAccountId?: string
+                        accessToken?: string
+                    } = { id: existing._id }
+                    if (existing.phone !== phone) patch.phone = phone
+                    if (existing.name !== name) patch.name = name
+                    if (existing.businessAccountId !== wabaId) patch.businessAccountId = wabaId
+                    if (!existing.accessToken?.trim()) patch.accessToken = token
+                    if (Object.keys(patch).length > 1) {
+                        await updateWhatsappNumber(patch)
+                        updated += 1
+                    }
+                }
+            }
+
+            setTokenTestResult({
+                success: true,
+                displayPhoneNumber: `discovered=${discovered}, inserted=${inserted}, updated=${updated}`,
+            })
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setTokenTestResult({ success: false, error: msg })
+        } finally {
+            setSyncingFromMeta(false)
+        }
+    }
+
+    const handleAddNumber = async (e: React.FormEvent) => {
+        e.preventDefault()
+        const businessNumberId = newBusinessNumberId.trim()
+        const phone = newNumberPhone.trim()
+        const name = newNumberName.trim()
+        const businessAccountId =
+            newBusinessAccountId.trim() || numbers[0]?.businessAccountId?.trim() || ""
+
+        if (!businessNumberId || !phone || !name || !businessAccountId) {
+            setTokenTestResult({
+                success: false,
+                error: "أدخل الاسم، الرقم، phone_number_id، و business_account_id",
+            })
+            return
+        }
+
+        setAddingNumber(true)
+        try {
+            await addWhatsappNumber({
+                businessAccountId,
+                businessNumberId,
+                phone,
+                name,
+            })
+            setNewNumberName("")
+            setNewNumberPhone("")
+            setNewBusinessNumberId("")
+            setTokenTestResult({
+                success: true,
+                displayPhoneNumber: phone,
+            })
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setTokenTestResult({ success: false, error: msg })
+        } finally {
+            setAddingNumber(false)
+        }
+    }
+
     const handleTestNumberToken = async (businessNumberId: string) => {
         setTokenTestLoadingFor(businessNumberId)
         try {
@@ -254,9 +469,18 @@ export default function IntegrationsPage() {
     }
 
     const handleToggleAgent = async (next: boolean) => {
-        if (!effectivePhoneNumberId) return
+        const targetNumberIds = isAllAgentScope
+            ? numbers.map((n) => n.businessNumberId)
+            : effectiveAgentPhoneNumberId
+              ? [effectiveAgentPhoneNumberId]
+              : []
+        if (targetNumberIds.length === 0) return
         setAgentEnabled(next)
-        await toggleAgent({ phoneNumberId: effectivePhoneNumberId, isActive: next })
+        await Promise.all(
+            targetNumberIds.map((phoneNumberId) =>
+                toggleAgent({ phoneNumberId, isActive: next })
+            )
+        )
     }
 
     const handleToolToggle = (tool: string, checked: boolean) => {
@@ -266,25 +490,89 @@ export default function IntegrationsPage() {
     }
 
     const handleSaveAgentSettings = async () => {
-        if (!effectivePhoneNumberId) return
+        const targetNumberIds = isAllAgentScope
+            ? numbers.map((n) => n.businessNumberId)
+            : effectiveAgentPhoneNumberId
+              ? [effectiveAgentPhoneNumberId]
+              : []
+        if (targetNumberIds.length === 0) return
         setAgentSaving(true)
         try {
-            await upsertAgent({
-                phoneNumberId: effectivePhoneNumberId,
-                isActive: agentEnabled,
-                agentName: agentName.trim() || "Assistant",
-                systemPrompt: agentPrompt.trim() || "You are a helpful sales assistant.",
-                model: agentModel.trim() || "arcee-ai/trinity-mini:free",
-                recommendProducts: agentRecommendProducts,
-                toolsEnabled: agentToolsEnabled,
-                ...(agentOpenRouterKey !== "__CONFIGURED__" && { openRouterApiKey: agentOpenRouterKey }),
-            })
+            await Promise.all(
+                targetNumberIds.map((phoneNumberId) =>
+                    upsertAgent({
+                        phoneNumberId,
+                        isActive: agentEnabled,
+                        agentName: agentName.trim() || "Assistant",
+                        systemPrompt: agentPrompt.trim() || "You are a helpful sales assistant.",
+                        model: agentModel.trim() || "arcee-ai/trinity-mini:free",
+                        recommendProducts: agentRecommendProducts,
+                        toolsEnabled: agentToolsEnabled,
+                        ...(agentOpenRouterKey !== "__CONFIGURED__" && { openRouterApiKey: agentOpenRouterKey }),
+                    })
+                )
+            )
             setWebhookSaved(true)
             setTimeout(() => setWebhookSaved(false), 2000)
         } finally {
             setAgentSaving(false)
         }
     }
+
+    const hasNumbers = numbers.length > 0
+    const allNumberTokensReady = hasNumbers && numbers.every((n) => Boolean(n.accessToken?.trim()))
+    const allNumbersWebhookReady =
+        hasNumbers &&
+        !healthLoading &&
+        numbers.every((n) => {
+            const h = health[n.businessNumberId]
+            return Boolean(h?.appSubscribed && h?.profileReadable)
+        })
+    const fallbackReady = numbers.length <= 1 || Boolean(defaultPhoneNumberId)
+    const verifyTokenReady = Boolean(webhookVerifyToken.trim())
+    const appIdReady = Boolean(webhookAppId.trim())
+
+    const productionChecks = [
+        {
+            label: "Numbers Added",
+            ok: hasNumbers,
+            detail: hasNumbers ? `${numbers.length} number(s) configured` : "Add at least one WhatsApp number",
+        },
+        {
+            label: "Per-Number Access Tokens",
+            ok: allNumberTokensReady,
+            detail: allNumberTokensReady ? "All numbers have tokens" : "One or more numbers are missing tokens",
+        },
+        {
+            label: "Webhook Runtime Health",
+            ok: allNumbersWebhookReady,
+            detail: healthLoading
+                ? "Checking health..."
+                : allNumbersWebhookReady
+                  ? "Webhook app/profile checks pass for all numbers"
+                  : "Fix webhook issues shown in number health",
+        },
+        {
+            label: "Fallback Number",
+            ok: fallbackReady,
+            detail: fallbackReady
+                ? (numbers.length <= 1 ? "Single-number setup" : "Default fallback number selected")
+                : "Select a default fallback number",
+        },
+        {
+            label: "Webhook Verify Token",
+            ok: verifyTokenReady,
+            detail: verifyTokenReady ? "Verify token is configured" : "Set verify token",
+        },
+        {
+            label: "Meta App ID",
+            ok: appIdReady,
+            detail: appIdReady ? "App ID is configured" : "Set Meta App ID",
+        },
+    ]
+
+    const productionReadyCount = productionChecks.filter((c) => c.ok).length
+    const productionReady = productionReadyCount === productionChecks.length
 
     const isConnected = !!connection
 
@@ -400,7 +688,53 @@ export default function IntegrationsPage() {
                         <CardDescription>إدارة الأرقام المرتبطة بالخدمة</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
+                        <form onSubmit={handleAddNumber} className="rounded-xl border border-border/50 p-3 bg-muted/20 space-y-3">
+                            <p className="text-xs font-semibold text-muted-foreground">إضافة رقم جديد</p>
+                            <div className="grid sm:grid-cols-2 gap-2">
+                                <Input
+                                    value={newNumberName}
+                                    onChange={(e) => setNewNumberName(e.target.value)}
+                                    placeholder="اسم الرقم"
+                                />
+                                <Input
+                                    value={newNumberPhone}
+                                    onChange={(e) => setNewNumberPhone(e.target.value)}
+                                    placeholder="+966..."
+                                    dir="ltr"
+                                />
+                                <Input
+                                    value={newBusinessNumberId}
+                                    onChange={(e) => setNewBusinessNumberId(e.target.value)}
+                                    placeholder="phone_number_id"
+                                    dir="ltr"
+                                />
+                                <Input
+                                    value={newBusinessAccountId}
+                                    onChange={(e) => setNewBusinessAccountId(e.target.value)}
+                                    placeholder={`business_account_id${numbers[0]?.businessAccountId ? " (optional)" : ""}`}
+                                    dir="ltr"
+                                />
+                            </div>
+                            <Button type="submit" size="sm" disabled={addingNumber}>
+                                {addingNumber ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : null}
+                                {addingNumber ? "جاري الإضافة..." : "إضافة الرقم"}
+                            </Button>
+                        </form>
+
                         <div className="space-y-2">
+                            <div className="flex justify-end">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    className="h-8"
+                                    onClick={handleSyncFromMeta}
+                                    disabled={syncingFromMeta}
+                                >
+                                    {syncingFromMeta ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <RefreshCw className="h-4 w-4 ml-2" />}
+                                    مزامنة من Meta
+                                </Button>
+                            </div>
                             {numbers.map((n) => (
                                 <div
                                     key={n._id}
@@ -692,15 +1026,69 @@ export default function IntegrationsPage() {
 
             <Card className="border-none ring-1 ring-border/50 shadow-none overflow-hidden max-w-3xl mx-auto">
                 <CardHeader>
-                    <CardTitle className="text-lg">Agent Settings Per Number</CardTitle>
+                    <div className="flex items-center justify-between gap-3">
+                        <CardTitle className="text-lg">Production Readiness</CardTitle>
+                        <Badge className={productionReady ? "bg-success/10 text-success border-success/20" : "bg-amber-500/10 text-amber-700 border-amber-500/20"}>
+                            {productionReadyCount}/{productionChecks.length}
+                        </Badge>
+                    </div>
                     <CardDescription>
-                        {activeWorkspace
-                            ? `Current number: ${activeWorkspace.name} (${activeWorkspace.phone})`
-                            : "Choose a number from the workspace switcher to configure its assistant"}
+                        Quick go-live checklist for multi-number WhatsApp + agent setup.
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                    {productionChecks.map((check) => (
+                        <div key={check.label} className="flex items-start justify-between gap-3 rounded-xl border p-3 bg-muted/20">
+                            <div>
+                                <p className="text-sm font-semibold">{check.label}</p>
+                                <p className="text-xs text-muted-foreground">{check.detail}</p>
+                            </div>
+                            <Badge className={check.ok ? "bg-success/10 text-success border-success/20" : "bg-destructive/10 text-destructive border-destructive/20"}>
+                                {check.ok ? "Ready" : "Action Needed"}
+                            </Badge>
+                        </div>
+                    ))}
+                </CardContent>
+            </Card>
+
+            <Card className="border-none ring-1 ring-border/50 shadow-none overflow-hidden max-w-3xl mx-auto">
+                <CardHeader>
+                    <CardTitle className="text-lg">Agent Settings</CardTitle>
+                    <CardDescription>
+                        {isAllAgentScope
+                            ? `Editing all numbers (${numbers.length})`
+                            : selectedAgentWorkspace
+                              ? `Editing number: ${selectedAgentWorkspace.phone}`
+                              : "Choose a number below to configure its assistant"}
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-5">
-                    {!effectivePhoneNumberId ? (
+                    <div className="space-y-2">
+                        <Label>Number for Agent Settings</Label>
+                        <select
+                            value={agentPhoneNumberId}
+                            onChange={(e) => setAgentPhoneNumberId(e.target.value)}
+                            className="flex h-11 w-full rounded-xl border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                            {numbers.length === 0 ? (
+                                <option value="">No numbers configured</option>
+                            ) : (
+                                <>
+                                    <option value="__all__">All numbers</option>
+                                    {numbers.map((n) => (
+                                        <option key={n._id} value={n.businessNumberId}>
+                                            {n.phone}
+                                        </option>
+                                    ))}
+                                </>
+                            )}
+                        </select>
+                        <p className="text-xs text-muted-foreground">
+                            You can apply settings to one number or all numbers at once.
+                        </p>
+                    </div>
+
+                    {!isAllAgentScope && !effectiveAgentPhoneNumberId ? (
                         <p className="text-sm text-muted-foreground">No active number selected.</p>
                     ) : (
                         <>
@@ -708,7 +1096,7 @@ export default function IntegrationsPage() {
                                 <div>
                                     <p className="font-semibold text-sm">Auto Reply</p>
                                     <p className="text-xs text-muted-foreground">
-                                        Enable or disable this assistant for the active number.
+                                        Enable or disable this assistant for the selected scope.
                                     </p>
                                 </div>
                                 <Switch checked={agentEnabled} onCheckedChange={handleToggleAgent} />
@@ -736,7 +1124,7 @@ export default function IntegrationsPage() {
                                     className="font-mono"
                                 />
                                 <p className="text-xs text-muted-foreground">
-                                    Per-number API key. When set, overrides OPENROUTER_KEY env. Leave empty to use system default.
+                                    Applies to selected scope. Leave empty to use system default OPENROUTER_KEY.
                                 </p>
                             </div>
 

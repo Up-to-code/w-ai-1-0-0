@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { ConvexProvider, useQuery } from "convex/react";
 import { convexClient, hasConvexUrl } from "../lib/convex";
@@ -25,7 +25,7 @@ import { setupNotificationHandlers } from "../lib/notifications";
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
 function AuthGuard() {
-  const { isAuthenticated, isAdmin, loading, userId, setRole } = useAuth();
+  const { isAuthenticated, isAdmin, loading, userId, setRole, logout } = useAuth();
   const segments = useSegments();
   const router = useRouter();
 
@@ -49,10 +49,14 @@ function AuthGuard() {
 
     if (!isAuthenticated && !inAuthGroup) {
       router.replace("/(auth)/login");
+    } else if (isAuthenticated && !inAuthGroup && user === null) {
+      // Stale local auth state: backend no longer has this user/session.
+      void logout();
+      router.replace("/(auth)/login");
     } else if (isAuthenticated && inAuthGroup) {
       router.replace("/(tabs)");
     }
-  }, [isAuthenticated, loading, segments]);
+  }, [isAuthenticated, loading, segments, user, logout, router]);
 
   if (loading) {
     return (
@@ -65,7 +69,8 @@ function AuthGuard() {
   // If authenticated but not admin, show access denied
   // Skip this check if we're still loading user data or in auth group
   const inAuthGroup = segments[0] === "(auth)";
-  if (isAuthenticated && !inAuthGroup && user && !isAdmin) {
+  const effectiveIsAdmin = user?.role ? user.role === "admin" : isAdmin;
+  if (isAuthenticated && !inAuthGroup && user && !effectiveIsAdmin) {
     return <AccessDenied />;
   }
 
@@ -85,11 +90,9 @@ function AuthGuard() {
 
 function NotificationHandlerSetup() {
   const { setActivePhoneNumberId } = useWorkspace();
-  const setterRef = useRef(setActivePhoneNumberId);
-  setterRef.current = setActivePhoneNumberId;
   useEffect(() => {
-    setupNotificationHandlers((id) => setterRef.current?.(id));
-  }, []);
+    setupNotificationHandlers((id) => setActivePhoneNumberId(id));
+  }, [setActivePhoneNumberId]);
   return null;
 }
 

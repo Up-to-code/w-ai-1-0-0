@@ -75,12 +75,14 @@ export default function NewTemplatePage() {
     const editName = searchParams?.get("edit")
     const fromStoreId = searchParams?.get("fromStore") as Id<"template_store"> | null
     const { activePhoneNumberId } = useWorkspace()
+    const effectivePhoneNumberId =
+      !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
     const createTemplate = useAction(api.templates.createTemplate)
     const addToStore = useMutation(api.templateStore.add)
     const existingTemplate = useQuery(
         api.templates.getByName,
-        editName ? { name: editName, phoneNumberId: activePhoneNumberId ?? undefined } : "skip"
+        editName ? { name: editName, phoneNumberId: effectivePhoneNumberId } : "skip"
     )
     const storeTemplate = useQuery(
         api.templateStore.get,
@@ -234,7 +236,7 @@ export default function NewTemplatePage() {
             const handle = await uploadTemplateMedia({
                 storageId,
                 type: file.type,
-                phoneNumberId: activePhoneNumberId ?? undefined,
+                phoneNumberId: effectivePhoneNumberId,
             })
 
             const previewUrl = URL.createObjectURL(file)
@@ -299,7 +301,7 @@ export default function NewTemplatePage() {
             const handle = await uploadExternalMedia({
                 url: product.image,
                 type: "image/jpeg", // Salla images are usually JPEGs/PNGs
-                phoneNumberId: activePhoneNumberId ?? undefined,
+                phoneNumberId: effectivePhoneNumberId,
             })
 
             // 3. Update Handle
@@ -622,7 +624,7 @@ export default function NewTemplatePage() {
                 category,
                 language,
                 components,
-                phoneNumberId: activePhoneNumberId ?? undefined,
+                phoneNumberId: effectivePhoneNumberId,
             })
 
             router.push("/templates?success=true")

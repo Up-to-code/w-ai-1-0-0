@@ -102,6 +102,7 @@ export const storage = {
       this.removeAuthToken(),
       this.removeUserId(),
       this.removeUserRole(),
+      SecureStore.deleteItemAsync(ACTIVE_PHONE_NUMBER_ID_KEY),
     ]);
   },
 };

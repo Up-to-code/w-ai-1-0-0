@@ -6,9 +6,11 @@ import { useQuery } from "convex/react"
 import { api } from "../../../convex/_generated/api"
 import type { Id } from "../../../convex/_generated/dataModel"
 import { WorkspaceProvider } from "@/contexts/WorkspaceContext"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   LayoutDashboard,
   MessageSquare,
@@ -19,15 +21,14 @@ import {
   Bell,
   Menu,
   FileText,
-  Radio,
   Zap,
   Users,
   Package,
   Link2,
-  ShoppingBag,
   Bot,
   UserCog,
-  Store
+  Store,
+  Phone
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet"
@@ -35,11 +36,11 @@ import { DashboardHeaderProvider, useDashboardHeader } from "@/components/Dashbo
 import { Toaster } from "sonner"
 import { GlobalNotification } from "@/components/GlobalNotification"
 import { Suspense } from "react"
-import { WorkspaceSwitcher } from "./_components/WorkspaceSwitcher"
 
 // Sidebar Content Component
 function SidebarContent({ pathname }: { pathname: string }) {
   const { userId, logout } = useAuth()
+  const { numbers, activePhoneNumberId, setActivePhoneNumberId } = useWorkspace()
   const router = useRouter()
   const user = useQuery(api.auth.getUser, userId ? { userId: userId as Id<"users"> } : "skip")
 
@@ -58,9 +59,6 @@ function SidebarContent({ pathname }: { pathname: string }) {
     { href: "/workflows", icon: Zap, label: "الأتمتة" },
     { href: "/ai-settings", icon: Bot, label: "الذكاء الاصطناعي" },
     { href: "/users", icon: UserCog, label: "إدارة المستخدمين" },
-  ]
-
-  const generalItems = [
     { href: "/integrations", icon: Link2, label: "التكاملات" },
     { href: "/settings", icon: Settings, label: "الإعدادات" },
   ]
@@ -72,70 +70,57 @@ function SidebarContent({ pathname }: { pathname: string }) {
 
   return (
     <div className="flex flex-col h-full bg-sidebar">
-      {/* Workspace Switcher */}
-      <div className="p-4 border-b border-sidebar-border">
-        <WorkspaceSwitcher />
+      <div className="p-4 border-b border-sidebar-border space-y-2">
+        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">الرقم النشط</p>
+        {numbers.length === 0 ? (
+          <div className="h-9 px-3 flex items-center gap-2 rounded-md border border-sidebar-border/70 bg-sidebar/60 text-sidebar-foreground text-xs" dir="ltr">
+            <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+            لا يوجد رقم
+          </div>
+        ) : (
+          <Select
+            value={activePhoneNumberId ?? numbers[0].businessNumberId}
+            onValueChange={(value) => setActivePhoneNumberId(value)}
+          >
+            <SelectTrigger className="h-9 bg-sidebar/60 border-sidebar-border/70 text-sidebar-foreground text-xs">
+              <SelectValue placeholder="اختر الرقم" />
+            </SelectTrigger>
+            <SelectContent>
+              {numbers.map((n) => (
+                <SelectItem key={n._id} value={n.businessNumberId} dir="ltr">
+                  {n.phone}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
       </div>
 
-      {/* Menu Section */}
-      <nav className="flex-1 p-4 space-y-6 overflow-y-auto">
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-3">
-            الرئيسية
-          </p>
-          <div className="space-y-1">
-            {menuItems.map((item) => {
-              const Icon = item.icon
-              const active = isActive(item.href)
-              return (
-                <Link key={item.href} href={item.href}>
-                  <Button
-                    variant={active ? "secondary" : "ghost"}
-                    className={`w-full justify-start gap-3 h-11 ${active
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent"
-                      }`}
-                  >
-                    <Icon className="h-5 w-5" />
-                    {item.label}
-                  </Button>
-                </Link>
-              )
-            })}
-          </div>
-        </div>
-
-        {/* General Section */}
-        <div>
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 px-3">
-            عام
-          </p>
-          <div className="space-y-1">
-            {generalItems.map((item) => {
-              const Icon = item.icon
-              const active = isActive(item.href)
-              return (
-                <Link key={item.href} href={item.href}>
-                  <Button
-                    variant={active ? "secondary" : "ghost"}
-                    className={`w-full justify-start gap-3 h-11 ${active
-                      ? "bg-primary text-primary-foreground hover:bg-primary/90"
-                      : "text-sidebar-foreground hover:bg-sidebar-accent"
-                      }`}
-                  >
-                    <Icon className="h-5 w-5" />
-                    {item.label}
-                  </Button>
-                </Link>
-              )
-            })}
-          </div>
+      <nav className="flex-1 p-3 overflow-y-auto">
+        <div className="space-y-1">
+          {menuItems.map((item) => {
+            const Icon = item.icon
+            const active = isActive(item.href)
+            return (
+              <Link key={item.href} href={item.href}>
+                <Button
+                  variant={active ? "secondary" : "ghost"}
+                  className={`w-full justify-start gap-3 h-10 rounded-lg ${active
+                    ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                    : "text-sidebar-foreground hover:bg-sidebar-accent"
+                    }`}
+                >
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </Button>
+              </Link>
+            )
+          })}
         </div>
       </nav>
 
-      {/* User Section */}
-      <div className="p-4 border-t border-sidebar-border">
-        <div className="flex items-center gap-3 p-2 rounded-xl bg-sidebar-accent/50 mb-3">
+      <div className="p-3 border-t border-sidebar-border">
+        <div className="flex items-center gap-3 p-2 rounded-lg bg-sidebar-accent/50 mb-2">
           <Avatar className="h-9 w-9">
             <AvatarFallback className="bg-primary text-primary-foreground text-sm">
               {(user?.name || user?.email || "م")[0]}
@@ -152,7 +137,7 @@ function SidebarContent({ pathname }: { pathname: string }) {
         </div>
         <Button
           variant="ghost"
-          className="w-full justify-start gap-3 h-10 text-destructive hover:text-destructive hover:bg-destructive/10"
+          className="w-full justify-start gap-2 h-10 text-destructive hover:text-destructive hover:bg-destructive/10"
           onClick={handleLogout}
         >
           <LogOut className="h-4 w-4" />

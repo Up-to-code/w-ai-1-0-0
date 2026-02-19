@@ -12,6 +12,7 @@ import {
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAuth } from "../../contexts/AuthContext";
+import { useLocale } from "../../contexts/LocaleContext";
 import { useRouter } from "expo-router";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
 
@@ -22,16 +23,17 @@ export default function RegisterScreen() {
   const [loading, setLoading] = useState(false);
   const registerMutation = useMutation(api.auth.register);
   const { login } = useAuth();
+  const { t, isRTL } = useLocale();
   const router = useRouter();
 
   const handleRegister = async () => {
     if (!name.trim() || !email.trim() || !password.trim()) {
-      Alert.alert("Error", "Please fill in all fields");
+      Alert.alert(t("error"), t("fill_all_fields"));
       return;
     }
 
     if (password.length < 6) {
-      Alert.alert("Error", "Password must be at least 6 characters");
+      Alert.alert(t("error"), t("password_min_length"));
       return;
     }
 
@@ -40,19 +42,22 @@ export default function RegisterScreen() {
       const userId = await registerMutation({ email, password, name });
       if (userId) {
         await login(userId, userId);
-        Alert.alert("Success", "Account created successfully!", [
+        Alert.alert(t("success"), t("account_created"), [
           {
-            text: "OK",
+            text: t("done"),
             onPress: () => router.replace("/(tabs)"),
           },
         ]);
       }
-    } catch (error: any) {
-      Alert.alert("Registration Failed", error.message || "Could not create account");
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : t("error");
+      Alert.alert(t("register_failed"), message);
     } finally {
       setLoading(false);
     }
   };
+
+  const rtlText = isRTL ? styles.textRight : styles.textLeft;
 
   return (
     <ScreenWrapper withKeyboard edges={["top", "bottom"]}>
@@ -61,13 +66,13 @@ export default function RegisterScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.content}>
-          <Text style={styles.title}>Create Account</Text>
-          <Text style={styles.subtitle}>Sign up to get started</Text>
+          <Text style={[styles.title, styles.cairoFont]}>{t("sign_up")}</Text>
+          <Text style={[styles.subtitle, styles.cairoFont]}>{t("sign_up_subtitle")}</Text>
 
           <View style={styles.form}>
             <TextInput
-              style={styles.input}
-              placeholder="Name"
+              style={[styles.input, rtlText, styles.cairoFont]}
+              placeholder={t("name")}
               placeholderTextColor="#999"
               value={name}
               onChangeText={setName}
@@ -75,8 +80,8 @@ export default function RegisterScreen() {
             />
 
             <TextInput
-              style={styles.input}
-              placeholder="Email"
+              style={[styles.input, rtlText, styles.cairoFont]}
+              placeholder={t("email")}
               placeholderTextColor="#999"
               value={email}
               onChangeText={setEmail}
@@ -86,8 +91,8 @@ export default function RegisterScreen() {
             />
 
             <TextInput
-              style={styles.input}
-              placeholder="Password"
+              style={[styles.input, rtlText, styles.cairoFont]}
+              placeholder={t("password")}
               placeholderTextColor="#999"
               value={password}
               onChangeText={setPassword}
@@ -104,7 +109,7 @@ export default function RegisterScreen() {
               {loading ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
-                <Text style={styles.buttonText}>Sign Up</Text>
+                <Text style={[styles.buttonText, styles.cairoFont]}>{t("sign_up")}</Text>
               )}
             </TouchableOpacity>
 
@@ -112,9 +117,7 @@ export default function RegisterScreen() {
               style={styles.linkButton}
               onPress={() => router.back()}
             >
-              <Text style={styles.linkText}>
-                Already have an account? Sign in
-              </Text>
+              <Text style={[styles.linkText, styles.cairoFont]}>{t("have_account")}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -181,5 +184,14 @@ const styles = StyleSheet.create({
   linkText: {
     color: "#007AFF",
     fontSize: 14,
+  },
+  textLeft: {
+    textAlign: "left",
+  },
+  textRight: {
+    textAlign: "right",
+  },
+  cairoFont: {
+    fontFamily: "Cairo_400Regular",
   },
 });

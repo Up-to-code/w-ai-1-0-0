@@ -1042,12 +1042,30 @@ export const processWebhookAction = internalAction({
             if (!msgSuccess && !campaignSuccess) {
               const attempt = args.attempt || 1;
               if (attempt < 3) {
-                console.log(`[Webhook] Message ${status.id} not found. Scheduling retry #${attempt + 1}`);
+                console.log(
+                  `[Webhook] Message ${status.id} not found. Scheduling targeted status retry #${attempt + 1}`
+                );
+                const retryBody = {
+                  object: (args.body as any)?.object,
+                  entry: [
+                    {
+                      changes: [
+                        {
+                          field: field ?? "messages",
+                          value: {
+                            metadata: value?.metadata,
+                            statuses: [status],
+                          },
+                        },
+                      ],
+                    },
+                  ],
+                };
                 await ctx.scheduler.runAfter(2000, internal.whatsapp.processWebhookAction, {
-                  body: args.body,
+                  body: retryBody,
                   attempt: attempt + 1,
                 });
-                return;
+                continue;
               }
               console.warn(`[Webhook] Message ${status.id} not found after 3 attempts`);
             } else {

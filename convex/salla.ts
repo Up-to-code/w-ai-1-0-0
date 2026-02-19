@@ -13,16 +13,25 @@ export const getConnection = query({
         // For now, get the first integration (single-tenant)
         const integration = await ctx.db.query("sallaIntegrations").first();
 
-        if (!integration) {
-            return null;
+        if (integration) {
+            return {
+                merchantId: integration.merchantId,
+                storeName: integration.storeName,
+                storeUrl: integration.storeUrl,
+                connectedAt: integration.connectedAt,
+                isExpired: integration.expiresAt < Date.now(),
+            };
         }
 
+        const envToken = process.env.SALLA_ACCESS_TOKEN?.trim();
+        if (!envToken) return null;
+
         return {
-            merchantId: integration.merchantId,
-            storeName: integration.storeName,
-            storeUrl: integration.storeUrl,
-            connectedAt: integration.connectedAt,
-            isExpired: integration.expiresAt < Date.now(),
+            merchantId: "env-token",
+            storeName: "Salla (Token)",
+            storeUrl: undefined,
+            connectedAt: 0,
+            isExpired: false,
         };
     },
 });
@@ -151,10 +160,13 @@ export const exchangeCode = internalAction({
 export const refreshToken = action({
     args: {},
     handler: async (ctx) => {
-        const integration = await ctx.runQuery("salla:getConnection" as any, {});
+        const integration = await ctx.runQuery("salla:getConnectionWithToken" as any, {});
 
         if (!integration) {
             throw new Error("No Salla integration found");
+        }
+        if (!integration.refreshToken) {
+            return { success: false, skipped: true, reason: "missing_refresh_token" };
         }
 
         const clientId = process.env.SALLA_CLIENT_ID;
@@ -163,9 +175,6 @@ export const refreshToken = action({
         if (!clientId || !clientSecret) {
             throw new Error("Missing Salla OAuth configuration");
         }
-
-        // Get current refresh token from DB
-        const dbIntegration = await ctx.runQuery("salla:getConnection" as any, {});
 
         const tokenResponse = await fetch(SALLA_TOKEN_URL, {
             method: "POST",
@@ -176,7 +185,7 @@ export const refreshToken = action({
                 grant_type: "refresh_token",
                 client_id: clientId,
                 client_secret: clientSecret,
-                refresh_token: dbIntegration.refreshToken,
+                refresh_token: integration.refreshToken,
             }),
         });
 
@@ -231,7 +240,7 @@ export const fetchProducts = action({
         );
 
         if (!response.ok) {
-            if (response.status === 401) {
+            if (response.status === 401 && integration.refreshToken) {
                 try {
                     await ctx.runAction("salla:refreshToken" as any, {});
                     return ctx.runAction("salla:fetchProducts" as any, { page, perPage, keyword: args.keyword });
@@ -299,7 +308,7 @@ export const getProduct = action({
         );
 
         if (!response.ok) {
-            if (response.status === 401) {
+            if (response.status === 401 && integration.refreshToken) {
                 try {
                     await ctx.runAction("salla:refreshToken" as any, {});
                     return ctx.runAction("salla:getProduct" as any, { id: args.id });
@@ -338,6 +347,19 @@ export const getConnectionWithToken = query({
     args: {},
     handler: async (ctx) => {
         const integration = await ctx.db.query("sallaIntegrations").first();
-        return integration;
+        if (integration) return integration;
+
+        const envToken = process.env.SALLA_ACCESS_TOKEN?.trim();
+        if (!envToken) return null;
+
+        return {
+            merchantId: "env-token",
+            accessToken: envToken,
+            refreshToken: undefined,
+            expiresAt: Number.MAX_SAFE_INTEGER,
+            storeName: "Salla (Token)",
+            storeUrl: undefined,
+            connectedAt: 0,
+        };
     },
 });

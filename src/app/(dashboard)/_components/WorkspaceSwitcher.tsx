@@ -26,37 +26,14 @@ export function WorkspaceSwitcher() {
     )
   }
 
-  const isAllActive = !activePhoneNumberId
-
   return (
     <div className="flex flex-col gap-2 w-full">
       <p className="text-[10px] font-semibold text-muted-foreground uppercase tracking-widest px-1">
         الرقم النشط
       </p>
       <div className="flex overflow-x-auto overflow-y-hidden gap-2 p-1.5 bg-muted/30 rounded-xl border border-border/10 min-h-[76px] [scrollbar-width:thin]">
-        {numbers.length > 1 && (
-          <button
-            onClick={() => setActivePhoneNumberId(null)}
-            className={cn(
-              "flex flex-col items-center justify-center py-2.5 px-4 rounded-lg transition-all duration-300 relative overflow-hidden group min-w-[100px] sm:min-w-0 shrink-0 touch-manipulation",
-              isAllActive
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/20 ring-1 ring-primary/20"
-                : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
-            )}
-          >
-            {isAllActive && (
-              <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent pointer-events-none" />
-            )}
-            <span className="text-[12px] font-bold truncate w-full text-center mb-0.5">
-              الكل
-            </span>
-            <span className="text-[10px] truncate w-full text-center font-medium text-muted-foreground/70">
-              كل الأرقام
-            </span>
-          </button>
-        )}
         {numbers.map((ws) => {
-          const isActive = activePhoneNumberId === ws.businessNumberId
+          const isActive = (activePhoneNumberId ?? numbers[0]?.businessNumberId) === ws.businessNumberId
           return (
             <button
               key={ws._id}

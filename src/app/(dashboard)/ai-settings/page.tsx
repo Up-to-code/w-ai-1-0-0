@@ -59,11 +59,11 @@ export default function AiSettingsPage() {
   const [isTestAllRunning, setIsTestAllRunning] = useState(false);
 
   const PRESET_TEST_MESSAGES = [
-    { label: "Greeting", message: "مرحبا" },
-    { label: "Price (AR)", message: "كم سعر الهاتف؟" },
-    { label: "Search (AR)", message: "ابحث عن لابتوب" },
-    { label: "Search (EN)", message: "Show me laptops" },
-    { label: "Handoff", message: "I want to speak to a human" },
+    { label: "تحية", message: "مرحبا" },
+    { label: "سؤال سعر", message: "كم سعر الهاتف؟" },
+    { label: "بحث عربي", message: "ابحث عن لابتوب" },
+    { label: "بحث إنجليزي", message: "Show me laptops" },
+    { label: "تحويل لموظف", message: "I want to speak to a human" },
   ];
 
   useEffect(() => {
@@ -72,6 +72,7 @@ export default function AiSettingsPage() {
       setModel(config.model);
       setTemperature(config.temperature ?? undefined);
       setIsActive(config.isActive);
+      setHasChanged(false);
     }
   }, [config]);
 
@@ -110,7 +111,7 @@ export default function AiSettingsPage() {
       setTestOutput(response);
       setLastTestInput(testMessage.trim());
       setLastTestOutput(response);
-    } catch (e) {
+    } catch {
       toast.error("فشل الاتصال");
       setTestOutput("حدث خطأ. تحقق من الاتصال وحاول مرة أخرى.");
     } finally {
@@ -132,7 +133,7 @@ export default function AiSettingsPage() {
         });
         results.push({ message: `[${label}] ${message}`, response });
       } catch (e) {
-        const err = e instanceof Error ? e.message : "Unknown error";
+        const err = e instanceof Error ? e.message : "خطأ غير معروف";
         results.push({ message: `[${label}] ${message}`, response: "", error: err });
       }
       setTestAllResults([...results]);
@@ -158,7 +159,7 @@ export default function AiSettingsPage() {
       toast.success("تم حفظ المراجعة");
       setRating(0);
       setFeedbackComment("");
-    } catch (e) {
+    } catch {
       toast.error("فشل حفظ المراجعة");
     } finally {
       setFeedbackSubmitting(false);
@@ -177,7 +178,7 @@ export default function AiSettingsPage() {
       setKnowledgeTitle("");
       setKnowledgeContent("");
       setKnowledgeOpen(false);
-    } catch (e) {
+    } catch {
       toast.error("فشل الإضافة");
     } finally {
       setKnowledgeSaving(false);
@@ -202,7 +203,7 @@ export default function AiSettingsPage() {
             <Phone className="h-4 w-4 text-muted-foreground" />
             <span className="text-muted-foreground">
               {activeWorkspace ? (
-                <>إعدادات: <strong className="text-foreground">{activeWorkspace.name || activeWorkspace.phone}</strong></>
+                <>إعدادات: <strong className="text-foreground">{activeWorkspace.phone}</strong></>
               ) : (
                 <>إعدادات: <strong className="text-foreground">عامة (كل الأرقام)</strong></>
               )}

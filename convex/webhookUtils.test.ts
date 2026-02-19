@@ -87,7 +87,7 @@ describe("resolvePhoneNumberCandidate", () => {
 
   it("accepts incoming number with extra whitespace", () => {
     expect(resolvePhoneNumberCandidate("  inbound-id  ", "default-id", "first-id")).toEqual({
-      phoneNumberId: "  inbound-id  ",
+      phoneNumberId: "inbound-id",
       usedFallback: false,
     });
   });

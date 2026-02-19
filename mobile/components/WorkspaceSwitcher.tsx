@@ -43,6 +43,23 @@ export function WorkspaceSwitcher() {
         contentContainerStyle={styles.scrollContent}
         style={styles.scrollView}
       >
+        {numbers.length > 1 && (
+          <TouchableOpacity
+            onPress={() => setActivePhoneNumberId(null)}
+            activeOpacity={0.8}
+            style={[styles.card, activePhoneNumberId == null && styles.cardActive]}
+          >
+            <Text style={[styles.name, activePhoneNumberId == null && styles.nameActive]} numberOfLines={1}>
+              الكل
+            </Text>
+            <Text style={[styles.aiStatus, activePhoneNumberId == null ? styles.aiStatusActive : styles.aiOff]}>
+              ALL
+            </Text>
+            <Text style={[styles.phone, activePhoneNumberId == null && styles.phoneActive]} numberOfLines={1}>
+              كل الأرقام
+            </Text>
+          </TouchableOpacity>
+        )}
         {numbers.map((ws) => {
           const isActive = activePhoneNumberId === ws.businessNumberId;
           return (

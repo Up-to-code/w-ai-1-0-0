@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -29,42 +29,31 @@ const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const numbersQuery = useQuery(api.whatsappNumbers.list);
-  const numbers = numbersQuery ?? [];
-  const [activePhoneNumberId, setActiveState] = useState<string | null>(() => {
+  const numbers = useMemo(() => numbersQuery ?? [], [numbersQuery]);
+  const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = window.localStorage.getItem(STORAGE_KEY);
     return stored === ALL_NUMBERS_SENTINEL ? null : stored;
   });
 
   const setActivePhoneNumberId = useCallback((id: string | null) => {
-    setActiveState(id);
+    setSelectedPhoneNumberId(id);
     if (typeof window !== "undefined") {
       if (id) window.localStorage.setItem(STORAGE_KEY, id);
-      else window.localStorage.setItem(STORAGE_KEY, ALL_NUMBERS_SENTINEL);
+      else window.localStorage.removeItem(STORAGE_KEY);
     }
   }, []);
 
-  // When numbers load, restore from storage or default to first number
-  useEffect(() => {
-    if (numbers.length === 0) {
-      setActiveState(null);
-      return;
+  const activePhoneNumberId = useMemo(() => {
+    if (numbers.length === 0) return null;
+    if (
+      selectedPhoneNumberId &&
+      numbers.some((n) => n.businessNumberId === selectedPhoneNumberId)
+    ) {
+      return selectedPhoneNumberId;
     }
-    const stored = typeof window !== "undefined" ? window.localStorage.getItem(STORAGE_KEY) : null;
-    if (stored === ALL_NUMBERS_SENTINEL) {
-      setActiveState(null);
-      return;
-    }
-    const exists = stored && numbers.some((n) => n.businessNumberId === stored);
-    if (exists) {
-      setActiveState(stored);
-    } else if (numbers.length === 1) {
-      setActivePhoneNumberId(numbers[0].businessNumberId);
-    } else {
-      setActiveState(numbers[0]?.businessNumberId ?? null);
-      if (numbers[0]) setActivePhoneNumberId(numbers[0].businessNumberId);
-    }
-  }, [numbers, setActivePhoneNumberId]);
+    return numbers[0].businessNumberId;
+  }, [numbers, selectedPhoneNumberId]);
 
   const activeWorkspace =
     numbers.find((n) => n.businessNumberId === activePhoneNumberId) ?? null;

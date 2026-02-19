@@ -1,12 +1,9 @@
 import { query, mutation, internalQuery, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+import { buildMetaSyncPlan, normalizeNumericId } from "./metaNumbersSync";
 
 const SEED_PLACEHOLDER = "from_env";
-
-function normalizeNumericId(value: string | null | undefined): string {
-  return (value ?? "").trim().replace(/^\+/, "");
-}
 
 export const list = query({
   args: {},
@@ -24,10 +21,14 @@ export const add = mutation({
     accessToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const normalizedBusinessNumberId = normalizeNumericId(args.businessNumberId);
+    if (!normalizedBusinessNumberId) {
+      throw new Error("Business Number ID is required.");
+    }
     const existing = await ctx.db
       .query("whatsapp_numbers")
       .withIndex("by_business_number_id", (q) =>
-        q.eq("businessNumberId", args.businessNumberId)
+        q.eq("businessNumberId", normalizedBusinessNumberId)
       )
       .first();
     if (existing) {
@@ -35,14 +36,14 @@ export const add = mutation({
     }
     const id = await ctx.db.insert("whatsapp_numbers", {
       businessAccountId: args.businessAccountId,
-      businessNumberId: args.businessNumberId,
+      businessNumberId: normalizedBusinessNumberId,
       phone: args.phone,
       name: args.name,
       accessToken: args.accessToken,
       createdAt: Date.now(),
     });
     await ctx.runMutation(api.agents.ensureForPhoneNumber, {
-      phoneNumberId: args.businessNumberId,
+      phoneNumberId: normalizedBusinessNumberId,
     });
     return id;
   },
@@ -51,12 +52,20 @@ export const add = mutation({
 export const getByBusinessNumberId = internalQuery({
   args: { businessNumberId: v.string() },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const normalizedInput = normalizeNumericId(args.businessNumberId);
+    if (!normalizedInput) return null;
+
+    const exact = await ctx.db
       .query("whatsapp_numbers")
       .withIndex("by_business_number_id", (q) =>
-        q.eq("businessNumberId", args.businessNumberId)
+        q.eq("businessNumberId", normalizedInput)
       )
       .first();
+    if (exact) return exact;
+
+    // Backward compatibility for older rows that may contain unnormalized values.
+    const all = await ctx.db.query("whatsapp_numbers").collect();
+    return all.find((row) => normalizeNumericId(row.businessNumberId) === normalizedInput) ?? null;
   },
 });
 
@@ -77,6 +86,7 @@ export const update = mutation({
     id: v.id("whatsapp_numbers"),
     name: v.optional(v.string()),
     phone: v.optional(v.string()),
+    businessAccountId: v.optional(v.string()),
     accessToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
@@ -84,6 +94,10 @@ export const update = mutation({
     const filtered: Record<string, unknown> = {};
     if (updates.name !== undefined) filtered.name = updates.name;
     if (updates.phone !== undefined) filtered.phone = updates.phone;
+    if (updates.businessAccountId !== undefined) {
+      const waba = updates.businessAccountId?.trim();
+      filtered.businessAccountId = waba && waba.length > 0 ? waba : undefined;
+    }
     if (updates.accessToken !== undefined) {
       const t = updates.accessToken?.trim();
       filtered.accessToken = t && t.length > 0 ? t : undefined;
@@ -132,6 +146,206 @@ export const seedFromEnv = mutation({
       phoneNumberId: phoneId,
     });
     return { seeded: true, message: "Seeded one number from env." };
+  },
+});
+
+type MetaPhoneNumber = {
+  id: string;
+  display_phone_number?: string | null;
+  verified_name?: string | null;
+};
+
+function normalizeToken(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : null;
+}
+
+async function withAppSecretProof(
+  ctx: { runAction: (ref: unknown, args: { accessToken: string; appSecret: string }) => Promise<string> },
+  url: URL,
+  accessToken: string
+): Promise<URL> {
+  const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
+  if (!appSecret) return url;
+  const proof = await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
+    accessToken,
+    appSecret,
+  });
+  const next = new URL(url.toString());
+  next.searchParams.set("appsecret_proof", proof);
+  return next;
+}
+
+async function fetchWabaPhoneNumbers(
+  ctx: { runAction: (ref: unknown, args: { accessToken: string; appSecret: string }) => Promise<string> },
+  wabaId: string,
+  accessToken: string
+): Promise<MetaPhoneNumber[]> {
+  const base = new URL(`https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`);
+  base.searchParams.set("fields", "id,display_phone_number,verified_name");
+  base.searchParams.set("limit", "100");
+
+  let url: URL | null = await withAppSecretProof(ctx, base, accessToken);
+  const all: MetaPhoneNumber[] = [];
+
+  while (url) {
+    const response = await fetch(url.toString(), {
+      headers: { Authorization: `Bearer ${accessToken}` },
+    });
+    const body = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errorMessage =
+        typeof body === "object" &&
+        body &&
+        "error" in body &&
+        typeof body.error === "object" &&
+        body.error &&
+        "message" in body.error
+          ? String(body.error.message)
+          : `HTTP ${response.status}`;
+      throw new Error(`Meta phone_numbers fetch failed for WABA ${wabaId}: ${errorMessage}`);
+    }
+
+    const rows =
+      typeof body === "object" &&
+      body &&
+      "data" in body &&
+      Array.isArray(body.data)
+        ? body.data
+        : [];
+
+    for (const row of rows) {
+      if (!row || typeof row !== "object") continue;
+      const rec = row as {
+        id?: string | number;
+        display_phone_number?: string | null;
+        verified_name?: string | null;
+      };
+      const id = normalizeNumericId(rec.id != null ? String(rec.id) : "");
+      if (!id) continue;
+      all.push({
+        id,
+        display_phone_number: rec.display_phone_number ?? null,
+        verified_name: rec.verified_name ?? null,
+      });
+    }
+
+    const nextUrl =
+      typeof body === "object" &&
+      body &&
+      "paging" in body &&
+      body.paging &&
+      typeof body.paging === "object" &&
+      "next" in body.paging &&
+      typeof body.paging.next === "string"
+        ? body.paging.next
+        : null;
+    url = nextUrl ? new URL(nextUrl) : null;
+  }
+
+  return all;
+}
+
+/** Discover numbers from Meta Graph (WABA phone_numbers) and upsert into DB. */
+export const syncFromMeta = action({
+  args: {
+    accessToken: v.optional(v.string()),
+    wabaId: v.optional(v.string()),
+    dryRun: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const dbNumbers = await ctx.runQuery(api.whatsappNumbers.list, {});
+    const webhookSettings = await ctx.runQuery(api.webhookSettings.get, {});
+
+    const accessToken =
+      normalizeToken(args.accessToken) ??
+      normalizeToken(webhookSettings?.accessToken ?? undefined) ??
+      normalizeToken(dbNumbers.find((n) => n.accessToken?.trim())?.accessToken ?? undefined) ??
+      normalizeToken(process.env.WHATSAPP_ACCESS_TOKEN);
+    if (!accessToken) {
+      throw new Error(
+        "Missing access token. Set it in Integrations webhook settings, pass it to sync, or configure WHATSAPP_ACCESS_TOKEN."
+      );
+    }
+
+    const wabaCandidates = [
+      args.wabaId,
+      process.env.WHATSAPP_WABA_ID,
+      ...dbNumbers.map((n) => n.businessAccountId),
+    ]
+      .map((id) => normalizeNumericId(id))
+      .filter((id) => id.length > 0);
+    const wabaIds = Array.from(new Set(wabaCandidates));
+    if (wabaIds.length === 0) {
+      throw new Error("Missing WABA ID. Set businessAccountId for a number, pass wabaId, or set WHATSAPP_WABA_ID.");
+    }
+
+    const discovered: Array<{
+      id: string;
+      display_phone_number?: string | null;
+      verified_name?: string | null;
+      businessAccountId: string;
+    }> = [];
+
+    for (const wabaId of wabaIds) {
+      const phones = await fetchWabaPhoneNumbers(ctx, wabaId, accessToken);
+      for (const phone of phones) {
+        discovered.push({
+          ...phone,
+          businessAccountId: wabaId,
+        });
+      }
+    }
+
+    const plan = buildMetaSyncPlan(
+      dbNumbers.map((n) => ({
+        businessNumberId: n.businessNumberId,
+        businessAccountId: n.businessAccountId,
+        phone: n.phone,
+        name: n.name,
+      })),
+      discovered
+    );
+
+    if (!args.dryRun) {
+      for (const row of plan.inserts) {
+        await ctx.runMutation(api.whatsappNumbers.add, {
+          businessAccountId: row.businessAccountId,
+          businessNumberId: row.businessNumberId,
+          phone: row.phone,
+          name: row.name,
+        });
+      }
+
+      for (const patchRow of plan.patches) {
+        const existing = dbNumbers.find(
+          (n) => normalizeNumericId(n.businessNumberId) === patchRow.businessNumberId
+        );
+        if (!existing) continue;
+        await ctx.runMutation(api.whatsappNumbers.update, {
+          id: existing._id,
+          ...(patchRow.patch.name !== undefined ? { name: patchRow.patch.name } : {}),
+          ...(patchRow.patch.phone !== undefined ? { phone: patchRow.patch.phone } : {}),
+          ...(patchRow.patch.businessAccountId !== undefined
+            ? { businessAccountId: patchRow.patch.businessAccountId }
+            : {}),
+        });
+      }
+    }
+
+    return {
+      discovered: discovered.length,
+      wabaIds,
+      inserted: plan.inserts.length,
+      updated: plan.patches.length,
+      dryRun: Boolean(args.dryRun),
+      preview: discovered.map((d) => ({
+        businessNumberId: d.id,
+        phone: d.display_phone_number ?? null,
+        name: d.verified_name ?? null,
+        businessAccountId: d.businessAccountId,
+      })),
+    };
   },
 });
 
