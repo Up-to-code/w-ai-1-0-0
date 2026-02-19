@@ -27,7 +27,7 @@
 
 The `.env` file contains:
 ```
-EXPO_PUBLIC_CONVEX_URL=https://giant-heron-232.convex.cloud
+EXPO_PUBLIC_CONVEX_URL=https://hardy-gopher-480.convex.cloud
 ```
 
 This connects the mobile app to your Convex backend.

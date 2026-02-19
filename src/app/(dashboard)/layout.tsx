@@ -37,6 +37,8 @@ import { Toaster } from "sonner"
 import { GlobalNotification } from "@/components/GlobalNotification"
 import { Suspense } from "react"
 
+const ALL_NUMBERS_SENTINEL = "__all__"
+
 // Sidebar Content Component
 function SidebarContent({ pathname }: { pathname: string }) {
   const { userId, logout } = useAuth()
@@ -79,13 +81,20 @@ function SidebarContent({ pathname }: { pathname: string }) {
           </div>
         ) : (
           <Select
-            value={activePhoneNumberId ?? numbers[0].businessNumberId}
-            onValueChange={(value) => setActivePhoneNumberId(value)}
+            value={activePhoneNumberId ?? ALL_NUMBERS_SENTINEL}
+            onValueChange={(value) =>
+              setActivePhoneNumberId(value === ALL_NUMBERS_SENTINEL ? null : value)
+            }
           >
             <SelectTrigger className="h-9 bg-sidebar/60 border-sidebar-border/70 text-sidebar-foreground text-xs">
               <SelectValue placeholder="اختر الرقم" />
             </SelectTrigger>
             <SelectContent>
+              {numbers.length > 1 && (
+                <SelectItem value={ALL_NUMBERS_SENTINEL}>
+                  كل الأرقام
+                </SelectItem>
+              )}
               {numbers.map((n) => (
                 <SelectItem key={n._id} value={n.businessNumberId} dir="ltr">
                   {n.phone}

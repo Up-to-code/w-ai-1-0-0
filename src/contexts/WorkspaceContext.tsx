@@ -39,24 +39,25 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
   const setActivePhoneNumberId = useCallback((id: string | null) => {
     setSelectedPhoneNumberId(id);
     if (typeof window !== "undefined") {
-      if (id) window.localStorage.setItem(STORAGE_KEY, id);
-      else window.localStorage.removeItem(STORAGE_KEY);
+      if (id) {
+        window.localStorage.setItem(STORAGE_KEY, id);
+      } else {
+        window.localStorage.setItem(STORAGE_KEY, ALL_NUMBERS_SENTINEL);
+      }
     }
   }, []);
 
   const activePhoneNumberId = useMemo(() => {
-    if (numbers.length === 0) return null;
-    if (
-      selectedPhoneNumberId &&
-      numbers.some((n) => n.businessNumberId === selectedPhoneNumberId)
-    ) {
-      return selectedPhoneNumberId;
-    }
-    return numbers[0].businessNumberId;
+    // null means "all numbers" to keep web aligned with mobile selector behavior.
+    if (selectedPhoneNumberId == null) return null;
+    return numbers.some((n) => n.businessNumberId === selectedPhoneNumberId)
+      ? selectedPhoneNumberId
+      : null;
   }, [numbers, selectedPhoneNumberId]);
 
-  const activeWorkspace =
-    numbers.find((n) => n.businessNumberId === activePhoneNumberId) ?? null;
+  const activeWorkspace = activePhoneNumberId
+    ? numbers.find((n) => n.businessNumberId === activePhoneNumberId) ?? null
+    : null;
 
   const value: WorkspaceContextValue = {
     numbers,

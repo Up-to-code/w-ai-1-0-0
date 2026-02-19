@@ -178,51 +178,61 @@ export const hasActiveHumanViewer = internalQuery({
   },
 });
 
+async function listRecentInboundMessages(ctx: any, limit: number) {
+  try {
+    return await ctx.db
+      .query("messages")
+      .withIndex("by_direction", (q: any) => q.eq("direction", "inbound"))
+      .order("desc")
+      .take(limit);
+  } catch {
+    // Backward-compatible fallback for deployments that haven't built the index yet.
+    const recent = await ctx.db.query("messages").order("desc").take(limit * 3);
+    return recent.filter((m: any) => m.direction === "inbound").slice(0, limit);
+  }
+}
+
 export const getLatestGlobalMessage = query({
   handler: async (ctx) => {
-    // Get the absolute latest message inserted into the DB
-    const message = await ctx.db.query("messages").order("desc").first();
+    // Look up latest *inbound* message so outbound bot/human messages do not hide notifications.
+    const inboundMessages = await listRecentInboundMessages(ctx, 20);
+    for (const message of inboundMessages) {
+      const chat = await ctx.db.get(message.chatId);
+      if (!chat) continue;
+      const isChat =
+        "lastMessageTime" in chat &&
+        "contactPhone" in chat &&
+        "unreadCount" in chat;
+      if (!isChat) continue;
 
-    if (!message) return null;
-
-    // Only interested if it's inbound (someone sent it to us)
-    if (message.direction !== "inbound") return null;
-
-    // Fetch sender details — ensure the referenced doc is actually a chat (not e.g. an order ID)
-    const chat = await ctx.db.get(message.chatId);
-    if (!chat) return null;
-    const isChat =
-      "lastMessageTime" in chat &&
-      "contactPhone" in chat &&
-      "unreadCount" in chat;
-    if (!isChat) return null;
-
-    // Fetch business name for context
-    let businessName = undefined;
-    let businessPhone = undefined;
-    if (chat.phoneNumberId) {
-      const whatsappNumber = await ctx.db
-        .query("whatsapp_numbers")
-        .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
-        .first();
-      if (whatsappNumber) {
-        businessName = whatsappNumber.name;
-        businessPhone = whatsappNumber.phone;
+      // Fetch business name for context
+      let businessName = undefined;
+      let businessPhone = undefined;
+      if (chat.phoneNumberId) {
+        const whatsappNumber = await ctx.db
+          .query("whatsapp_numbers")
+          .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
+          .first();
+        if (whatsappNumber) {
+          businessName = whatsappNumber.name;
+          businessPhone = whatsappNumber.phone;
+        }
       }
-    }
 
-    return {
-      messageId: message._id,
-      chatId: chat._id,
-      contactName: chat.contactName,
-      contactPhone: chat.contactPhone,
-      phoneNumberId: chat.phoneNumberId ?? undefined,
-      businessName,
-      businessPhone,
-      content: message.content, // Text or Caption
-      type: message.type,
-      timestamp: message._creationTime, // Use insertion time for notification sync
-    };
+      return {
+        messageId: message._id,
+        chatId: chat._id,
+        contactName: chat.contactName,
+        contactPhone: chat.contactPhone,
+        phoneNumberId: chat.phoneNumberId ?? undefined,
+        businessName,
+        businessPhone,
+        content: message.content, // Text or Caption
+        type: message.type,
+        timestamp: message._creationTime, // Use insertion time for notification sync
+      };
+    }
+    return null;
   }
 });
 

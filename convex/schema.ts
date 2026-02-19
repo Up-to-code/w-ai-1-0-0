@@ -95,6 +95,7 @@ export default defineSchema({
     metaMessageId: v.optional(v.string()),
     replyTo: v.optional(v.id("messages")), // Reference to message being replied to
   }).index("by_chat", ["chatId"])
+    .index("by_direction", ["direction"])
     .index("by_meta_message_id", ["metaMessageId"]),
 
   files: defineTable({

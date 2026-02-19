@@ -204,6 +204,8 @@ export default function AiSettingsPage() {
             <span className="text-muted-foreground">
               {activeWorkspace ? (
                 <>إعدادات: <strong className="text-foreground">{activeWorkspace.phone}</strong></>
+              ) : effectivePhoneNumberId == null ? (
+                <>إعدادات: <strong className="text-foreground">كل الأرقام (عام)</strong></>
               ) : (
                 <>إعدادات: <strong className="text-foreground">رقم غير محدد</strong></>
               )}

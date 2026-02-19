@@ -45,7 +45,7 @@ if (issue) {
   console.error(`[env-check] ${KEY} ${issue}`);
   console.error(`[env-check] Current value: ${value || "(not set)"}`);
   console.error(
-    `[env-check] Fix: set ${KEY}=https://hardy-gopher-480.convex.cloud in EAS environment and local .env.`
+    `[env-check] Fix: set ${KEY}=https://<your-deployment>.convex.cloud in EAS environment and local .env.`
   );
   process.exit(1);
 }

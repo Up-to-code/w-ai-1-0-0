@@ -197,9 +197,10 @@ export default function IntegrationsPage() {
         }
     }
 
-    const defaultWebhookUrl = (typeof process.env.NEXT_PUBLIC_CONVEX_URL === "string"
+    const convexSiteBase = typeof process.env.NEXT_PUBLIC_CONVEX_URL === "string"
         ? process.env.NEXT_PUBLIC_CONVEX_URL.replace(".convex.cloud", ".convex.site")
-        : "https://hardy-gopher-480.convex.site") + "/whatsapp/webhook"
+        : ""
+    const defaultWebhookUrl = convexSiteBase ? `${convexSiteBase}/whatsapp/webhook` : ""
 
     const handleSaveWebhookSettings = async (e: React.FormEvent) => {
         e.preventDefault()

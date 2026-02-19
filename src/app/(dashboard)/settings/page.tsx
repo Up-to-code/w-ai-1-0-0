@@ -119,6 +119,16 @@ export default function SettingsPage() {
                 </div>
               </div>
             </div>
+          ) : numbers.length > 0 ? (
+            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-xl">
+              <div className="flex items-center gap-3">
+                <MessageSquare className="h-5 w-5 text-muted-foreground" />
+                <div>
+                  <p className="font-medium">كل الأرقام</p>
+                  <p className="text-sm text-muted-foreground">عرض مجمّع لجميع الأرقام</p>
+                </div>
+              </div>
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">لا يوجد رقم نشط. أضف رقماً من التكاملات.</p>
           )}

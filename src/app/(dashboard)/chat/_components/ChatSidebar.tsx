@@ -21,8 +21,11 @@ export function ChatSidebar() {
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
   const chats = useQuery(api.chat.listChats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
-  const unreadCounts = useQuery(api.chat.getUnreadCounts)
   const [searchQuery, setSearchQuery] = useState("")
+  const totalUnread = useMemo(
+    () => (chats ?? []).reduce((sum, chat) => sum + (chat.unreadCount ?? 0), 0),
+    [chats]
+  )
 
   const filteredChats = useMemo(() => {
     if (!chats) return []
@@ -53,7 +56,7 @@ export function ChatSidebar() {
           </AvatarFallback>
         </Avatar>
         <div className="text-xs font-medium text-muted-foreground">
-          غير المقروء: <span className="text-foreground">{unreadCounts?.total ?? 0}</span>
+          غير المقروء: <span className="text-foreground">{totalUnread}</span>
         </div>
       </div>
 

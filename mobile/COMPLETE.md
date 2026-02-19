@@ -94,7 +94,7 @@ npm start
 
 ## 🔗 Backend Connection
 
-Connected to: `https://giant-heron-232.convex.cloud`
+Connected to: `https://hardy-gopher-480.convex.cloud`
 
 - Same backend as web app
 - Real-time synchronization
