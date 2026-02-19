@@ -1,11 +1,11 @@
 import { useEffect, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { ConvexProvider, useQuery } from "convex/react";
-import { convexClient, hasConvexUrl } from "../lib/convex";
+import { convexClient, convexInitError, convexUrl, hasConvexUrl } from "../lib/convex";
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { LocaleProvider } from "../contexts/LocaleContext";
 import { WorkspaceProvider, useWorkspace } from "../contexts/WorkspaceContext";
-import { ActivityIndicator, View, I18nManager, Text, StyleSheet } from "react-native";
+import { ActivityIndicator, View, I18nManager, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as SplashScreen from "expo-splash-screen";
@@ -99,6 +99,57 @@ function NotificationHandlerSetup() {
 
 const FONT_LOAD_TIMEOUT_MS = 5000;
 
+function StartupConfigError({
+  error,
+  value,
+}: {
+  error: string;
+  value: string;
+}) {
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      const Updates = await import("expo-updates").catch(() => null);
+      if (Updates?.reloadAsync) {
+        await Updates.reloadAsync();
+      }
+    } catch (e) {
+      console.warn("[Startup] retry failed", e);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <View style={styles.errorRoot}>
+      <Text style={styles.errorTitle}>Startup Configuration Error</Text>
+      <Text style={styles.errorText}>
+        تعذر تشغيل التطبيق بسبب إعدادات الاتصال بالخادم.
+      </Text>
+      <Text style={styles.errorDetail}>Reason: {error}</Text>
+      <Text style={styles.errorDetail}>
+        EXPO_PUBLIC_CONVEX_URL: {value || "(not set)"}
+      </Text>
+      <Text style={styles.errorHint}>
+        Configure EAS env variable EXPO_PUBLIC_CONVEX_URL to an absolute https://...convex.cloud URL.
+      </Text>
+      <TouchableOpacity
+        onPress={handleRetry}
+        disabled={retrying}
+        style={[styles.retryButton, retrying && styles.retryButtonDisabled]}
+      >
+        {retrying ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.retryButtonText}>Retry / إعادة المحاولة</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
 
@@ -137,15 +188,16 @@ export default function RootLayout() {
     );
   }
 
-  if (!hasConvexUrl) {
+  if (!hasConvexUrl || !convexClient) {
     return (
-      <View style={styles.errorRoot}>
-        <Text style={styles.errorTitle}>Configuration Error</Text>
-        <Text style={styles.errorText}>
-          EXPO_PUBLIC_CONVEX_URL is not set. For EAS builds, run: eas secret:create
-          --name EXPO_PUBLIC_CONVEX_URL --value https://YOUR-DEPLOYMENT.convex.cloud
-        </Text>
-      </View>
+      <GestureHandlerRootView style={styles.root}>
+        <SafeAreaProvider>
+          <StartupConfigError
+            error={convexInitError ?? "Unknown Convex bootstrap error"}
+            value={convexUrl}
+          />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     );
   }
 
@@ -183,4 +235,33 @@ const styles = StyleSheet.create({
   },
   errorTitle: { fontSize: 18, fontWeight: "600", marginBottom: 12, color: "#333" },
   errorText: { fontSize: 14, color: "#666", textAlign: "center" },
+  errorDetail: {
+    fontSize: 12,
+    color: "#444",
+    textAlign: "center",
+    marginTop: 6,
+  },
+  errorHint: {
+    fontSize: 12,
+    color: "#666",
+    textAlign: "center",
+    marginTop: 12,
+    marginBottom: 18,
+  },
+  retryButton: {
+    backgroundColor: "#007AFF",
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    minWidth: 220,
+    alignItems: "center",
+  },
+  retryButtonDisabled: {
+    opacity: 0.7,
+  },
+  retryButtonText: {
+    color: "#FFFFFF",
+    fontSize: 14,
+    fontWeight: "600",
+  },
 });

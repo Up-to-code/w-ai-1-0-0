@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "main": "index.ts",
   "scripts": {
+    "check:env": "node ./scripts/validate-env.mjs",
+    "eas-build-pre-install": "node ./scripts/validate-env.mjs",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",

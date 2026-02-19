@@ -21,8 +21,7 @@
       "distribution": "internal",
       "node": "20.18.0",
       "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "EXPO_PUBLIC_CONVEX_URL": "secret:EXPO_PUBLIC_CONVEX_URL"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
       },
       "android": {
         "buildType": "apk"
@@ -31,8 +30,7 @@
     "production": {
       "node": "20.18.0",
       "env": {
-        "NPM_CONFIG_LEGACY_PEER_DEPS": "true",
-        "EXPO_PUBLIC_CONVEX_URL": "secret:EXPO_PUBLIC_CONVEX_URL"
+        "NPM_CONFIG_LEGACY_PEER_DEPS": "true"
       },
       "android": {
         "buildType": "apk"
