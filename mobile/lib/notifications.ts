@@ -9,24 +9,28 @@ export function setActiveChatForNotificationSuppression(chatId: string | null) {
 }
 
 // Configure notification behavior
-Notifications.setNotificationHandler({
-  handleNotification: async (notification) => {
-    const data = notification.request.content.data as { chatId?: string } | undefined;
-    const isActiveChatNotification =
-      !!data?.chatId &&
-      !!activeChatIdForForegroundSuppression &&
-      data.chatId === activeChatIdForForegroundSuppression;
+try {
+  Notifications.setNotificationHandler({
+    handleNotification: async (notification) => {
+      const data = notification.request.content.data as { chatId?: string } | undefined;
+      const isActiveChatNotification =
+        !!data?.chatId &&
+        !!activeChatIdForForegroundSuppression &&
+        data.chatId === activeChatIdForForegroundSuppression;
 
-    // Best practice: suppress noisy foreground alerts for the chat currently open on screen.
-    return {
-      shouldShowAlert: !isActiveChatNotification,
-      shouldPlaySound: !isActiveChatNotification,
-      shouldSetBadge: !isActiveChatNotification,
-      shouldShowBanner: !isActiveChatNotification,
-      shouldShowList: !isActiveChatNotification,
-    };
-  },
-});
+      // Best practice: suppress noisy foreground alerts for the chat currently open on screen.
+      return {
+        shouldShowAlert: !isActiveChatNotification,
+        shouldPlaySound: !isActiveChatNotification,
+        shouldSetBadge: !isActiveChatNotification,
+        shouldShowBanner: !isActiveChatNotification,
+        shouldShowList: !isActiveChatNotification,
+      };
+    },
+  });
+} catch (error) {
+  console.warn("Failed to configure notification handler", error);
+}
 
 /**
  * Request notification permissions and get Expo push token
@@ -72,9 +76,10 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
         lightColor: "#FF231F7C",
       });
     }
-  } catch (error: any) {
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     // Handle specific projectId error gracefully
-    if (error.message?.includes("projectId") || error.message?.includes("No \"projectId\"")) {
+    if (message.includes("projectId") || message.includes("No \"projectId\"")) {
       console.warn("Push notifications require a projectId. This is expected in Expo Go. For full push notification support, use a development build with EAS.");
       return null;
     }
@@ -92,41 +97,52 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
 export function setupNotificationHandlers(
   onSetActivePhoneNumberId?: (id: string) => void
 ) {
+  let receivedSubscription:
+    | { remove: () => void }
+    | undefined;
+  let responseSubscription:
+    | { remove: () => void }
+    | undefined;
+
+  try {
   // Handle notification received while app is in foreground
-  const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
-    console.log("Notification received:", notification);
-    // You can show a custom in-app notification here if needed
-  });
+    receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
+      console.log("Notification received:", notification);
+      // You can show a custom in-app notification here if needed
+    });
 
-  // Handle notification tapped
-  const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-    console.log("Notification tapped:", response);
+    // Handle notification tapped
+    responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
+      console.log("Notification tapped:", response);
 
-    const data = response.notification.request.content.data as {
-      chatId?: string;
-      phoneNumberId?: string;
-    };
+      const data = response.notification.request.content.data as {
+        chatId?: string;
+        phoneNumberId?: string;
+      };
 
-    // Navigate to chat if chatId is present
-    if (data?.chatId) {
-      // Switch to the chat's number first so sidebar shows correct inbox (multi-number)
-      if (data.phoneNumberId && onSetActivePhoneNumberId) {
-        onSetActivePhoneNumberId(data.phoneNumberId);
+      // Navigate to chat if chatId is present
+      if (data?.chatId) {
+        // Switch to the chat's number first so sidebar shows correct inbox (multi-number)
+        if (data.phoneNumberId && onSetActivePhoneNumberId) {
+          onSetActivePhoneNumberId(data.phoneNumberId);
+        }
+        import("expo-router").then((moduleNamespace) => {
+          const ns = moduleNamespace as unknown as {
+            router?: { push: (href: string) => void };
+            default?: { router?: { push: (href: string) => void } };
+          };
+          const imperativeRouter = ns.router ?? ns.default?.router;
+          imperativeRouter?.push(`/chat/${data.chatId}`);
+        });
       }
-      import("expo-router").then((moduleNamespace) => {
-        const ns = moduleNamespace as unknown as {
-          router?: { push: (href: string) => void };
-          default?: { router?: { push: (href: string) => void } };
-        };
-        const imperativeRouter = ns.router ?? ns.default?.router;
-        imperativeRouter?.push(`/chat/${data.chatId}`);
-      });
-    }
-  });
+    });
+  } catch (error) {
+    console.warn("Failed to setup notification listeners", error);
+  }
 
   return () => {
-    receivedSubscription.remove();
-    responseSubscription.remove();
+    receivedSubscription?.remove?.();
+    responseSubscription?.remove?.();
   };
 }
 

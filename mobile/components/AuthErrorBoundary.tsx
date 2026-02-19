@@ -1,5 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from "react";
-import { View, Text, ActivityIndicator, StyleSheet } from "react-native";
+import { View, Text, ActivityIndicator, StyleSheet, TouchableOpacity } from "react-native";
 import { useRouter } from "expo-router";
 import { useAuth } from "../contexts/AuthContext";
 
@@ -39,7 +39,7 @@ export class AuthErrorBoundary extends Component<Props, State> {
       if (isInvalidUserId) {
         return <AuthRecoveryFallback onRecovered={this.reset} />;
       }
-      throw this.state.error;
+      return <GeneralRecoveryFallback errorMessage={msg} onRecovered={this.reset} />;
     }
     return this.props.children;
   }
@@ -61,13 +61,59 @@ function AuthRecoveryFallback({ onRecovered }: { onRecovered: () => void }) {
     return () => {
       mounted = false;
     };
-  }, []);
+  }, [logout, onRecovered, router]);
 
   return (
     <View style={styles.container}>
       <ActivityIndicator size="large" color="#007AFF" />
       <Text style={styles.text}>جاري إعادة التوجيه...</Text>
       <Text style={styles.hint}>تم مسح بيانات تسجيل الدخول غير الصالحة</Text>
+    </View>
+  );
+}
+
+function GeneralRecoveryFallback({
+  errorMessage,
+  onRecovered,
+}: {
+  errorMessage: string;
+  onRecovered: () => void;
+}) {
+  const { logout } = useAuth();
+  const router = useRouter();
+  const [working, setWorking] = React.useState(false);
+
+  const safeLogoutAndRedirect = async () => {
+    setWorking(true);
+    try {
+      await logout();
+      router.replace("/(auth)/login");
+      onRecovered();
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <View style={styles.container}>
+      <Text style={styles.text}>حدث خطأ أثناء تشغيل التطبيق</Text>
+      <Text style={styles.hint}>Unexpected startup error occurred.</Text>
+      {errorMessage ? (
+        <Text style={styles.errorDetail} numberOfLines={3}>
+          {errorMessage}
+        </Text>
+      ) : null}
+      <TouchableOpacity
+        disabled={working}
+        onPress={safeLogoutAndRedirect}
+        style={[styles.retryButton, working && styles.retryButtonDisabled]}
+      >
+        {working ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.retryButtonText}>إعادة المحاولة</Text>
+        )}
+      </TouchableOpacity>
     </View>
   );
 }
@@ -91,5 +137,29 @@ const styles = StyleSheet.create({
     color: "#666",
     marginTop: 8,
     fontFamily: "Cairo_400Regular",
+  },
+  errorDetail: {
+    fontSize: 11,
+    color: "#444",
+    marginTop: 8,
+    textAlign: "center",
+    paddingHorizontal: 16,
+  },
+  retryButton: {
+    marginTop: 18,
+    backgroundColor: "#007AFF",
+    borderRadius: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    minWidth: 140,
+    alignItems: "center",
+  },
+  retryButtonDisabled: {
+    opacity: 0.7,
+  },
+  retryButtonText: {
+    color: "#FFFFFF",
+    fontFamily: "Cairo_600SemiBold",
+    fontSize: 14,
   },
 });

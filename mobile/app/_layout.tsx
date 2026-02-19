@@ -5,7 +5,7 @@ import { convexClient, convexInitError, convexUrl, hasConvexUrl } from "../lib/c
 import { AuthProvider, useAuth } from "../contexts/AuthContext";
 import { LocaleProvider } from "../contexts/LocaleContext";
 import { WorkspaceProvider, useWorkspace } from "../contexts/WorkspaceContext";
-import { ActivityIndicator, View, I18nManager, Text, StyleSheet, TouchableOpacity } from "react-native";
+import { ActivityIndicator, View, Text, StyleSheet, TouchableOpacity } from "react-native";
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as SplashScreen from "expo-splash-screen";
@@ -167,11 +167,6 @@ export default function RootLayout() {
   }, []);
 
   const canProceed = fontsLoaded || !!fontError || fontTimeoutElapsed;
-
-  // Enable RTL by default for Arabic
-  useEffect(() => {
-    I18nManager.allowRTL(true);
-  }, []);
 
   // Hide splash when we're ready to render
   useEffect(() => {

@@ -1,6 +1,7 @@
 import { query, mutation, internalQuery, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { buildMetaSyncPlan, normalizeNumericId } from "./metaNumbersSync";
 
 const SEED_PLACEHOLDER = "from_env";
@@ -155,29 +156,38 @@ type MetaPhoneNumber = {
   verified_name?: string | null;
 };
 
+type WhatsAppNumberRow = {
+  _id: Id<"whatsapp_numbers">;
+  businessAccountId: string;
+  businessNumberId: string;
+  phone: string;
+  name: string;
+  accessToken?: string;
+};
+
 function normalizeToken(value: string | null | undefined): string | null {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : null;
 }
 
 async function withAppSecretProof(
-  ctx: { runAction: (ref: unknown, args: { accessToken: string; appSecret: string }) => Promise<string> },
+  ctx: { runAction: (...args: any[]) => Promise<any> },
   url: URL,
   accessToken: string
 ): Promise<URL> {
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
   if (!appSecret) return url;
-  const proof = await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
+  const proof = (await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
     accessToken,
     appSecret,
-  });
+  })) as string;
   const next = new URL(url.toString());
   next.searchParams.set("appsecret_proof", proof);
   return next;
 }
 
 async function fetchWabaPhoneNumbers(
-  ctx: { runAction: (ref: unknown, args: { accessToken: string; appSecret: string }) => Promise<string> },
+  ctx: { runAction: (...args: any[]) => Promise<any> },
   wabaId: string,
   accessToken: string
 ): Promise<MetaPhoneNumber[]> {
@@ -189,10 +199,10 @@ async function fetchWabaPhoneNumbers(
   const all: MetaPhoneNumber[] = [];
 
   while (url) {
-    const response = await fetch(url.toString(), {
+    const response: globalThis.Response = await fetch(url.toString(), {
       headers: { Authorization: `Bearer ${accessToken}` },
     });
-    const body = await response.json().catch(() => ({}));
+    const body: unknown = await response.json().catch(() => ({}));
     if (!response.ok) {
       const errorMessage =
         typeof body === "object" &&
@@ -254,8 +264,19 @@ export const syncFromMeta = action({
     dryRun: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const dbNumbers = await ctx.runQuery(api.whatsappNumbers.list, {});
-    const webhookSettings = await ctx.runQuery(api.webhookSettings.get, {});
+    const runQueryByName = ctx.runQuery as unknown as (
+      name: string,
+      args: Record<string, never>
+    ) => Promise<unknown>;
+    const runMutationByName = ctx.runMutation as unknown as (
+      name: string,
+      args: Record<string, unknown>
+    ) => Promise<unknown>;
+
+    const dbNumbers = (await runQueryByName("whatsappNumbers:list", {})) as WhatsAppNumberRow[];
+    const webhookSettings = (await runQueryByName("webhookSettings:get", {})) as {
+      accessToken?: string | null;
+    } | null;
 
     const accessToken =
       normalizeToken(args.accessToken) ??
@@ -309,7 +330,7 @@ export const syncFromMeta = action({
 
     if (!args.dryRun) {
       for (const row of plan.inserts) {
-        await ctx.runMutation(api.whatsappNumbers.add, {
+        await runMutationByName("whatsappNumbers:add", {
           businessAccountId: row.businessAccountId,
           businessNumberId: row.businessNumberId,
           phone: row.phone,
@@ -322,7 +343,7 @@ export const syncFromMeta = action({
           (n) => normalizeNumericId(n.businessNumberId) === patchRow.businessNumberId
         );
         if (!existing) continue;
-        await ctx.runMutation(api.whatsappNumbers.update, {
+        await runMutationByName("whatsappNumbers:update", {
           id: existing._id,
           ...(patchRow.patch.name !== undefined ? { name: patchRow.patch.name } : {}),
           ...(patchRow.patch.phone !== undefined ? { phone: patchRow.patch.phone } : {}),
@@ -352,8 +373,14 @@ export const syncFromMeta = action({
 export const checkHealth = action({
   args: {},
   handler: async (ctx) => {
-    const numbers = await ctx.runQuery(api.whatsappNumbers.list, {});
-    const webhookSettings = await ctx.runQuery(api.webhookSettings.get, {});
+    const runQueryByName = ctx.runQuery as unknown as (
+      name: string,
+      args: Record<string, never>
+    ) => Promise<unknown>;
+    const numbers = (await runQueryByName("whatsappNumbers:list", {})) as WhatsAppNumberRow[];
+    const webhookSettings = (await runQueryByName("webhookSettings:get", {})) as {
+      appId?: string | null;
+    } | null;
     const expectedAppIdRaw = webhookSettings?.appId ?? process.env.WHATSAPP_APP_ID ?? "";
     const expectedAppId = normalizeNumericId(expectedAppIdRaw);
     const graphUrl = "https://graph.facebook.com/v21.0";

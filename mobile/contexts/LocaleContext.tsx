@@ -276,12 +276,10 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
       
       setLocaleState(savedLocale);
       setDirectionState(savedDirection);
-      
-      // Apply RTL setting
-      if (I18nManager.isRTL !== (savedDirection === "rtl")) {
-        I18nManager.allowRTL(true);
-        I18nManager.forceRTL(savedDirection === "rtl");
-      }
+
+      // Keep RTL enabled as capability; avoid forcing direction on startup because
+      // forceRTL can trigger process restarts on some Android devices.
+      I18nManager.allowRTL(true);
     } catch (error) {
       console.error("Error loading locale settings:", error);
     } finally {

@@ -17,7 +17,8 @@
       "supportsTablet": true,
       "bundleIdentifier": "com.wai.mobile",
       "infoPlist": {
-        "NSFaceIDUsageDescription": "Allow W-AI to use Face ID to securely authenticate you."
+        "NSFaceIDUsageDescription": "Allow W-AI to use Face ID to securely authenticate you.",
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "android": {
