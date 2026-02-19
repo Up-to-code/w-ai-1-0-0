@@ -275,6 +275,13 @@ export default defineSchema({
   }).index("by_read", ["read"])
     .index("by_created_at", ["createdAt"]),
 
+  // Single-row notification behavior settings (editable from dashboard)
+  notification_preferences: defineTable({
+    humanHandoffPushEnabled: v.boolean(),
+    suppressPushWhenChatActive: v.boolean(),
+    updatedAt: v.number(),
+  }),
+
   webhook_events: defineTable({
     source: v.union(v.literal("whatsapp"), v.literal("salla")),
     body: v.any(),
@@ -322,5 +329,6 @@ export default defineSchema({
     chatId: v.id("chats"),
     lastActiveAt: v.number(), // Timestamp when user last viewed this chat
   }).index("by_user", ["userId"])
-    .index("by_user_chat", ["userId", "chatId"]),
+    .index("by_user_chat", ["userId", "chatId"])
+    .index("by_chat", ["chatId"]),
 });

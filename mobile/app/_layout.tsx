@@ -91,7 +91,8 @@ function AuthGuard() {
 function NotificationHandlerSetup() {
   const { setActivePhoneNumberId } = useWorkspace();
   useEffect(() => {
-    setupNotificationHandlers((id) => setActivePhoneNumberId(id));
+    const cleanup = setupNotificationHandlers((id) => setActivePhoneNumberId(id));
+    return cleanup;
   }, [setActivePhoneNumberId]);
   return null;
 }

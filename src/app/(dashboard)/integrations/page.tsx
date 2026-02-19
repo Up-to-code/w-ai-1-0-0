@@ -68,7 +68,7 @@ export default function IntegrationsPage() {
     const [agentEnabled, setAgentEnabled] = useState(false)
     const [agentName, setAgentName] = useState("Assistant")
     const [agentPrompt, setAgentPrompt] = useState("")
-    const [agentModel, setAgentModel] = useState("arcee-ai/trinity-mini:free")
+    const [agentModel, setAgentModel] = useState("stepfun/step-3.5-flash:free")
     const [agentRecommendProducts, setAgentRecommendProducts] = useState(true)
     const [agentToolsEnabled, setAgentToolsEnabled] = useState<string[]>([
         "send_text",
@@ -164,7 +164,7 @@ export default function IntegrationsPage() {
         setAgentEnabled(agentConfig.isActive)
         setAgentName(agentConfig.agentName ?? "Assistant")
         setAgentPrompt(agentConfig.systemPrompt ?? "")
-        setAgentModel(agentConfig.model ?? "arcee-ai/trinity-mini:free")
+        setAgentModel(agentConfig.model ?? "stepfun/step-3.5-flash:free")
         setAgentRecommendProducts(agentConfig.recommendProducts ?? true)
         setAgentToolsEnabled(agentConfig.toolsEnabled ?? [])
         setAgentOpenRouterKey((agentConfig as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured ? "__CONFIGURED__" : "")
@@ -455,7 +455,7 @@ export default function IntegrationsPage() {
                         isActive: agentEnabled,
                         agentName: agentName.trim() || "Assistant",
                         systemPrompt: agentPrompt.trim() || "You are a helpful sales assistant.",
-                        model: agentModel.trim() || "arcee-ai/trinity-mini:free",
+                        model: agentModel.trim() || "stepfun/step-3.5-flash:free",
                         recommendProducts: agentRecommendProducts,
                         toolsEnabled: agentToolsEnabled,
                         ...(agentOpenRouterKey !== "__CONFIGURED__" && { openRouterApiKey: agentOpenRouterKey }),
@@ -1056,7 +1056,7 @@ export default function IntegrationsPage() {
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Model (LLM)</Label>
-                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} placeholder="arcee-ai/trinity-mini:free" />
+                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} placeholder="stepfun/step-3.5-flash:free" />
                                     <p className="text-xs text-muted-foreground">OpenRouter model ID. Overrides env default.</p>
                                 </div>
                             </div>

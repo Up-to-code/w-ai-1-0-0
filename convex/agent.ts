@@ -860,6 +860,12 @@ Description: ${p.description.substring(0, 150)}...
                   type: "text",
                   contactPhone: args.contactPhone
               });
+              await ctx.scheduler.runAfter(0, (internal as any).notifications.sendHumanEscalationPush, {
+                  chatId: args.chatId,
+                  title: chat?.contactName || args.contactPhone,
+                  body: "The customer asked for a human agent.",
+                  phoneNumberId: chat?.phoneNumberId,
+              });
               sentByTool = true;
             }
         }

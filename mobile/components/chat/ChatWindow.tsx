@@ -8,6 +8,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
 import { useAuth } from "../../contexts/AuthContext";
+import { setActiveChatForNotificationSuppression } from "../../lib/notifications";
 
 interface ChatWindowProps {
   chatId: string;
@@ -33,20 +34,23 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
   // Check if this is a new contact (no messages yet)
   const isNewContact = chat && chat.messageCount === 0;
 
-  // Set active chat when component mounts or chatId changes
+  // Keep active-chat presence alive while this screen is visible.
   useEffect(() => {
-    if (userId && chatId) {
-      setActiveChat({ 
-        chatId: chatId as any, 
-        userId: userId as any 
+    if (!userId || !chatId) return;
+    const heartbeat = () =>
+      setActiveChat({
+        chatId: chatId as any,
+        userId: userId as any,
       }).catch(console.error);
-    }
 
-    // Clear active chat when component unmounts or chatId changes
+    heartbeat();
+    const intervalId = setInterval(heartbeat, 20_000);
+    setActiveChatForNotificationSuppression(chatId);
+
     return () => {
-      if (userId) {
-        clearActiveChat({ userId: userId as any }).catch(console.error);
-      }
+      clearInterval(intervalId);
+      setActiveChatForNotificationSuppression(null);
+      clearActiveChat({ userId: userId as any }).catch(console.error);
     };
   }, [chatId, userId, setActiveChat, clearActiveChat]);
 

@@ -4,6 +4,7 @@ import { DEFAULT_TOOLS_ENABLED, normalizeToolsEnabled } from "./agentsUtils";
 
 const DEFAULT_PROMPT =
   "You are a helpful sales assistant for this WhatsApp number. Keep replies concise and practical, and recommend relevant store products when useful.";
+const DEFAULT_FREE_MODEL = "stepfun/step-3.5-flash:free";
 
 function toView(config: {
   phoneNumberId?: string;
@@ -50,7 +51,7 @@ export const getByPhoneNumberId = query({
       return {
         phoneNumberId: args.phoneNumberId,
         systemPrompt: DEFAULT_PROMPT,
-        model: "arcee-ai/trinity-mini:free",
+        model: DEFAULT_FREE_MODEL,
         isActive: false,
         temperature: undefined,
         agentName: "Assistant",
@@ -116,7 +117,7 @@ export const toggleByPhoneNumberId = mutation({
       return await ctx.db.insert("ai_configs", {
         phoneNumberId: args.phoneNumberId,
         systemPrompt: DEFAULT_PROMPT,
-        model: "arcee-ai/trinity-mini:free",
+        model: DEFAULT_FREE_MODEL,
         isActive: args.isActive,
         toolsEnabled: DEFAULT_TOOLS_ENABLED,
         recommendProducts: true,
@@ -145,7 +146,7 @@ export const ensureForPhoneNumber = mutation({
     return await ctx.db.insert("ai_configs", {
       phoneNumberId: args.phoneNumberId,
       systemPrompt: DEFAULT_PROMPT,
-      model: "arcee-ai/trinity-mini:free",
+      model: DEFAULT_FREE_MODEL,
       isActive: false,
       toolsEnabled: DEFAULT_TOOLS_ENABLED,
       recommendProducts: true,

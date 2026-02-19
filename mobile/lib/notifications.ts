@@ -2,13 +2,30 @@ import * as Notifications from "expo-notifications";
 import { Platform } from "react-native";
 import Constants from "expo-constants";
 
+let activeChatIdForForegroundSuppression: string | null = null;
+
+export function setActiveChatForNotificationSuppression(chatId: string | null) {
+  activeChatIdForForegroundSuppression = chatId;
+}
+
 // Configure notification behavior
 Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-  }),
+  handleNotification: async (notification) => {
+    const data = notification.request.content.data as { chatId?: string } | undefined;
+    const isActiveChatNotification =
+      !!data?.chatId &&
+      !!activeChatIdForForegroundSuppression &&
+      data.chatId === activeChatIdForForegroundSuppression;
+
+    // Best practice: suppress noisy foreground alerts for the chat currently open on screen.
+    return {
+      shouldShowAlert: !isActiveChatNotification,
+      shouldPlaySound: !isActiveChatNotification,
+      shouldSetBadge: !isActiveChatNotification,
+      shouldShowBanner: !isActiveChatNotification,
+      shouldShowList: !isActiveChatNotification,
+    };
+  },
 });
 
 /**
@@ -76,13 +93,13 @@ export function setupNotificationHandlers(
   onSetActivePhoneNumberId?: (id: string) => void
 ) {
   // Handle notification received while app is in foreground
-  Notifications.addNotificationReceivedListener((notification) => {
+  const receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
     console.log("Notification received:", notification);
     // You can show a custom in-app notification here if needed
   });
 
   // Handle notification tapped
-  Notifications.addNotificationResponseReceivedListener((response) => {
+  const responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
     console.log("Notification tapped:", response);
 
     const data = response.notification.request.content.data as {
@@ -92,18 +109,25 @@ export function setupNotificationHandlers(
 
     // Navigate to chat if chatId is present
     if (data?.chatId) {
-      const navigate = () => {
-        import("expo-router").then(({ router }) => {
-          router.push(`/chat/${data.chatId}`);
-        });
-      };
       // Switch to the chat's number first so sidebar shows correct inbox (multi-number)
       if (data.phoneNumberId && onSetActivePhoneNumberId) {
         onSetActivePhoneNumberId(data.phoneNumberId);
       }
-      navigate();
+      import("expo-router").then((moduleNamespace) => {
+        const ns = moduleNamespace as unknown as {
+          router?: { push: (href: string) => void };
+          default?: { router?: { push: (href: string) => void } };
+        };
+        const imperativeRouter = ns.router ?? ns.default?.router;
+        imperativeRouter?.push(`/chat/${data.chatId}`);
+      });
     }
   });
+
+  return () => {
+    receivedSubscription.remove();
+    responseSubscription.remove();
+  };
 }
 
 /**

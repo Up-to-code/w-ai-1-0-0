@@ -1,11 +1,9 @@
 import { query, mutation, internalMutation, internalAction, internalQuery } from "./_generated/server";
 import { internal, api } from "./_generated/api";
 import { v } from "convex/values";
-import { PushNotifications } from "@convex-dev/expo-push-notifications"; // Import PushNotifications
-import { components } from "./_generated/api";
-
-const pushNotifications = new PushNotifications<any>(components.pushNotifications);
 import { paginationOptsValidator } from "convex/server";
+
+const ACTIVE_CHAT_WINDOW_MS = 90 * 1000;
 
 export const getChatByPhone = internalQuery({
   args: { phone: v.string(), phoneNumberId: v.optional(v.string()) },
@@ -145,9 +143,38 @@ export const isUserViewingChat = internalQuery({
 
     if (!activeChat) return false;
 
-    // Consider chat active if viewed within last 30 seconds (to handle brief navigation)
-    const thirtySecondsAgo = Date.now() - 30 * 1000;
-    return activeChat.lastActiveAt > thirtySecondsAgo;
+    // Consider chat active while regular heartbeat updates are received from web/mobile chat screens.
+    const cutoff = Date.now() - ACTIVE_CHAT_WINDOW_MS;
+    return activeChat.lastActiveAt > cutoff;
+  },
+});
+
+// Check whether any active admin/agent is currently handling this chat.
+export const hasActiveHumanViewer = internalQuery({
+  args: { chatId: v.id("chats") },
+  handler: async (ctx, args) => {
+    const cutoff = Date.now() - ACTIVE_CHAT_WINDOW_MS;
+    let activeSessions;
+    try {
+      activeSessions = await ctx.db
+        .query("userActiveChats")
+        .withIndex("by_chat", (q) => q.eq("chatId", args.chatId))
+        .collect();
+    } catch {
+      // Safe rollout fallback when the new index is not deployed yet.
+      activeSessions = await ctx.db
+        .query("userActiveChats")
+        .filter((q) => q.eq(q.field("chatId"), args.chatId))
+        .collect();
+    }
+
+    const recentUserIds = activeSessions
+      .filter((row) => row.lastActiveAt > cutoff)
+      .map((row) => row.userId);
+    if (recentUserIds.length === 0) return false;
+
+    const users = await Promise.all(recentUserIds.map((userId) => ctx.db.get(userId)));
+    return users.some((user) => user?.role === "admin" || user?.role === "agent");
   },
 });
 
@@ -914,35 +941,22 @@ export const saveIncomingMessage = internalMutation({
       });
     }
 
-    // 5. Send Push Notification to Admins (only if not viewing the conversation)
+    // 5. Legacy path: notify humans only when chat is already in human mode.
     try {
-      const admins = await ctx.db.query("users")
-        .filter((q: any) => q.eq(q.field("role"), "admin"))
-        .collect();
-
-      if (admins.length > 0) {
+      const chatDoc = await ctx.db.get(chatId);
+      const needsHumanAttention = chatDoc?.aiMode === false;
+      if (needsHumanAttention) {
         const notifTitle = args.contactName || args.contactId;
-        const notifBody = args.messageType === "text" ? args.content : `Sent a ${args.messageType}`;
-
-        for (const admin of admins) {
-          // Check if admin is currently viewing this chat
-          const isViewing = await ctx.runQuery(internal.chat.isUserViewingChat, {
-            userId: admin._id,
-            chatId: chatId,
-          });
-
-          // Only send notification if admin is NOT viewing the conversation
-          if (!isViewing) {
-            await pushNotifications.sendPushNotification(ctx, {
-              userId: admin._id,
-              notification: {
-                title: notifTitle,
-                body: notifBody,
-                data: { chatId: chatId },
-              },
-            });
-          }
-        }
+        const notifBody =
+          args.messageType === "text"
+            ? args.content
+            : `New ${args.messageType} message while awaiting human reply`;
+        await ctx.scheduler.runAfter(0, (internal as any).notifications.sendHumanEscalationPush, {
+          chatId,
+          title: notifTitle,
+          body: notifBody,
+          phoneNumberId: chatDoc?.phoneNumberId,
+        });
       }
     } catch (e) {
       console.error("Failed to send push notifications:", e);

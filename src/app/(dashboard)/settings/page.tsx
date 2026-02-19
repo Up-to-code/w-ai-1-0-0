@@ -1,11 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "convex/react";
+import { useState } from "react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../../../convex/_generated/api";
 import { useWorkspace } from "@/contexts/WorkspaceContext";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
   Building2,
   Webhook,
@@ -15,6 +18,7 @@ import {
   Copy,
   ExternalLink,
   MessageSquare,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -30,16 +34,31 @@ function getWebhookUrl(): string {
 type Role = "admin" | "agent" | "user";
 
 export default function SettingsPage() {
-  const { activeWorkspace, activePhoneNumberId, numbers } = useWorkspace();
+  const { activeWorkspace, numbers } = useWorkspace();
   const currentUser = useQuery(api.users.getCurrentUserRole);
   const sallaConnection = useQuery(api.salla.getConnection);
+  const notificationPreferences = useQuery(
+    (api as any).notificationPreferences.get
+  ) as
+    | {
+        humanHandoffPushEnabled: boolean;
+        suppressPushWhenChatActive: boolean;
+      }
+    | undefined;
+  const updateNotificationPreferences = useMutation((api as any).notificationPreferences.set);
+  const [notificationSaving, setNotificationSaving] = useState(false);
 
   const role: Role | null = currentUser?.role ?? null;
   const isAdmin = role === "admin";
   const canManageUsers = isAdmin;
   const canManageIntegrations = isAdmin;
+  const canManageNotificationSettings = isAdmin;
   const canSeeWebhook = role === "admin" || role === "agent";
   const canCopyWebhook = canSeeWebhook;
+  const prefs = notificationPreferences ?? {
+    humanHandoffPushEnabled: true,
+    suppressPushWhenChatActive: true,
+  };
 
   const webhookUrl = getWebhookUrl();
 
@@ -50,6 +69,23 @@ export default function SettingsPage() {
     }
     navigator.clipboard.writeText(webhookUrl);
     toast.success("تم نسخ الرابط");
+  };
+
+  const updatePushPreferences = async (patch: {
+    humanHandoffPushEnabled?: boolean;
+    suppressPushWhenChatActive?: boolean;
+  }) => {
+    if (!canManageNotificationSettings) return;
+    setNotificationSaving(true);
+    try {
+      await updateNotificationPreferences(patch);
+      toast.success("تم تحديث إعدادات إشعارات الجوال");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر حفظ الإعدادات";
+      toast.error(message);
+    } finally {
+      setNotificationSaving(false);
+    }
   };
 
   return (
@@ -178,7 +214,61 @@ export default function SettingsPage() {
         </Card>
       )}
 
-      {/* 4. Security & environment */}
+      {/* 4. Mobile push policy */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <Bell className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle>إشعارات الجوال</CardTitle>
+              <CardDescription>سياسة إشعارات التدخل البشري في تطبيق Expo</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+            <div className="space-y-1">
+              <Label htmlFor="human-handoff-push" className="text-sm font-medium">
+                إشعار عند الحاجة لتدخل بشري
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                مفعّل افتراضياً. عند تحويل المحادثة لموظف، يُرسل إشعار للجوال.
+              </p>
+            </div>
+            <Switch
+              id="human-handoff-push"
+              checked={prefs.humanHandoffPushEnabled}
+              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined}
+              onCheckedChange={(checked) => updatePushPreferences({ humanHandoffPushEnabled: checked })}
+            />
+          </div>
+
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
+            <div className="space-y-1">
+              <Label htmlFor="suppress-active-chat-push" className="text-sm font-medium">
+                إيقاف الإشعار أثناء المتابعة الحية
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                لا يتم إرسال إشعار إذا كان مدير/موظف يتابع نفس المحادثة حالياً.
+              </p>
+            </div>
+            <Switch
+              id="suppress-active-chat-push"
+              checked={prefs.suppressPushWhenChatActive}
+              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined}
+              onCheckedChange={(checked) => updatePushPreferences({ suppressPushWhenChatActive: checked })}
+            />
+          </div>
+
+          {!canManageNotificationSettings && (
+            <p className="text-xs text-muted-foreground">فقط المدير يمكنه تعديل إعدادات إشعارات الجوال.</p>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* 5. Security & environment */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">
@@ -198,7 +288,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* 5. Team & permissions */}
+      {/* 6. Team & permissions */}
       <Card>
         <CardHeader>
           <div className="flex items-center gap-3">

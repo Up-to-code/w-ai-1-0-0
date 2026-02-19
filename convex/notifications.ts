@@ -1,7 +1,8 @@
 import { query, mutation, internalMutation } from "./_generated/server";
 import { v } from "convex/values";
 import { PushNotifications } from "@convex-dev/expo-push-notifications";
-import { components } from "./_generated/api";
+import { components, internal } from "./_generated/api";
+import { shouldSendHumanEscalationPush as shouldSendPushForHumanEscalation } from "./pushPolicy";
 
 const pushNotifications = new PushNotifications<any>(components.pushNotifications);
 
@@ -96,5 +97,49 @@ export const recordPushNotificationToken = mutation({
             userId: userId,
             pushToken: args.token,
         });
+    },
+});
+
+export const sendHumanEscalationPush = internalMutation({
+    args: {
+        chatId: v.id("chats"),
+        title: v.string(),
+        body: v.string(),
+        phoneNumberId: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        const settings = await ctx.runQuery((internal as any).notificationPreferences.getInternal, {});
+        const hasActiveHumanViewer = settings.suppressPushWhenChatActive
+            ? await ctx.runQuery((internal as any).chat.hasActiveHumanViewer, { chatId: args.chatId })
+            : false;
+
+        const shouldSend = shouldSendPushForHumanEscalation({
+            needsHumanAttention: true,
+            hasActiveHumanViewer,
+            settings,
+        });
+        if (!shouldSend) return { sent: 0, skipped: true };
+
+        const admins = await ctx.db
+            .query("users")
+            .filter((q: any) => q.eq(q.field("role"), "admin"))
+            .collect();
+
+        for (const admin of admins) {
+            await pushNotifications.sendPushNotification(ctx, {
+                userId: admin._id,
+                notification: {
+                    title: args.title,
+                    body: args.body,
+                    data: {
+                        chatId: args.chatId,
+                        reason: "human_handoff",
+                        ...(args.phoneNumberId ? { phoneNumberId: args.phoneNumberId } : {}),
+                    },
+                },
+            });
+        }
+
+        return { sent: admins.length, skipped: false };
     },
 });

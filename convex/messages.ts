@@ -1,10 +1,6 @@
 import { internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
-import { PushNotifications } from "@convex-dev/expo-push-notifications";
-import { components } from "./_generated/api";
-
-const pushNotifications = new PushNotifications<any>(components.pushNotifications);
 
 export const saveMessage = internalMutation({
     args: {
@@ -144,55 +140,39 @@ export const saveMessage = internalMutation({
             });
         }
 
-        // 4. Send Push Notifications to Admins (only if not viewing the conversation)
+        // 4. Send push only when this chat needs human handling.
         if (args.direction === "inbound") {
             try {
-                const admins = await ctx.db.query("users")
-                    .filter((q: any) => q.eq(q.field("role"), "admin"))
-                    .collect();
+                const chat = await ctx.db.get(finalChatId);
+                const needsHumanAttention = chat?.aiMode === false;
+                if (!needsHumanAttention) {
+                    return msgId;
+                }
 
-                if (admins.length > 0) {
-                    const chat = await ctx.db.get(finalChatId);
-
-                    // Get business name for context
-                    let businessName = "";
-                    if (chat?.phoneNumberId) {
-                        const whatsappNumber = await ctx.db
-                            .query("whatsapp_numbers")
-                            .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
-                            .first();
-                        if (whatsappNumber) {
-                            businessName = ` [${whatsappNumber.name}]`;
-                        }
-                    }
-                    // In-app toast is handled by getLatestGlobalMessage + GlobalNotification (with number switch).
-                    // Skip creating a duplicate system notification to avoid two toasts per message.
-                    const notifTitle = `${chat?.contactName || args.contactPhone}${businessName}`;
-                    const notifBody = args.type === "text" ? args.content : `Sent a ${args.type}`;
-
-                    for (const admin of admins) {
-                        // Check if admin is viewing this chat
-                        const isViewing = await ctx.runQuery(internal.chat.isUserViewingChat, {
-                            userId: admin._id,
-                            chatId: finalChatId,
-                        });
-
-                        // Only send notification if admin is NOT viewing the conversation
-                        if (!isViewing) {
-                            await pushNotifications.sendPushNotification(ctx, {
-                                userId: admin._id,
-                                notification: {
-                                    title: notifTitle,
-                                    body: notifBody,
-                                    data: {
-                                        chatId: finalChatId,
-                                        ...(chat?.phoneNumberId && { phoneNumberId: chat.phoneNumberId }),
-                                    },
-                                },
-                            });
-                        }
+                // Get business name for context
+                let businessName = "";
+                if (chat?.phoneNumberId) {
+                    const whatsappNumber = await ctx.db
+                        .query("whatsapp_numbers")
+                        .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", chat.phoneNumberId!))
+                        .first();
+                    if (whatsappNumber) {
+                        businessName = ` [${whatsappNumber.name}]`;
                     }
                 }
+                // In-app toast is handled by getLatestGlobalMessage + GlobalNotification (with number switch).
+                // This push is for human escalation only.
+                const notifTitle = `${chat?.contactName || args.contactPhone}${businessName}`;
+                const notifBody =
+                    args.type === "text"
+                        ? args.content
+                        : `New ${args.type} message while awaiting human reply`;
+                await ctx.scheduler.runAfter(0, (internal as any).notifications.sendHumanEscalationPush, {
+                    chatId: finalChatId,
+                    title: notifTitle,
+                    body: notifBody,
+                    phoneNumberId: chat?.phoneNumberId,
+                });
             } catch (e) {
                 console.error("[Messages] Failed to send push notifications:", e);
             }

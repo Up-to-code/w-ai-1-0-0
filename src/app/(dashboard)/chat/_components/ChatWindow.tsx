@@ -6,6 +6,7 @@ import { api } from "../../../../../convex/_generated/api"
 import { MessageList } from "./MessageList"
 import { ConversationHeader } from "./ConversationHeader"
 import { ChatInput } from "./ChatInput"
+import { useAuth } from "@/contexts/AuthContext"
 
 interface ChatWindowProps {
   chatId: string
@@ -13,6 +14,9 @@ interface ChatWindowProps {
 
 export function ChatWindow({ chatId }: ChatWindowProps) {
   const markAsRead = useMutation(api.chat.markAsRead)
+  const setActiveChat = useMutation(api.chat.setActiveChat)
+  const clearActiveChat = useMutation(api.chat.clearActiveChat)
+  const { userId } = useAuth()
 
   const isRealChatId = chatId && chatId !== "new"
 
@@ -22,6 +26,24 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
       markAsRead({ chatId: chatId as any }).catch(console.error)
     }
   }, [chatId, isRealChatId, markAsRead])
+
+  useEffect(() => {
+    if (!isRealChatId || !userId) return
+
+    const heartbeat = () =>
+      setActiveChat({
+        chatId: chatId as any,
+        userId: userId as any,
+      }).catch(console.error)
+
+    heartbeat()
+    const intervalId = setInterval(heartbeat, 20_000)
+
+    return () => {
+      clearInterval(intervalId)
+      clearActiveChat({ userId: userId as any }).catch(console.error)
+    }
+  }, [chatId, isRealChatId, userId, setActiveChat, clearActiveChat])
 
   return (
     <div className="flex flex-col h-full bg-[#efeae2] dark:bg-[#0b141a] relative">
