@@ -868,6 +868,16 @@ export const processWebhookAction = internalAction({
           typeof value?.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : undefined;
         const metadataDisplayPhoneNumber =
           typeof value?.metadata?.display_phone_number === "string" ? value.metadata.display_phone_number : undefined;
+        const metadataBusinessAccountId =
+          typeof change?.entryId === "string" ? change.entryId : undefined;
+
+        if (metadataPhoneNumberId) {
+          await ctx.runMutation(internal.whatsappNumbers.upsertFromWebhookMetadata, {
+            businessNumberId: metadataPhoneNumberId,
+            displayPhoneNumber: metadataDisplayPhoneNumber,
+            businessAccountId: metadataBusinessAccountId,
+          });
+        }
 
         // Validate: when using metadata.phone_number_id (not fallback), number must be in whatsapp_numbers
         if (resolvedPhoneNumberId && !resolvedNumber.usedFallback) {

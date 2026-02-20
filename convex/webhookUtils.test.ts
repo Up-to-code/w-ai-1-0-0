@@ -5,14 +5,15 @@ describe("extractWebhookChanges", () => {
   it("extracts all changes across all entries", () => {
     const body = {
       entry: [
-        { changes: [{ field: "messages", value: { id: "a" } }] },
-        { changes: [{ field: "messages", value: { id: "b" } }, { field: "statuses", value: { id: "c" } }] },
+        { id: "entry-1", changes: [{ field: "messages", value: { id: "a" } }] },
+        { id: "entry-2", changes: [{ field: "messages", value: { id: "b" } }, { field: "statuses", value: { id: "c" } }] },
       ],
     };
 
     const changes = extractWebhookChanges(body);
     expect(changes).toHaveLength(3);
     expect(changes.map((c) => c.field)).toEqual(["messages", "messages", "statuses"]);
+    expect(changes.map((c) => c.entryId)).toEqual(["entry-1", "entry-2", "entry-2"]);
   });
 
   it("returns empty array for malformed payloads", () => {
@@ -39,6 +40,14 @@ describe("extractWebhookChanges", () => {
     expect(changes).toHaveLength(1);
     expect(changes[0].field).toBe("messages");
     expect(changes[0].value?.statuses?.[0]?.id).toBe("wamid.1");
+  });
+
+  it("keeps change when entry id is missing", () => {
+    const changes = extractWebhookChanges({
+      entry: [{ changes: [{ field: "messages", value: { id: "a" } }] }],
+    });
+    expect(changes).toHaveLength(1);
+    expect(changes[0].entryId).toBeUndefined();
   });
 });
 

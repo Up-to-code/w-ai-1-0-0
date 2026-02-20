@@ -1,10 +1,16 @@
-import { query, mutation, internalQuery, action } from "./_generated/server";
+import { query, mutation, internalQuery, internalMutation, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { buildMetaSyncPlan, normalizeNumericId } from "./metaNumbersSync";
 
 const SEED_PLACEHOLDER = "from_env";
+const UNKNOWN_WABA_PLACEHOLDER = "unknown_waba";
+
+function normalizeOptionalText(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
 
 export const list = query({
   args: {},
@@ -67,6 +73,64 @@ export const getByBusinessNumberId = internalQuery({
     // Backward compatibility for older rows that may contain unnormalized values.
     const all = await ctx.db.query("whatsapp_numbers").collect();
     return all.find((row) => normalizeNumericId(row.businessNumberId) === normalizedInput) ?? null;
+  },
+});
+
+/**
+ * Ensures webhook-discovered numbers are visible in the dashboard even before manual setup.
+ * This lets teams switch workspaces immediately, then add per-number access tokens afterward.
+ */
+export const upsertFromWebhookMetadata = internalMutation({
+  args: {
+    businessNumberId: v.string(),
+    displayPhoneNumber: v.optional(v.string()),
+    verifiedName: v.optional(v.string()),
+    businessAccountId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const normalizedBusinessNumberId = normalizeNumericId(args.businessNumberId);
+    if (!normalizedBusinessNumberId) return null;
+
+    const existing = await ctx.db
+      .query("whatsapp_numbers")
+      .withIndex("by_business_number_id", (q) =>
+        q.eq("businessNumberId", normalizedBusinessNumberId)
+      )
+      .first();
+
+    const displayPhone = normalizeOptionalText(args.displayPhoneNumber) ?? `+${normalizedBusinessNumberId}`;
+    const verifiedName = normalizeOptionalText(args.verifiedName) ?? `WhatsApp ${normalizedBusinessNumberId.slice(-4)}`;
+    const businessAccountId =
+      normalizeNumericId(args.businessAccountId) || existing?.businessAccountId || UNKNOWN_WABA_PLACEHOLDER;
+
+    if (existing) {
+      const patch: {
+        phone?: string;
+        name?: string;
+        businessAccountId?: string;
+      } = {};
+      if (displayPhone && displayPhone !== existing.phone) patch.phone = displayPhone;
+      if (verifiedName && verifiedName !== existing.name) patch.name = verifiedName;
+      if (businessAccountId && businessAccountId !== existing.businessAccountId) {
+        patch.businessAccountId = businessAccountId;
+      }
+      if (Object.keys(patch).length > 0) {
+        await ctx.db.patch(existing._id, patch);
+      }
+      return existing._id;
+    }
+
+    const id = await ctx.db.insert("whatsapp_numbers", {
+      businessAccountId,
+      businessNumberId: normalizedBusinessNumberId,
+      phone: displayPhone,
+      name: verifiedName,
+      createdAt: Date.now(),
+    });
+    await ctx.runMutation(api.agents.ensureForPhoneNumber, {
+      phoneNumberId: normalizedBusinessNumberId,
+    });
+    return id;
   },
 });
 

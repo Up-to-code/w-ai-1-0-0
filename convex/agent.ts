@@ -42,6 +42,23 @@ function hasArabicText(text: string): boolean {
   return /[\u0600-\u06FF]/.test(text);
 }
 
+export function buildIdentityLockPrompt(input: {
+  phoneNumberId?: string;
+  businessName?: string;
+  businessPhone?: string;
+}): string {
+  const businessName = input.businessName?.trim() || "this business";
+  const businessPhone = input.businessPhone?.trim() || "unknown";
+  const phoneNumberId = input.phoneNumberId?.trim() || "unknown";
+  return [
+    "Identity lock (critical):",
+    `- You represent ONLY "${businessName}" on WhatsApp number "${businessPhone}" (phone_number_id: ${phoneNumberId}).`,
+    "- Never claim to be another company, brand, business unit, or assistant.",
+    "- Never merge identities or mention internal multi-number setup to customers.",
+    "- If asked about a different business, state you are this business only and offer human handoff when needed.",
+  ].join("\n");
+}
+
 // --- Tools ---
 
 async function searchProducts(ctx: any, query: string) {
@@ -331,6 +348,16 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     });
     const model = config?.model || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
+    const numberProfile = chat?.phoneNumberId
+      ? await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+          businessNumberId: chat.phoneNumberId,
+        })
+      : null;
+    const identityLockPrompt = buildIdentityLockPrompt({
+      phoneNumberId: chat?.phoneNumberId ?? undefined,
+      businessName: numberProfile?.name ?? undefined,
+      businessPhone: numberProfile?.phone ?? undefined,
+    });
     const toolsEnabled = normalizeToolsEnabled(config?.toolsEnabled as string[] | undefined);
     const recommendProducts = config?.recommendProducts ?? true;
     const effectiveApiKey = (config as { openRouterApiKey?: string } | undefined)?.openRouterApiKey?.trim() || process.env.OPENROUTER_KEY;
@@ -372,7 +399,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     }
 
     const builtContext = buildConversationContext({
-      systemPrompt,
+      systemPrompt: `${systemPrompt}\n\n${identityLockPrompt}`,
       messages: recentForContext,
       existingSummary: chat?.aiSummary,
       knowledgeSnippets,

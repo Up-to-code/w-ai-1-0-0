@@ -42,6 +42,7 @@ export default function IntegrationsPage() {
     const webhookSettings = useQuery(api.webhookSettings.get)
     const setWebhookSettings = useMutation(api.webhookSettings.set)
     const runHealthCheck = useAction(api.whatsappNumbers.checkHealth)
+    const syncNumbersFromMeta = useAction(api.whatsappNumbers.syncFromMeta)
     const testAccessToken = useAction(api.whatsapp.testAccessToken)
     const updateWhatsappNumber = useMutation(api.whatsappNumbers.update)
     const addWhatsappNumber = useMutation(api.whatsappNumbers.add)
@@ -271,93 +272,15 @@ export default function IntegrationsPage() {
             })
             return
         }
-        const wabaIds = Array.from(
-            new Set(
-                numbers
-                    .map((n) => n.businessAccountId?.trim() || "")
-                    .filter((id) => id.length > 0)
-            )
-        )
-        if (wabaIds.length === 0) {
-            setTokenTestResult({
-                success: false,
-                error: "لا يوجد WABA ID. حدّث businessAccountId لأحد الأرقام أولاً.",
-            })
-            return
-        }
-
         setSyncingFromMeta(true)
         try {
-            let discovered = 0
-            let inserted = 0
-            let updated = 0
-            const existingById = new Map(numbers.map((n) => [n.businessNumberId, n]))
-
-            for (const wabaId of wabaIds) {
-                const url = new URL(`https://graph.facebook.com/v21.0/${wabaId}/phone_numbers`)
-                url.searchParams.set("fields", "id,display_phone_number,verified_name")
-                url.searchParams.set("access_token", token)
-                const response = await fetch(url.toString())
-                const json = await response.json().catch(() => ({}))
-
-                if (!response.ok) {
-                    const msg =
-                        (json &&
-                            typeof json === "object" &&
-                            "error" in json &&
-                            typeof json.error === "object" &&
-                            json.error &&
-                            "message" in json.error &&
-                            typeof json.error.message === "string"
-                            ? json.error.message
-                            : `HTTP ${response.status}`)
-                    setTokenTestResult({ success: false, error: `Meta error (${wabaId}): ${msg}`, details: json })
-                    return
-                }
-
-                const rows = Array.isArray((json as { data?: unknown[] }).data)
-                    ? ((json as { data?: unknown[] }).data as Array<Record<string, unknown>>)
-                    : []
-
-                for (const row of rows) {
-                    const id = String(row.id ?? "").trim().replace(/^\+/, "")
-                    if (!id) continue
-                    discovered += 1
-                    const phone = String(row.display_phone_number ?? "").trim() || `+${id}`
-                    const name = String(row.verified_name ?? "").trim() || `WhatsApp ${id.slice(-4)}`
-                    const existing = existingById.get(id)
-                    if (!existing) {
-                        await addWhatsappNumber({
-                            businessAccountId: wabaId,
-                            businessNumberId: id,
-                            phone,
-                            name,
-                            accessToken: token,
-                        })
-                        inserted += 1
-                        continue
-                    }
-                    const patch: {
-                        id: Id<"whatsapp_numbers">
-                        name?: string
-                        phone?: string
-                        businessAccountId?: string
-                        accessToken?: string
-                    } = { id: existing._id }
-                    if (existing.phone !== phone) patch.phone = phone
-                    if (existing.name !== name) patch.name = name
-                    if (existing.businessAccountId !== wabaId) patch.businessAccountId = wabaId
-                    if (!existing.accessToken?.trim()) patch.accessToken = token
-                    if (Object.keys(patch).length > 1) {
-                        await updateWhatsappNumber(patch)
-                        updated += 1
-                    }
-                }
-            }
+            const result = await syncNumbersFromMeta({
+                accessToken: token,
+            })
 
             setTokenTestResult({
                 success: true,
-                displayPhoneNumber: `discovered=${discovered}, inserted=${inserted}, updated=${updated}`,
+                displayPhoneNumber: `discovered=${result.discovered}, inserted=${result.inserted}, updated=${result.updated}`,
             })
         } catch (err) {
             const msg = err instanceof Error ? err.message : String(err)
