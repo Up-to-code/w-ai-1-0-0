@@ -31,6 +31,37 @@ type BulkCreateSummary = {
     totalProcessed: number
 }
 
+function toBulkCreateSummary(result: unknown, chunkSize: number): BulkCreateSummary {
+    if (typeof result === "number") {
+        return {
+            importedCount: result,
+            skippedDuplicateCount: 0,
+            skippedInvalidCount: 0,
+            completedNameCount: 0,
+            totalProcessed: chunkSize,
+        }
+    }
+
+    if (result && typeof result === "object") {
+        const r = result as Partial<BulkCreateSummary>
+        return {
+            importedCount: r.importedCount ?? 0,
+            skippedDuplicateCount: r.skippedDuplicateCount ?? 0,
+            skippedInvalidCount: r.skippedInvalidCount ?? 0,
+            completedNameCount: r.completedNameCount ?? 0,
+            totalProcessed: r.totalProcessed ?? chunkSize,
+        }
+    }
+
+    return {
+        importedCount: 0,
+        skippedDuplicateCount: 0,
+        skippedInvalidCount: 0,
+        completedNameCount: 0,
+        totalProcessed: chunkSize,
+    }
+}
+
 const NAME_HEADERS = new Set([
     "الاسم",
     "اسم",
@@ -241,10 +272,10 @@ export function ImportButton() {
 
             for (let i = 0; i < contactsToImport.length; i += chunkSize) {
                 const chunk = contactsToImport.slice(i, i + chunkSize)
-                const result: BulkCreateSummary = await bulkCreate({
+                const rawResult = await bulkCreate({
                     contacts: chunk,
-                    skipDuplicates: true,
                 })
+                const result = toBulkCreateSummary(rawResult, chunk.length)
 
                 importedCount += result.importedCount
                 skippedDuplicateCount += result.skippedDuplicateCount
