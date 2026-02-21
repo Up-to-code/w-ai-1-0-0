@@ -813,6 +813,16 @@ export const sendToContact = internalAction({
                     componentsSent: components.length,
                     templateComponents: template?.components?.length || 0
                 });
+            } else if (err.code === 132001 || err.category === "INVALID_TEMPLATE") {
+                // Template translation/name mismatch - non-retryable, log as failed
+                err.retryable = false;
+                console.error(`[Campaign] Invalid template for contact ${args.contactId}:`, {
+                    code: err.code,
+                    error: errorMsg,
+                    templateName: campaign.templateName,
+                    templateLanguage: template?.language || "ar",
+                    suggestion: "Ensure template name exists and is approved for the exact language in WABA."
+                });
             } else if (err.code === 80005 || err.code === 200) {
                 // Rate limit error - these are retryable
                 console.warn(`[Campaign] Retryable error (${err.code}) for contact ${args.contactId}: ${errorMsg}`);

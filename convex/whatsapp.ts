@@ -152,12 +152,23 @@ export const sendMessage = action({
           `Retryable: ${errorCategory.retryable}`
         );
 
-        // Create structured error report
-        const errorReport = createErrorReport(
-          new Error(errorMessage) as Error & { code?: number; retryable?: boolean },
-          { contact: args.to, phone: recipient }
-        );
-        errorReport.code = errorCode;
+        // Create structured error report with preserved classification fields.
+        const reportError = new Error(errorMessage) as Error & {
+          code?: number;
+          category?: string;
+          retryable?: boolean;
+        };
+        reportError.code = errorCode;
+        reportError.category = errorCategory.category;
+        reportError.retryable = errorCategory.retryable;
+        const errorReport = createErrorReport(reportError, {
+          contact: args.to,
+          phone: recipient,
+          details: data.error?.error_data?.details,
+          fbtraceId: data.error?.fbtrace_id,
+          templateName: (args.content as any)?.name,
+          languageCode: (args.content as any)?.language?.code,
+        });
         console.error("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
 
         // Create and throw a typed error with user-friendly message (includes suggested action)
