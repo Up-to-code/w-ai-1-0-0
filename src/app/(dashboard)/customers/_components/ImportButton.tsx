@@ -4,13 +4,146 @@ import { useState, useRef } from "react"
 import { useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { Button } from "@/components/ui/button"
-import { Upload, Loader2, FileSpreadsheet, XCircle } from "lucide-react"
+import { Upload, Loader2, FileSpreadsheet } from "lucide-react"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
 import * as XLSX from "xlsx"
 import { toast } from "sonner"
+
+const DEFAULT_IMPORTED_NAME = "عميل بدون اسم"
+
+type ImportContact = {
+    name: string
+    phone: string
+    email?: string
+    tags: string[]
+    stage?: string
+    nameWasCompleted: boolean
+}
+
+type BulkCreateSummary = {
+    importedCount: number
+    skippedDuplicateCount: number
+    skippedInvalidCount: number
+    completedNameCount: number
+    totalProcessed: number
+}
+
+const NAME_HEADERS = new Set([
+    "الاسم",
+    "اسم",
+    "name",
+    "full name",
+    "customer name",
+    "client name",
+].map(normalizeHeader))
+
+const PHONE_HEADERS = new Set([
+    "رقم الهاتف",
+    "رقم الجوال",
+    "الجوال",
+    "الهاتف",
+    "phone",
+    "phone number",
+    "number",
+    "mobile",
+    "mobile number",
+    "whatsapp",
+    "whatsapp number",
+].map(normalizeHeader))
+
+const EMAIL_HEADERS = new Set([
+    "البريد الإلكتروني",
+    "البريد الالكتروني",
+    "email",
+    "e-mail",
+].map(normalizeHeader))
+
+const TAGS_HEADERS = new Set([
+    "الوسوم",
+    "الوسم",
+    "tags",
+    "tag",
+    "labels",
+].map(normalizeHeader))
+
+const STAGE_HEADERS = new Set([
+    "المرحلة",
+    "stage",
+    "status",
+].map(normalizeHeader))
+
+function toAsciiDigits(value: string) {
+    return value
+        .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 1632))
+        .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 1776))
+}
+
+function normalizeHeader(header: string) {
+    return toAsciiDigits(header)
+        .toLowerCase()
+        .trim()
+        .replace(/\s+/g, " ")
+        .replace(/[_-]+/g, " ")
+}
+
+function normalizePhone(value: unknown) {
+    return toAsciiDigits(String(value ?? "")).replace(/\D/g, "")
+}
+
+function parseTags(value: unknown) {
+    const source = String(value ?? "")
+    return source
+        .split(/[،,]/)
+        .map((tag) => tag.trim())
+        .filter(Boolean)
+}
+
+function getCellValue(row: Record<string, unknown>, allowedHeaders: Set<string>) {
+    for (const [key, value] of Object.entries(row)) {
+        if (allowedHeaders.has(normalizeHeader(key))) {
+            return value
+        }
+    }
+    return undefined
+}
+
+function parseImportRow(row: Record<string, unknown>, globalTags: string[]): ImportContact {
+    const rawName = String(getCellValue(row, NAME_HEADERS) ?? "").trim()
+    const phone = normalizePhone(getCellValue(row, PHONE_HEADERS))
+    const emailRaw = String(getCellValue(row, EMAIL_HEADERS) ?? "").trim()
+    const stageRaw = String(getCellValue(row, STAGE_HEADERS) ?? "").trim()
+    const rowTags = parseTags(getCellValue(row, TAGS_HEADERS))
+    const mergedTags = Array.from(new Set([...rowTags, ...globalTags]))
+
+    return {
+        name: rawName || DEFAULT_IMPORTED_NAME,
+        phone,
+        email: emailRaw || undefined,
+        tags: mergedTags,
+        stage: stageRaw || undefined,
+        nameWasCompleted: rawName.length === 0,
+    }
+}
+
+function readFileAsArrayBuffer(file: File) {
+    return new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => {
+            if (reader.result instanceof ArrayBuffer) {
+                resolve(reader.result)
+                return
+            }
+            reject(new Error("Failed to read file as ArrayBuffer"))
+        }
+        reader.onerror = () => {
+            reject(reader.error ?? new Error("File read failed"))
+        }
+        reader.readAsArrayBuffer(file)
+    })
+}
 
 export function ImportButton() {
     const [isOpen, setIsOpen] = useState(false)
@@ -33,72 +166,103 @@ export function ImportButton() {
 
         setIsImporting(true)
         setProgress(10)
-        const reader = new FileReader()
 
-        reader.onload = async (event) => {
-            try {
-                const data = event.target?.result
-                const workbook = XLSX.read(data, { type: "binary" })
-                const sheetName = workbook.SheetNames[0]
-                const sheet = workbook.Sheets[sheetName]
-                const jsonData = XLSX.utils.sheet_to_json(sheet) as any[]
+        try {
+            const data = await readFileAsArrayBuffer(selectedFile)
+            const workbook = XLSX.read(data, { type: "array" })
+            const sheetName = workbook.SheetNames[0]
+            const sheet = sheetName ? workbook.Sheets[sheetName] : undefined
 
-                setProgress(30)
-
-                const gTags = globalTags
-                    .split(",")
-                    .map(t => t.trim())
-                    .filter(Boolean)
-
-                const contacts = jsonData.map(row => {
-                    const name = row["الاسم"] || row["Name"] || "عميل بدون اسم"
-                    const phone = String(row["رقم الهاتف"] || row["Number"] || row["Phone"] || "").replace(/[^0-9]/g, "")
-                    const email = row["البريد الإلكتروني"] || row["Email"]
-                    const rowTags = (row["الوسوم"] || row["Tags"] || "")
-                        .split(",")
-                        .map((t: string) => t.trim())
-                        .filter(Boolean)
-
-                    const stage = row["المرحلة"] || row["Stage"]
-
-                    // Merge global tags with row tags
-                    const mergedTags = Array.from(new Set([...rowTags, ...gTags]))
-
-                    return { name, phone, email, tags: mergedTags, stage }
-                }).filter(c => c.phone.length > 5)
-
-                setProgress(50)
-
-                if (contacts.length === 0) {
-                    toast.error("لم يتم العثور على بيانات صالحة في الملف")
-                    setIsImporting(false)
-                    return
-                }
-
-                // Process in chunks if large, for smoother UI
-                const chunkSize = 50
-                let successCount = 0
-
-                for (let i = 0; i < contacts.length; i += chunkSize) {
-                    const chunk = contacts.slice(i, i + chunkSize)
-                    const count = await bulkCreate({ contacts: chunk })
-                    successCount += count
-                    const currentProgress = Math.min(50 + Math.floor(((i + chunkSize) / contacts.length) * 50), 100)
-                    setProgress(currentProgress)
-                }
-
-                toast.success(`تم استيراد ${successCount} عميل بنجاح`)
-                setIsOpen(false)
-                resetState()
-            } catch (error) {
-                console.error("Import error:", error)
-                toast.error("حدث خطأ أثناء استيراد البيانات")
-            } finally {
-                setIsImporting(false)
+            if (!sheet) {
+                toast.error("تعذر قراءة الملف. تأكد من وجود ورقة بيانات.")
+                return
             }
-        }
 
-        reader.readAsBinaryString(selectedFile)
+            const rows = XLSX.utils.sheet_to_json<Record<string, unknown>>(sheet, { defval: "" })
+            setProgress(30)
+
+            const globalTagList = parseTags(globalTags)
+            const contactsToImport: Array<Omit<ImportContact, "nameWasCompleted">> = []
+            let skippedInvalidFromParser = 0
+            let completedNameFromParser = 0
+
+            for (const row of rows) {
+                const parsed = parseImportRow(row, globalTagList)
+                if (parsed.phone.length < 7 || parsed.phone.length > 15) {
+                    skippedInvalidFromParser += 1
+                    continue
+                }
+                if (parsed.nameWasCompleted) {
+                    completedNameFromParser += 1
+                }
+
+                contactsToImport.push({
+                    name: parsed.name,
+                    phone: parsed.phone,
+                    email: parsed.email,
+                    tags: parsed.tags,
+                    stage: parsed.stage,
+                })
+            }
+
+            setProgress(50)
+
+            if (contactsToImport.length === 0) {
+                toast.error(
+                    skippedInvalidFromParser > 0
+                        ? `لم يتم العثور على صفوف صالحة. تم تخطي ${skippedInvalidFromParser} صف غير صالح.`
+                        : "لم يتم العثور على بيانات صالحة في الملف"
+                )
+                return
+            }
+
+            const chunkSize = 50
+            let importedCount = 0
+            let skippedDuplicateCount = 0
+            let skippedInvalidCount = 0
+            let completedNameCount = 0
+            let totalProcessed = 0
+
+            for (let i = 0; i < contactsToImport.length; i += chunkSize) {
+                const chunk = contactsToImport.slice(i, i + chunkSize)
+                const result: BulkCreateSummary = await bulkCreate({
+                    contacts: chunk,
+                    skipDuplicates: true,
+                })
+
+                importedCount += result.importedCount
+                skippedDuplicateCount += result.skippedDuplicateCount
+                skippedInvalidCount += result.skippedInvalidCount
+                completedNameCount += result.completedNameCount
+                totalProcessed += result.totalProcessed
+
+                const processedRows = Math.min(i + chunk.length, contactsToImport.length)
+                const currentProgress = Math.min(50 + Math.floor((processedRows / contactsToImport.length) * 50), 100)
+                setProgress(currentProgress)
+            }
+
+            const totalInvalid = skippedInvalidFromParser + skippedInvalidCount
+            const totalCompletedNames = completedNameFromParser + completedNameCount
+
+            if (importedCount === 0) {
+                toast.error(
+                    `لم يتم استيراد أي عميل. المكرر: ${skippedDuplicateCount} | غير صالح: ${totalInvalid}`
+                )
+                return
+            }
+
+            toast.success(
+                `تم الاستيراد: ${importedCount} | مكرر: ${skippedDuplicateCount} | غير صالح: ${totalInvalid} | أسماء مكتملة: ${totalCompletedNames} | إجمالي معالج: ${totalProcessed + skippedInvalidFromParser}`
+            )
+
+            setIsOpen(false)
+            resetState()
+        } catch (error) {
+            console.error("Import error:", error)
+            toast.error("حدث خطأ أثناء استيراد البيانات")
+        } finally {
+            setIsImporting(false)
+        }
     }
 
     const resetState = () => {
@@ -199,7 +363,7 @@ export function ImportButton() {
                             {isImporting ? (
                                 <>
                                     <Loader2 className="h-4 w-4 animate-spin" />
-                                    جاري الرفع
+                                    جاري الاستيراد
                                 </>
                             ) : (
                                 "بدء الاستيراد"

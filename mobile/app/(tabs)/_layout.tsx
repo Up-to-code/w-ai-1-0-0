@@ -1,9 +1,15 @@
 import { Tabs } from "expo-router";
 import { Ionicons } from "@expo/vector-icons";
+import { useEffect } from "react";
 import { useLocale } from "../../contexts/LocaleContext";
+import { markStartupPhase } from "../../lib/startupDiagnostics";
 
 export default function TabsLayout() {
   const { t, isRTL } = useLocale();
+
+  useEffect(() => {
+    void markStartupPhase("tabs_render_start");
+  }, []);
 
   return (
     <Tabs

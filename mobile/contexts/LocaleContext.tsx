@@ -288,37 +288,45 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
   };
 
   const setLocale = useCallback(async (newLocale: Locale) => {
-    await storage.setLocale(newLocale);
-    setLocaleState(newLocale);
-    
-    // Auto-set direction based on locale
-    const newDirection = newLocale === "ar" ? "rtl" : "ltr";
-    await setDirection(newDirection);
+    try {
+      await storage.setLocale(newLocale);
+      setLocaleState(newLocale);
+
+      // Auto-set direction based on locale
+      const newDirection = newLocale === "ar" ? "rtl" : "ltr";
+      await setDirection(newDirection);
+    } catch (error) {
+      console.error("Error setting locale:", error);
+    }
   }, []);
 
   const setDirection = useCallback(async (newDirection: Direction) => {
-    await storage.setDirection(newDirection);
-    setDirectionState(newDirection);
-    
-    // Apply RTL change - requires app restart
-    if (I18nManager.isRTL !== (newDirection === "rtl")) {
-      I18nManager.allowRTL(true);
-      I18nManager.forceRTL(newDirection === "rtl");
-      
-      // Reload app to apply RTL changes
-      // Note: In development, app restart may be required manually
-      try {
-        // Try to dynamically import expo-updates if available
-        const Updates = await import("expo-updates").catch(() => null);
-        if (Updates) {
-          await Updates.reloadAsync();
-        } else {
+    try {
+      await storage.setDirection(newDirection);
+      setDirectionState(newDirection);
+
+      // Apply RTL change - requires app restart
+      if (I18nManager.isRTL !== (newDirection === "rtl")) {
+        I18nManager.allowRTL(true);
+        I18nManager.forceRTL(newDirection === "rtl");
+
+        // Reload app to apply RTL changes
+        // Note: In development, app restart may be required manually
+        try {
+          // Try to dynamically import expo-updates if available
+          const Updates = await import("expo-updates").catch(() => null);
+          if (Updates) {
+            await Updates.reloadAsync();
+          } else {
+            console.log("Please restart the app to apply direction changes");
+          }
+        } catch {
+          // In development, Updates.reloadAsync() may not work
           console.log("Please restart the app to apply direction changes");
         }
-      } catch (e) {
-        // In development, Updates.reloadAsync() may not work
-        console.log("Please restart the app to apply direction changes");
       }
+    } catch (error) {
+      console.error("Error setting direction:", error);
     }
   }, []);
 

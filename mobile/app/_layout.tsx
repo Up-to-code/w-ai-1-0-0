@@ -19,7 +19,17 @@ import {
   Cairo_600SemiBold,
   Cairo_700Bold,
 } from "@expo-google-fonts/cairo";
-import { setupNotificationHandlers } from "../lib/notifications";
+import {
+  clearStartupCrash,
+  getUnrecoveredStartupCrash,
+  markStartupPhase,
+  markStartupReady,
+  type StartupCrashInfo,
+} from "../lib/startupDiagnostics";
+import {
+  configureNotificationHandler,
+  setupNotificationHandlers,
+} from "../lib/notifications";
 
 // Keep native splash visible until we explicitly hide it
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -28,6 +38,10 @@ function AuthGuard() {
   const { isAuthenticated, isAdmin, loading, userId, setRole, logout } = useAuth();
   const segments = useSegments();
   const router = useRouter();
+
+  useEffect(() => {
+    void markStartupPhase("auth_provider_mount");
+  }, []);
 
   // Fetch user to get role from server
   const user = useQuery(
@@ -91,7 +105,9 @@ function AuthGuard() {
 function NotificationHandlerSetup() {
   const { setActivePhoneNumberId } = useWorkspace();
   useEffect(() => {
+    configureNotificationHandler();
     const cleanup = setupNotificationHandlers((id) => setActivePhoneNumberId(id));
+    void markStartupReady();
     return cleanup;
   }, [setActivePhoneNumberId]);
   return null;
@@ -150,8 +166,63 @@ function StartupConfigError({
   );
 }
 
+function StartupCrashRecovery({
+  crash,
+  onRecovered,
+}: {
+  crash: StartupCrashInfo;
+  onRecovered: () => void;
+}) {
+  const [retrying, setRetrying] = useState(false);
+
+  const handleRetry = async () => {
+    setRetrying(true);
+    try {
+      await clearStartupCrash();
+      onRecovered();
+      const Updates = await import("expo-updates").catch(() => null);
+      if (Updates?.reloadAsync) {
+        await Updates.reloadAsync();
+      }
+    } catch (error) {
+      console.warn("[Startup] crash recovery retry failed", error);
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <View style={styles.errorRoot}>
+      <Text style={styles.errorTitle}>Startup Recovery Mode</Text>
+      <Text style={styles.errorText}>
+        حدث خطأ عند بدء التطبيق في المحاولة السابقة.
+      </Text>
+      <Text style={styles.errorDetail}>Phase: {crash.phase}</Text>
+      <Text style={styles.errorDetail}>Source: {crash.source}</Text>
+      <Text style={styles.errorDetail}>Fatal: {crash.isFatal ? "yes" : "no"}</Text>
+      <Text style={styles.errorDetail}>
+        Time: {new Date(crash.timestamp).toLocaleString()}
+      </Text>
+      <Text style={styles.errorHint}>Last error: {crash.message}</Text>
+      <TouchableOpacity
+        onPress={handleRetry}
+        disabled={retrying}
+        style={[styles.retryButton, retrying && styles.retryButtonDisabled]}
+      >
+        {retrying ? (
+          <ActivityIndicator color="#FFFFFF" />
+        ) : (
+          <Text style={styles.retryButtonText}>Retry Startup / إعادة المحاولة</Text>
+        )}
+      </TouchableOpacity>
+    </View>
+  );
+}
+
 export default function RootLayout() {
   const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
+  const [startupCrash, setStartupCrash] = useState<StartupCrashInfo | null>(null);
+  const [diagnosticsLoaded, setDiagnosticsLoaded] = useState(false);
 
   // Load Cairo font for Arabic - may hang on Android release; use timeout fallback
   const [fontsLoaded, fontError] = useFonts({
@@ -159,6 +230,29 @@ export default function RootLayout() {
     Cairo_600SemiBold,
     Cairo_700Bold,
   });
+
+  useEffect(() => {
+    void markStartupPhase("fonts_init");
+  }, []);
+
+  useEffect(() => {
+    const phase = hasConvexUrl && convexClient ? "convex_bootstrap_ok" : "convex_bootstrap_failed";
+    void markStartupPhase(phase);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const crash = await getUnrecoveredStartupCrash();
+      if (!cancelled) {
+        setStartupCrash(crash);
+        setDiagnosticsLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Fallback: proceed after timeout if fonts hang (known Android EAS build issue)
   useEffect(() => {
@@ -180,6 +274,27 @@ export default function RootLayout() {
       <View style={styles.loadingRoot}>
         <ActivityIndicator size="large" color="#007AFF" />
       </View>
+    );
+  }
+
+  if (!diagnosticsLoaded) {
+    return (
+      <View style={styles.loadingRoot}>
+        <ActivityIndicator size="large" color="#007AFF" />
+      </View>
+    );
+  }
+
+  if (startupCrash) {
+    return (
+      <GestureHandlerRootView style={styles.root}>
+        <SafeAreaProvider>
+          <StartupCrashRecovery
+            crash={startupCrash}
+            onRecovered={() => setStartupCrash(null)}
+          />
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
     );
   }
 

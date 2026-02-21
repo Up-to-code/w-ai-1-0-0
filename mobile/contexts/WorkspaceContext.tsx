@@ -3,6 +3,7 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { storage } from "../lib/storage";
+import { markStartupPhase } from "../lib/startupDiagnostics";
 
 const ALL_NUMBERS_SENTINEL = "__all__";
 
@@ -32,16 +33,34 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
 
   const setActivePhoneNumberId = useCallback(async (id: string | null) => {
     setActiveState(id);
-    await storage.setActivePhoneNumberId(id ?? ALL_NUMBERS_SENTINEL);
+    try {
+      await storage.setActivePhoneNumberId(id ?? ALL_NUMBERS_SENTINEL);
+    } catch (error) {
+      console.warn("[Workspace] failed to persist active number", error);
+    }
+  }, []);
+
+  useEffect(() => {
+    void markStartupPhase("workspace_provider_mount");
   }, []);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const stored = await storage.getActivePhoneNumberId();
-      if (!cancelled) {
-        setActiveState(stored === ALL_NUMBERS_SENTINEL ? null : stored);
-        setHydrated(true);
+      try {
+        const stored = await storage.getActivePhoneNumberId();
+        if (!cancelled) {
+          setActiveState(stored === ALL_NUMBERS_SENTINEL ? null : stored);
+        }
+      } catch (error) {
+        console.warn("[Workspace] failed to hydrate active number", error);
+        if (!cancelled) {
+          setActiveState(null);
+        }
+      } finally {
+        if (!cancelled) {
+          setHydrated(true);
+        }
       }
     })();
     return () => {
@@ -55,7 +74,11 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     if (current == null) return;
     const exists = numbers.some((n) => n.businessNumberId === current);
     if (!exists) {
-      void storage.setActivePhoneNumberId(numbers[0].businessNumberId);
+      void storage
+        .setActivePhoneNumberId(numbers[0].businessNumberId)
+        .catch((error) => {
+          console.warn("[Workspace] failed to recover invalid active number", error);
+        });
     }
   }, [numbers, hydrated, activePhoneNumberId]);
 

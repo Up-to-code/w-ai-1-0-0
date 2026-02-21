@@ -1,6 +1,18 @@
-import { query, mutation, action } from "./_generated/server";
+import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+
+const DEFAULT_IMPORTED_NAME = "عميل بدون اسم";
+
+function toAsciiDigits(value: string) {
+    return value
+        .replace(/[٠-٩]/g, (digit) => String(digit.charCodeAt(0) - 1632))
+        .replace(/[۰-۹]/g, (digit) => String(digit.charCodeAt(0) - 1776));
+}
+
+function normalizePhone(value: string) {
+    return toAsciiDigits(value).replace(/\D/g, "");
+}
 
 export const list = query({
     args: {
@@ -9,7 +21,7 @@ export const list = query({
         limit: v.optional(v.number())
     },
     handler: async (ctx, args) => {
-        let q = ctx.db.query("contacts");
+        const q = ctx.db.query("contacts");
 
         // Note: Simple filtering for now. For scale, we'd use search capabilities or more indexes.
         if (args.limit) {
@@ -110,22 +122,78 @@ export const bulkCreate = mutation({
             email: v.optional(v.string()),
             tags: v.optional(v.array(v.string())),
             stage: v.optional(v.string()),
-        }))
+        })),
+        skipDuplicates: v.optional(v.boolean()),
     },
     handler: async (ctx, args) => {
-        const promises = args.contacts.map(c =>
-            ctx.db.insert("contacts", {
-                name: c.name,
-                phone: c.phone,
-                email: c.email,
-                tags: c.tags || [],
-                stage: c.stage,
+        const skipDuplicates = args.skipDuplicates !== false;
+        const seenPhones = new Set<string>();
+
+        let importedCount = 0;
+        let skippedDuplicateCount = 0;
+        let skippedInvalidCount = 0;
+        let completedNameCount = 0;
+        let totalProcessed = 0;
+
+        for (const contact of args.contacts) {
+            totalProcessed += 1;
+
+            const normalizedPhone = normalizePhone(contact.phone);
+            if (normalizedPhone.length < 7 || normalizedPhone.length > 15) {
+                skippedInvalidCount += 1;
+                continue;
+            }
+
+            if (skipDuplicates) {
+                if (seenPhones.has(normalizedPhone)) {
+                    skippedDuplicateCount += 1;
+                    continue;
+                }
+
+                const existing = await ctx.db
+                    .query("contacts")
+                    .withIndex("by_phone", (q) => q.eq("phone", normalizedPhone))
+                    .first();
+
+                if (existing) {
+                    skippedDuplicateCount += 1;
+                    continue;
+                }
+
+                seenPhones.add(normalizedPhone);
+            }
+
+            const name = contact.name.trim() || DEFAULT_IMPORTED_NAME;
+            if (!contact.name.trim()) {
+                completedNameCount += 1;
+            }
+
+            const email = contact.email?.trim() || undefined;
+            const stage = contact.stage?.trim() || undefined;
+            const tags = Array.from(
+                new Set((contact.tags || []).map((tag) => tag.trim()).filter(Boolean))
+            );
+
+            await ctx.db.insert("contacts", {
+                name,
+                phone: normalizedPhone,
+                email,
+                tags,
+                stage,
                 isSubscribed: true,
                 createdAt: Date.now(),
-            })
-        );
-        await Promise.all(promises);
-        return args.contacts.length;
+            });
+
+            importedCount += 1;
+        }
+
+        return {
+            importedCount,
+            skippedDuplicateCount,
+            skippedInvalidCount,
+            completedNameCount,
+            totalProcessed,
+        };
     },
 });
 

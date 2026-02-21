@@ -31,13 +31,7 @@ export default function CustomersPage() {
     return map
   }, [chats])
 
-  // When a specific number is selected: only show contacts that have a chat with this number
-  const contactsForCurrentNumber = useMemo(() => {
-    const list = contacts || []
-    if (!effectivePhoneNumberId || !chats?.length) return list
-    const phonesWithChat = new Set((chats || []).map(c => c.contactPhone).filter(Boolean))
-    return list.filter(c => phonesWithChat.has(c.phone))
-  }, [contacts, chats, effectivePhoneNumberId])
+  const contactsForCurrentNumber = useMemo(() => contacts || [], [contacts])
 
   const uniqueTags = useMemo(() => {
     const set = new Set<string>()
@@ -78,7 +72,7 @@ export default function CustomersPage() {
           <CardTitle>قائمة العملاء</CardTitle>
           <CardDescription>
             {effectivePhoneNumberId
-              ? `جهات اتصال لهذا الرقم: ${contactsForCurrentNumber.length}`
+              ? `إجمالي جهات الاتصال: ${contactsForCurrentNumber.length}`
               : `إجمالي: ${contacts ? contacts.length : 0}`}
           </CardDescription>
           <TagFilter tags={uniqueTags} selected={selectedTag} onSelect={setSelectedTag} />

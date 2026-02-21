@@ -13,13 +13,19 @@ const config = getDefaultConfig(projectRoot);
 // Configure Metro to watch the parent directory's convex folder
 config.watchFolders = [workspaceRoot];
 
-// Configure resolver to allow imports from parent directory
+// Force Metro to resolve runtime deps from mobile/node_modules only.
+// This prevents loading a second React version from workspace root, which can
+// crash Android release builds with white screen + process exit.
 config.resolver = {
   ...config.resolver,
-  nodeModulesPaths: [
-    path.resolve(projectRoot, 'node_modules'),
-    path.resolve(workspaceRoot, 'node_modules'),
-  ],
+  nodeModulesPaths: [path.resolve(projectRoot, 'node_modules')],
+  extraNodeModules: {
+    react: path.resolve(projectRoot, 'node_modules/react'),
+    'react/jsx-runtime': path.resolve(projectRoot, 'node_modules/react/jsx-runtime'),
+    'react/jsx-dev-runtime': path.resolve(projectRoot, 'node_modules/react/jsx-dev-runtime'),
+    'react-native': path.resolve(projectRoot, 'node_modules/react-native'),
+    expo: path.resolve(projectRoot, 'node_modules/expo'),
+  },
 };
 
 module.exports = config;

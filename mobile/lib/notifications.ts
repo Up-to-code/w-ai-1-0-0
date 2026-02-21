@@ -3,33 +3,37 @@ import { Platform } from "react-native";
 import Constants from "expo-constants";
 
 let activeChatIdForForegroundSuppression: string | null = null;
+let notificationHandlerConfigured = false;
 
 export function setActiveChatForNotificationSuppression(chatId: string | null) {
   activeChatIdForForegroundSuppression = chatId;
 }
 
-// Configure notification behavior
-try {
-  Notifications.setNotificationHandler({
-    handleNotification: async (notification) => {
-      const data = notification.request.content.data as { chatId?: string } | undefined;
-      const isActiveChatNotification =
-        !!data?.chatId &&
-        !!activeChatIdForForegroundSuppression &&
-        data.chatId === activeChatIdForForegroundSuppression;
+export function configureNotificationHandler() {
+  if (notificationHandlerConfigured) return;
+  try {
+    Notifications.setNotificationHandler({
+      handleNotification: async (notification) => {
+        const data = notification.request.content.data as { chatId?: string } | undefined;
+        const isActiveChatNotification =
+          !!data?.chatId &&
+          !!activeChatIdForForegroundSuppression &&
+          data.chatId === activeChatIdForForegroundSuppression;
 
-      // Best practice: suppress noisy foreground alerts for the chat currently open on screen.
-      return {
-        shouldShowAlert: !isActiveChatNotification,
-        shouldPlaySound: !isActiveChatNotification,
-        shouldSetBadge: !isActiveChatNotification,
-        shouldShowBanner: !isActiveChatNotification,
-        shouldShowList: !isActiveChatNotification,
-      };
-    },
-  });
-} catch (error) {
-  console.warn("Failed to configure notification handler", error);
+        // Best practice: suppress noisy foreground alerts for the chat currently open on screen.
+        return {
+          shouldShowAlert: !isActiveChatNotification,
+          shouldPlaySound: !isActiveChatNotification,
+          shouldSetBadge: !isActiveChatNotification,
+          shouldShowBanner: !isActiveChatNotification,
+          shouldShowList: !isActiveChatNotification,
+        };
+      },
+    });
+    notificationHandlerConfigured = true;
+  } catch (error) {
+    console.warn("Failed to configure notification handler", error);
+  }
 }
 
 /**
@@ -39,6 +43,8 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
   let token: string | null = null;
 
   try {
+    configureNotificationHandler();
+
     // Request permissions
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
     let finalStatus = existingStatus;
