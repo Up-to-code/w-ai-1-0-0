@@ -1,8 +1,8 @@
  "use client"
  
- import { useMemo } from "react"
- import { useParams } from "next/navigation"
- import { useQuery } from "convex/react"
+ import { useMemo, useState } from "react"
+ import { useParams, useRouter } from "next/navigation"
+ import { useQuery, useMutation } from "convex/react"
  import { api } from "../../../../../convex/_generated/api"
  import type { Id } from "../../../../../convex/_generated/dataModel"
  import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -10,16 +10,20 @@
  import { Avatar, AvatarFallback } from "@/components/ui/avatar"
  import { Button } from "@/components/ui/button"
  import Link from "next/link"
- import { Users, Phone, Mail, MessageSquare } from "lucide-react"
+ import { Users, Phone, Mail, MessageSquare, Trash2 } from "lucide-react"
  import { avatarColorFromString, initialsFromName } from "@/lib/utils"
  import { useWorkspace } from "@/contexts/WorkspaceContext"
+ import { toast } from "sonner"
  
  export default function CustomerDetailPage() {
    const params = useParams()
+   const router = useRouter()
    const id = params?.id as string
    const { activePhoneNumberId } = useWorkspace()
+   const [isDeleting, setIsDeleting] = useState(false)
    const effectivePhoneNumberId =
      !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+   const deleteContact = useMutation(api.contacts.remove)
 
    const contact = useQuery(
      api.contacts.getById,
@@ -40,6 +44,23 @@
  
    const seed = `${contact.phone}:${contact.name}`
    const avatarBg = avatarColorFromString(seed)
+
+   const handleDelete = async () => {
+     const confirmed = window.confirm(`حذف العميل "${contact.name}"؟`)
+     if (!confirmed) return
+
+     setIsDeleting(true)
+     try {
+       await deleteContact({ id: contact._id })
+       toast.success("تم حذف العميل")
+       router.push("/customers")
+     } catch (error) {
+       console.error("Failed to delete customer", error)
+       toast.error("فشل حذف العميل")
+     } finally {
+       setIsDeleting(false)
+     }
+   }
  
    return (
      <div className="m-16 space-y-6">
@@ -80,7 +101,16 @@
              </div>
            )}
  
-           <div className="pt-2">
+           <div className="pt-2 flex items-center gap-2">
+             <Button
+               variant="destructive"
+               className="gap-2 rounded-full"
+               onClick={handleDelete}
+               disabled={isDeleting}
+             >
+               <Trash2 className="h-4 w-4" />
+               {isDeleting ? "جاري الحذف..." : "حذف العميل"}
+             </Button>
              {chatId ? (
                <Link href={`/chat/${chatId}`}>
                  <Button variant="outline" className="gap-2 rounded-full">

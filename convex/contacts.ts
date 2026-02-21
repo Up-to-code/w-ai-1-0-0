@@ -203,3 +203,13 @@ export const getById = query({
         return await ctx.db.get(args.id);
     },
 });
+
+export const remove = mutation({
+    args: { id: v.id("contacts") },
+    handler: async (ctx, args) => {
+        const contact = await ctx.db.get(args.id);
+        if (!contact) throw new Error("Contact not found");
+        await ctx.db.delete(args.id);
+        return { success: true };
+    },
+});

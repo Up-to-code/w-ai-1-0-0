@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import React, { ErrorInfo, useEffect, useState } from "react";
 import { Stack, useRouter, useSegments } from "expo-router";
 import { ConvexProvider, useQuery } from "convex/react";
 import { convexClient, convexInitError, convexUrl, hasConvexUrl } from "../lib/convex";
@@ -9,16 +9,11 @@ import { ActivityIndicator, View, Text, StyleSheet, TouchableOpacity } from "rea
 import { SafeAreaProvider } from "react-native-safe-area-context";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import * as SplashScreen from "expo-splash-screen";
+import * as SystemUI from "expo-system-ui";
 import { AccessDenied } from "../components/AccessDenied";
 import { AuthErrorBoundary } from "../components/AuthErrorBoundary";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import {
-  useFonts,
-  Cairo_400Regular,
-  Cairo_600SemiBold,
-  Cairo_700Bold,
-} from "@expo-google-fonts/cairo";
 import {
   clearStartupCrash,
   getUnrecoveredStartupCrash,
@@ -26,10 +21,7 @@ import {
   markStartupReady,
   type StartupCrashInfo,
 } from "../lib/startupDiagnostics";
-import {
-  configureNotificationHandler,
-  setupNotificationHandlers,
-} from "../lib/notifications";
+import { flushQueuedRuntimeEvents, reportRuntimeEvent } from "../lib/runtimeTelemetry";
 
 // Keep native splash visible until we explicitly hide it
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -90,7 +82,7 @@ function AuthGuard() {
 
   return (
     <WorkspaceProvider>
-      <NotificationHandlerSetup />
+      <NotificationHandlerSetup isAuthenticated={!!isAuthenticated} />
       <Stack screenOptions={{ headerShown: false }}>
         <Stack.Screen name="(auth)" />
         <Stack.Screen name="(tabs)" />
@@ -102,18 +94,40 @@ function AuthGuard() {
   );
 }
 
-function NotificationHandlerSetup() {
+function NotificationHandlerSetup({
+  isAuthenticated,
+}: {
+  isAuthenticated: boolean;
+}) {
   const { setActivePhoneNumberId } = useWorkspace();
   useEffect(() => {
-    configureNotificationHandler();
-    const cleanup = setupNotificationHandlers((id) => setActivePhoneNumberId(id));
-    void markStartupReady();
-    return cleanup;
-  }, [setActivePhoneNumberId]);
+    if (!isAuthenticated) return;
+    let cleanup: (() => void) | undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const notifications = await import("../lib/notifications");
+        if (cancelled) return;
+        notifications.configureNotificationHandler();
+        cleanup = notifications.setupNotificationHandlers((id) =>
+          setActivePhoneNumberId(id)
+        );
+      } catch (error) {
+        console.warn("[Startup] failed to initialize notifications", error);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      cleanup?.();
+    };
+  }, [isAuthenticated, setActivePhoneNumberId]);
   return null;
 }
 
-const FONT_LOAD_TIMEOUT_MS = 5000;
+const FONT_LOAD_TIMEOUT_MS = 1200;
+const SPLASH_HIDE_WATCHDOG_MS = 1800;
 
 function StartupConfigError({
   error,
@@ -219,17 +233,70 @@ function StartupCrashRecovery({
   );
 }
 
+type RootFatalBoundaryProps = {
+  children: React.ReactNode;
+};
+
+type RootFatalBoundaryState = {
+  hasError: boolean;
+  message: string;
+};
+
+class RootFatalBoundary extends React.Component<
+  RootFatalBoundaryProps,
+  RootFatalBoundaryState
+> {
+  state: RootFatalBoundaryState = {
+    hasError: false,
+    message: "",
+  };
+
+  static getDerivedStateFromError(error: unknown): RootFatalBoundaryState {
+    const message = error instanceof Error ? error.message : String(error);
+    return { hasError: true, message };
+  }
+
+  componentDidCatch(error: unknown, _errorInfo: ErrorInfo): void {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error("[RootFatalBoundary] startup render error", message);
+    void reportRuntimeEvent({
+      eventName: "root_render_error",
+      severity: "fatal",
+      message,
+    });
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <View style={styles.errorRoot}>
+        <Text style={styles.errorTitle}>Startup Error</Text>
+        <Text style={styles.errorText}>
+          حدث خطأ أثناء تحميل التطبيق.
+        </Text>
+        <Text style={styles.errorDetail}>{this.state.message}</Text>
+      </View>
+    );
+  }
+}
+
 export default function RootLayout() {
   const [fontTimeoutElapsed, setFontTimeoutElapsed] = useState(false);
   const [startupCrash, setStartupCrash] = useState<StartupCrashInfo | null>(null);
-  const [diagnosticsLoaded, setDiagnosticsLoaded] = useState(false);
 
-  // Load Cairo font for Arabic - may hang on Android release; use timeout fallback
-  const [fontsLoaded, fontError] = useFonts({
-    Cairo_400Regular,
-    Cairo_600SemiBold,
-    Cairo_700Bold,
-  });
+  useEffect(() => {
+    void markStartupPhase("app_boot_start");
+    void reportRuntimeEvent({
+      eventName: "app_boot_start",
+      severity: "info",
+      phase: "app_boot_start",
+    });
+    void flushQueuedRuntimeEvents();
+  }, []);
+
+  useEffect(() => {
+    SystemUI.setBackgroundColorAsync("#FFFFFF").catch(() => {});
+  }, []);
 
   useEffect(() => {
     void markStartupPhase("fonts_init");
@@ -238,6 +305,12 @@ export default function RootLayout() {
   useEffect(() => {
     const phase = hasConvexUrl && convexClient ? "convex_bootstrap_ok" : "convex_bootstrap_failed";
     void markStartupPhase(phase);
+    void reportRuntimeEvent({
+      eventName: phase,
+      severity: phase === "convex_bootstrap_ok" ? "info" : "error",
+      phase,
+      message: phase === "convex_bootstrap_ok" ? "Convex client initialized." : convexInitError ?? "Convex init failed",
+    });
   }, []);
 
   useEffect(() => {
@@ -246,7 +319,15 @@ export default function RootLayout() {
       const crash = await getUnrecoveredStartupCrash();
       if (!cancelled) {
         setStartupCrash(crash);
-        setDiagnosticsLoaded(true);
+        if (crash) {
+          void reportRuntimeEvent({
+            eventName: "startup_crash_recovered",
+            severity: crash.isFatal ? "fatal" : "error",
+            message: crash.message,
+            phase: crash.phase,
+            metadata: { source: crash.source, timestamp: crash.timestamp },
+          });
+        }
       }
     })();
     return () => {
@@ -260,7 +341,7 @@ export default function RootLayout() {
     return () => clearTimeout(t);
   }, []);
 
-  const canProceed = fontsLoaded || !!fontError || fontTimeoutElapsed;
+  const canProceed = fontTimeoutElapsed;
 
   // Hide splash when we're ready to render
   useEffect(() => {
@@ -269,15 +350,20 @@ export default function RootLayout() {
     }
   }, [canProceed]);
 
-  if (!canProceed) {
-    return (
-      <View style={styles.loadingRoot}>
-        <ActivityIndicator size="large" color="#007AFF" />
-      </View>
-    );
-  }
+  useEffect(() => {
+    const watchdog = setTimeout(() => {
+      SplashScreen.hideAsync().catch(() => {});
+    }, SPLASH_HIDE_WATCHDOG_MS);
+    return () => clearTimeout(watchdog);
+  }, []);
 
-  if (!diagnosticsLoaded) {
+  useEffect(() => {
+    if (canProceed && hasConvexUrl && convexClient) {
+      void markStartupReady();
+    }
+  }, [canProceed, convexClient]);
+
+  if (!canProceed) {
     return (
       <View style={styles.loadingRoot}>
         <ActivityIndicator size="large" color="#007AFF" />
@@ -314,15 +400,17 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={styles.root}>
       <SafeAreaProvider>
-        <LocaleProvider>
-          <AuthProvider>
-            <ConvexProvider client={convexClient}>
-              <AuthErrorBoundary>
-                <AuthGuard />
-              </AuthErrorBoundary>
-            </ConvexProvider>
-          </AuthProvider>
-        </LocaleProvider>
+        <RootFatalBoundary>
+          <LocaleProvider>
+            <AuthProvider>
+              <ConvexProvider client={convexClient}>
+                <AuthErrorBoundary>
+                  <AuthGuard />
+                </AuthErrorBoundary>
+              </ConvexProvider>
+            </AuthProvider>
+          </LocaleProvider>
+        </RootFatalBoundary>
       </SafeAreaProvider>
     </GestureHandlerRootView>
   );

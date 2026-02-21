@@ -15,6 +15,7 @@ const DEFAULT_CONFIG = {
   agentName: "Default Assistant",
   toolsEnabled: DEFAULT_TOOLS_ENABLED,
   recommendProducts: true,
+  manualCatalogEnabled: true,
   fallbackMode: "text_only" as const,
 };
 
@@ -39,6 +40,7 @@ export const getConfig = query({
           ...perNumberConfig,
           toolsEnabled: normalizeToolsEnabled(perNumberConfig.toolsEnabled),
           recommendProducts: perNumberConfig.recommendProducts ?? true,
+          manualCatalogEnabled: perNumberConfig.manualCatalogEnabled ?? true,
           fallbackMode: perNumberConfig.fallbackMode ?? "text_only",
           agentName: perNumberConfig.agentName ?? "Assistant",
         };
@@ -61,6 +63,7 @@ export const getConfig = query({
       ...globalConfig,
       toolsEnabled: normalizeToolsEnabled(globalConfig.toolsEnabled),
       recommendProducts: globalConfig.recommendProducts ?? true,
+      manualCatalogEnabled: globalConfig.manualCatalogEnabled ?? true,
       fallbackMode: globalConfig.fallbackMode ?? "text_only",
       agentName: globalConfig.agentName ?? "Default Assistant",
     };
@@ -81,6 +84,7 @@ export const updateConfig = mutation({
     agentName: v.optional(v.string()),
     toolsEnabled: v.optional(v.array(v.string())),
     recommendProducts: v.optional(v.boolean()),
+    manualCatalogEnabled: v.optional(v.boolean()),
     fallbackMode: v.optional(v.union(v.literal("no_reply"), v.literal("text_only"), v.literal("human_handoff"))),
   },
   handler: async (ctx, args) => {
@@ -101,6 +105,7 @@ export const updateConfig = mutation({
       agentName: args.agentName?.trim() || undefined,
       toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
       recommendProducts: args.recommendProducts ?? true,
+      manualCatalogEnabled: args.manualCatalogEnabled ?? existing?.manualCatalogEnabled ?? true,
       fallbackMode: args.fallbackMode ?? "text_only",
     };
     
@@ -117,6 +122,7 @@ export const updateConfig = mutation({
         agentName: args.agentName?.trim() || undefined,
         toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
         recommendProducts: args.recommendProducts ?? true,
+        manualCatalogEnabled: args.manualCatalogEnabled ?? true,
         fallbackMode: args.fallbackMode ?? "text_only",
       });
     }
@@ -143,6 +149,7 @@ export const getInternalConfig = internalQuery({
           ...perNumberConfig,
           toolsEnabled: normalizeToolsEnabled(perNumberConfig.toolsEnabled),
           recommendProducts: perNumberConfig.recommendProducts ?? true,
+          manualCatalogEnabled: perNumberConfig.manualCatalogEnabled ?? true,
           fallbackMode: perNumberConfig.fallbackMode ?? "text_only",
           agentName: perNumberConfig.agentName ?? "Assistant",
         };
@@ -165,9 +172,43 @@ export const getInternalConfig = internalQuery({
       ...globalConfig,
       toolsEnabled: normalizeToolsEnabled(globalConfig.toolsEnabled),
       recommendProducts: globalConfig.recommendProducts ?? true,
+      manualCatalogEnabled: globalConfig.manualCatalogEnabled ?? true,
       fallbackMode: globalConfig.fallbackMode ?? "text_only",
       agentName: globalConfig.agentName ?? "Default Assistant",
       ...(phoneNumberId && { phoneNumberId }),
     };
+  },
+});
+
+export const setManualCatalogEnabled = mutation({
+  args: {
+    phoneNumberId: v.string(),
+    enabled: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("ai_configs")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .first();
+
+    if (existing) {
+      await ctx.db.patch(existing._id, {
+        manualCatalogEnabled: args.enabled,
+        updatedAt: Date.now(),
+      });
+      return existing._id;
+    }
+
+    return await ctx.db.insert("ai_configs", {
+      phoneNumberId: args.phoneNumberId,
+      systemPrompt: DEFAULT_CONFIG.systemPrompt,
+      model: DEFAULT_CONFIG.model,
+      isActive: false,
+      toolsEnabled: DEFAULT_TOOLS_ENABLED,
+      recommendProducts: true,
+      manualCatalogEnabled: args.enabled,
+      fallbackMode: "text_only",
+      updatedAt: Date.now(),
+    });
   },
 });

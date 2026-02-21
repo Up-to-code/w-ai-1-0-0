@@ -360,6 +360,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     });
     const toolsEnabled = normalizeToolsEnabled(config?.toolsEnabled as string[] | undefined);
     const recommendProducts = config?.recommendProducts ?? true;
+    const manualCatalogEnabled = config?.manualCatalogEnabled ?? true;
     const effectiveApiKey = (config as { openRouterApiKey?: string } | undefined)?.openRouterApiKey?.trim() || process.env.OPENROUTER_KEY;
     if (!effectiveApiKey) {
       console.error("[Agent] Missing OPENROUTER_KEY (neither per-number nor env)");
@@ -380,7 +381,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
       return;
     }
     console.log(
-      `[Agent] Using config for phoneNumberId=${chat?.phoneNumberId ?? "global"} model=${model} recommendProducts=${recommendProducts} tools=${toolsEnabled.join(",")}`
+      `[Agent] Using config for phoneNumberId=${chat?.phoneNumberId ?? "global"} model=${model} recommendProducts=${recommendProducts} manualCatalogEnabled=${manualCatalogEnabled} tools=${toolsEnabled.join(",")}`
     );
 
     // 2. Gather context inputs (last 5 messages + summary + KB snippets)
@@ -393,6 +394,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
       knowledgeSnippets = await ctx.runAction(internal.ai.searchKnowledge, {
         query: args.userMessage,
         limit: 5,
+        phoneNumberId: chat?.phoneNumberId ?? undefined,
       });
     } catch (e) {
       console.warn("[Agent] Knowledge search failed:", e);
@@ -578,6 +580,41 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
         console.log(`[Agent] Detected search intent. Raw: "${args.userMessage}", Clean: "${cleanQuery}"`);
         
         let products: any[] = [];
+        const seenProductKey = new Set<string>();
+        const pushUnique = (items: any[]) => {
+          for (const item of items) {
+            const key = String(item._id || item.id || item.externalId || item.sku || item.name || Math.random());
+            if (seenProductKey.has(key)) continue;
+            seenProductKey.add(key);
+            products.push(item);
+          }
+        };
+
+        // 0. Manual per-number catalog first (if enabled)
+        if (chat?.phoneNumberId && manualCatalogEnabled) {
+          try {
+            const manualProducts = await ctx.runQuery((internal as any).manualCatalog.searchManualProductsForAgent, {
+              phoneNumberId: chat.phoneNumberId,
+              query: cleanQuery,
+              limit: 5,
+            });
+            if (manualProducts.length > 0) {
+              console.log(`[Agent] Found ${manualProducts.length} manual products for number ${chat.phoneNumberId}`);
+              pushUnique(
+                manualProducts.map((p: any) => ({
+                  ...p,
+                  source: "manual",
+                  price: p.price || "N/A",
+                  currency: p.currency || "",
+                  image: p.primaryImageUrl || p.images?.[0]?.url || null,
+                  url: "",
+                }))
+              );
+            }
+          } catch (e) {
+            console.warn("[Agent] Manual catalog search failed", e);
+          }
+        }
         
         // 1. Try Salla Live Search (with Retry Strategy)
         try {
@@ -604,7 +641,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
             if (sallaResult.connected) {
                 if (sallaResult.products && sallaResult.products.length > 0) {
                     console.log(`[Agent] Found ${sallaResult.products.length} products via Salla API`);
-                    products = sallaResult.products;
+                    pushUnique(sallaResult.products.map((p: any) => ({ ...p, source: "salla" })));
                 } else {
                     console.log(`[Agent] Salla search returned 0 products after retries.`);
                 }
@@ -616,10 +653,11 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
         }
 
         // 2. Fallback to Local DB if Salla didn't return anything
-        if (products.length === 0) {
+        if (products.length === 0 || products.length < 5) {
              console.log(`[Agent] Fallback to Local DB search for: "${cleanQuery}"`);
-             products = await ctx.runQuery(api.products.list, { search: cleanQuery });
-             console.log(`[Agent] Found ${products.length} products via Local DB`);
+             const localProducts = await ctx.runQuery(api.products.list, { search: cleanQuery });
+             pushUnique(localProducts.map((p: any) => ({ ...p, source: "local" })));
+             console.log(`[Agent] Found ${localProducts.length} products via Local DB`);
         }
         
         if (products && products.length > 0) {
@@ -633,13 +671,16 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
             // Enhanced Product Context with query-type specific formatting
             const productContextList = products.map((p: any) => ({
                 id: p._id || p.id,
-                name: p.name,
-                price: `${p.price} ${p.currency}`,
-                description: p.description || "No description",
-                image: p.images?.[0]?.url || p.images?.[0] || p.image || p.imageUrl || null,
+                name: p.title || p.name,
+                price: p.price != null ? `${p.price} ${p.currency || ""}`.trim() : "N/A",
+                description: p.description || p.aiSummary || "No description",
+                image: p.primaryImageUrl || p.images?.[0]?.url || p.images?.[0] || p.image || p.imageUrl || null,
                 url: p.url || p.urls?.customer || null, // Salla product URL
                 stock: p.stock_status || p.availability || 'unknown',
-                sku: p.sku || p.code || null
+                sku: p.sku || p.code || null,
+                category: p.categoryNameSnapshot || null,
+                advice: p.aiAdvice || null,
+                source: p.source || "unknown",
             })).slice(0, 5); // Limit to 5
 
             // Contextual response based on query type
@@ -715,7 +756,8 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
                 productsText += `
 Product ${index + 1}:
 Name: ${p.name}
-Price: ${p.price} ${stockIndicator}`;
+Price: ${p.price} ${stockIndicator}
+Source: ${p.source}`;
                 
                 // Add SKU if available and it was a product number search
                 if (p.sku && intentResult.queryType === 'product_number') {
@@ -726,6 +768,12 @@ SKU: ${p.sku}`;
                 productsText += `
 Description: ${p.description.substring(0, 150)}...
 -------------------`;
+                if (p.category) {
+                  productsText += `\nCategory: ${p.category}`;
+                }
+                if (p.advice) {
+                  productsText += `\nAdvice: ${String(p.advice).substring(0, 160)}...`;
+                }
             });
 
             // Select primary product based on query context

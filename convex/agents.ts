@@ -15,6 +15,7 @@ function toView(config: {
   agentName?: string;
   toolsEnabled?: string[];
   recommendProducts?: boolean;
+  manualCatalogEnabled?: boolean;
   fallbackMode?: "no_reply" | "text_only" | "human_handoff";
   openRouterApiKey?: string;
 }) {
@@ -27,6 +28,7 @@ function toView(config: {
     agentName: config.agentName ?? "Assistant",
     toolsEnabled: normalizeToolsEnabled(config.toolsEnabled),
     recommendProducts: config.recommendProducts ?? true,
+    manualCatalogEnabled: config.manualCatalogEnabled ?? true,
     fallbackMode: config.fallbackMode ?? "text_only",
     openRouterApiKeyConfigured: !!config.openRouterApiKey?.trim(),
   };
@@ -57,6 +59,7 @@ export const getByPhoneNumberId = query({
         agentName: "Assistant",
         toolsEnabled: DEFAULT_TOOLS_ENABLED,
         recommendProducts: true,
+        manualCatalogEnabled: true,
         fallbackMode: "text_only" as const,
       };
     }
@@ -74,6 +77,7 @@ export const upsertByPhoneNumberId = mutation({
     agentName: v.optional(v.string()),
     toolsEnabled: v.optional(v.array(v.string())),
     recommendProducts: v.optional(v.boolean()),
+    manualCatalogEnabled: v.optional(v.boolean()),
     fallbackMode: v.optional(v.union(v.literal("no_reply"), v.literal("text_only"), v.literal("human_handoff"))),
     openRouterApiKey: v.optional(v.string()),
   },
@@ -91,6 +95,7 @@ export const upsertByPhoneNumberId = mutation({
       agentName: args.agentName?.trim() || undefined,
       toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
       recommendProducts: args.recommendProducts ?? true,
+      manualCatalogEnabled: args.manualCatalogEnabled ?? existing?.manualCatalogEnabled ?? true,
       fallbackMode: args.fallbackMode ?? "text_only",
       updatedAt: Date.now(),
       ...(args.openRouterApiKey !== undefined && { openRouterApiKey: args.openRouterApiKey?.trim() || undefined }),
@@ -121,6 +126,7 @@ export const toggleByPhoneNumberId = mutation({
         isActive: args.isActive,
         toolsEnabled: DEFAULT_TOOLS_ENABLED,
         recommendProducts: true,
+        manualCatalogEnabled: true,
         fallbackMode: "text_only",
         updatedAt: Date.now(),
       });
@@ -150,6 +156,7 @@ export const ensureForPhoneNumber = mutation({
       isActive: false,
       toolsEnabled: DEFAULT_TOOLS_ENABLED,
       recommendProducts: true,
+      manualCatalogEnabled: true,
       fallbackMode: "text_only",
       updatedAt: Date.now(),
     });

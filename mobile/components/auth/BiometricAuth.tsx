@@ -7,7 +7,6 @@ import {
   Alert,
   Platform,
 } from "react-native";
-import * as LocalAuthentication from "expo-local-authentication";
 import { storage } from "../../lib/storage";
 
 interface BiometricAuthProps {
@@ -19,22 +18,58 @@ export function BiometricAuth({ onSuccess, onFallback }: BiometricAuthProps) {
   const [isAvailable, setIsAvailable] = useState(false);
   const [biometricType, setBiometricType] = useState<string>("");
   const [loading, setLoading] = useState(true);
+  const [authModule, setAuthModule] = useState<{
+    hasHardwareAsync: () => Promise<boolean>;
+    supportedAuthenticationTypesAsync: () => Promise<number[]>;
+    isEnrolledAsync: () => Promise<boolean>;
+    authenticateAsync: (options: {
+      promptMessage: string;
+      cancelLabel: string;
+      fallbackLabel: string;
+      disableDeviceFallback: boolean;
+    }) => Promise<{ success: boolean; error?: string }>;
+    AuthenticationType: {
+      FACIAL_RECOGNITION: number;
+      FINGERPRINT: number;
+    };
+  } | null>(null);
 
   useEffect(() => {
-    checkBiometricAvailability();
+    let cancelled = false;
+    (async () => {
+      try {
+        const moduleNamespace = await import("expo-local-authentication");
+        if (cancelled) return;
+        setAuthModule(moduleNamespace);
+      } catch (error) {
+        console.error("Failed to load biometric module:", error);
+        if (!cancelled) {
+          setIsAvailable(false);
+          setLoading(false);
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  const checkBiometricAvailability = async () => {
+  useEffect(() => {
+    if (!authModule) return;
+    void checkBiometricAvailability(authModule);
+  }, [authModule]);
+
+  const checkBiometricAvailability = async (localAuth: NonNullable<typeof authModule>) => {
     try {
-      const compatible = await LocalAuthentication.hasHardwareAsync();
+      const compatible = await localAuth.hasHardwareAsync();
       if (!compatible) {
         setIsAvailable(false);
         setLoading(false);
         return;
       }
 
-      const types = await LocalAuthentication.supportedAuthenticationTypesAsync();
-      const isEnrolled = await LocalAuthentication.isEnrolledAsync();
+      const types = await localAuth.supportedAuthenticationTypesAsync();
+      const isEnrolled = await localAuth.isEnrolledAsync();
 
       if (!isEnrolled) {
         setIsAvailable(false);
@@ -44,9 +79,9 @@ export function BiometricAuth({ onSuccess, onFallback }: BiometricAuthProps) {
 
       setIsAvailable(true);
       
-      if (types.includes(LocalAuthentication.AuthenticationType.FACIAL_RECOGNITION)) {
+      if (types.includes(localAuth.AuthenticationType.FACIAL_RECOGNITION)) {
         setBiometricType("Face ID");
-      } else if (types.includes(LocalAuthentication.AuthenticationType.FINGERPRINT)) {
+      } else if (types.includes(localAuth.AuthenticationType.FINGERPRINT)) {
         setBiometricType("Touch ID");
       } else {
         setBiometricType("Biometric");
@@ -61,7 +96,12 @@ export function BiometricAuth({ onSuccess, onFallback }: BiometricAuthProps) {
 
   const authenticate = async () => {
     try {
-      const result = await LocalAuthentication.authenticateAsync({
+      if (!authModule) {
+        onFallback();
+        return;
+      }
+
+      const result = await authModule.authenticateAsync({
         promptMessage: "Authenticate to access W-AI",
         cancelLabel: "Cancel",
         fallbackLabel: "Use Password",

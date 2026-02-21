@@ -63,6 +63,7 @@ export default defineSchema({
       v.literal("transfer_to_human")
     ))),
     recommendProducts: v.optional(v.boolean()),
+    manualCatalogEnabled: v.optional(v.boolean()),
     fallbackMode: v.optional(v.union(
       v.literal("no_reply"),
       v.literal("text_only"),
@@ -152,15 +153,56 @@ export default defineSchema({
     }),
 
   knowledge_base: defineTable({
+    phoneNumberId: v.optional(v.string()),
     title: v.string(),
     content: v.string(),
     embedding: v.array(v.float64()), // Vector for RAG; must match vector index dimensions
-    sourceType: v.union(v.literal("text"), v.literal("pdf")),
+    sourceType: v.union(v.literal("text"), v.literal("pdf"), v.literal("manual_product"), v.literal("product_category")),
+    sourceRef: v.optional(v.string()),
     createdAt: v.number(),
   }).vectorIndex("by_embedding", {
     vectorField: "embedding",
     dimensions: 1536,
   }),
+
+  product_categories: defineTable({
+    phoneNumberId: v.string(),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    source: v.union(v.literal("ai"), v.literal("manual")),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_name", ["phoneNumberId", "name"])
+    .index("by_phone_slug", ["phoneNumberId", "slug"])
+    .index("by_phone_updated", ["phoneNumberId", "updatedAt"]),
+
+  manual_products: defineTable({
+    phoneNumberId: v.string(),
+    title: v.string(),
+    description: v.string(),
+    images: v.array(v.object({
+      storageId: v.optional(v.string()),
+      url: v.string(),
+      alt: v.optional(v.string()),
+      order: v.number(),
+    })),
+    primaryImageUrl: v.optional(v.string()),
+    categoryId: v.optional(v.id("product_categories")),
+    categoryNameSnapshot: v.optional(v.string()),
+    aiAdvice: v.optional(v.string()),
+    aiSummary: v.optional(v.string()),
+    aiKeywords: v.optional(v.array(v.string())),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_updated", ["phoneNumberId", "updatedAt"])
+    .index("by_phone_category", ["phoneNumberId", "categoryId"])
+    .searchIndex("search_manual_products", {
+      searchField: "title",
+      filterFields: ["phoneNumberId"],
+    }),
 
   // Salla OAuth Integration - stores tokens, fetches products on demand
   sallaIntegrations: defineTable({
@@ -304,6 +346,29 @@ export default defineSchema({
     note: v.optional(v.string()),
     createdAt: v.number(),
   }).index("by_source_createdAt", ["source", "createdAt"]),
+
+  mobile_runtime_events: defineTable({
+    source: v.union(v.literal("mobile"), v.literal("synthetic")),
+    platform: v.optional(v.string()),
+    appVersion: v.optional(v.string()),
+    buildId: v.optional(v.string()),
+    jsEngine: v.optional(v.string()),
+    eventName: v.string(),
+    severity: v.union(
+      v.literal("info"),
+      v.literal("warning"),
+      v.literal("error"),
+      v.literal("fatal")
+    ),
+    message: v.optional(v.string()),
+    stack: v.optional(v.string()),
+    phase: v.optional(v.string()),
+    metadata: v.optional(v.any()),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_severity_createdAt", ["severity", "createdAt"])
+    .index("by_eventName_createdAt", ["eventName", "createdAt"]),
 
   // Single-row: WhatsApp webhook verify token, app access token, optional App ID (from DB, not env)
   webhook_settings: defineTable({

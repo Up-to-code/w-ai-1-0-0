@@ -194,4 +194,111 @@ http.route({
   }),
 });
 
+// POST /mobile/runtime-event: ingest mobile startup/runtime telemetry
+http.route({
+  path: "/mobile/runtime-event",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const bodyText = await request.text();
+      if (bodyText.length > 50_000) {
+        return new Response("Payload too large", { status: 413 });
+      }
+
+      const body: unknown = bodyText ? JSON.parse(bodyText) : {};
+      const payload = body && typeof body === "object" ? body as Record<string, unknown> : {};
+
+      await ctx.runMutation(internal.mobileRuntimeEvents.ingestFromHttp, {
+        source: "mobile",
+        platform: typeof payload.platform === "string" ? payload.platform : undefined,
+        appVersion: typeof payload.appVersion === "string" ? payload.appVersion : undefined,
+        buildId: typeof payload.buildId === "string" ? payload.buildId : undefined,
+        jsEngine: typeof payload.jsEngine === "string" ? payload.jsEngine : undefined,
+        eventName: typeof payload.eventName === "string" ? payload.eventName : undefined,
+        severity:
+          payload.severity === "info" ||
+          payload.severity === "warning" ||
+          payload.severity === "error" ||
+          payload.severity === "fatal"
+            ? payload.severity
+            : undefined,
+        message: typeof payload.message === "string" ? payload.message : undefined,
+        stack: typeof payload.stack === "string" ? payload.stack : undefined,
+        phase: typeof payload.phase === "string" ? payload.phase : undefined,
+        metadata: payload.metadata,
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    } catch (error) {
+      console.error("[mobile/runtime-event] failed:", error);
+      return new Response("Bad Request", { status: 400 });
+    }
+  }),
+});
+
+// POST /mobile/runtime-event/trigger: token-protected synthetic runtime event trigger
+http.route({
+  path: "/mobile/runtime-event/trigger",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    try {
+      const expectedToken = process.env.MOBILE_RUNTIME_TRIGGER_TOKEN?.trim();
+      if (!expectedToken) {
+        return new Response("Trigger endpoint disabled", { status: 503 });
+      }
+
+      const authHeader = request.headers.get("authorization") ?? "";
+      const providedToken = authHeader.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length).trim()
+        : "";
+
+      if (!providedToken || providedToken !== expectedToken) {
+        return new Response("Unauthorized", { status: 401 });
+      }
+
+      const bodyText = await request.text();
+      const body: unknown = bodyText ? JSON.parse(bodyText) : {};
+      const payload = body && typeof body === "object" ? (body as Record<string, unknown>) : {};
+
+      await ctx.runMutation(internal.mobileRuntimeEvents.ingestFromHttp, {
+        source: "synthetic",
+        platform: typeof payload.platform === "string" ? payload.platform : "android",
+        appVersion: typeof payload.appVersion === "string" ? payload.appVersion : undefined,
+        buildId: typeof payload.buildId === "string" ? payload.buildId : undefined,
+        jsEngine: typeof payload.jsEngine === "string" ? payload.jsEngine : undefined,
+        eventName:
+          typeof payload.eventName === "string"
+            ? payload.eventName
+            : "manual_production_trigger",
+        severity:
+          payload.severity === "info" ||
+          payload.severity === "warning" ||
+          payload.severity === "error" ||
+          payload.severity === "fatal"
+            ? payload.severity
+            : "error",
+        message:
+          typeof payload.message === "string"
+            ? payload.message
+            : "Manual synthetic runtime event trigger",
+        stack: typeof payload.stack === "string" ? payload.stack : undefined,
+        phase:
+          typeof payload.phase === "string" ? payload.phase : "manual_trigger",
+        metadata: payload.metadata,
+      });
+
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    } catch (error) {
+      console.error("[mobile/runtime-event/trigger] failed:", error);
+      return new Response("Bad Request", { status: 400 });
+    }
+  }),
+});
+
 export default http;

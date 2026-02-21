@@ -8,6 +8,7 @@ import {
   Alert,
   ActivityIndicator,
   ScrollView,
+  Platform,
 } from "react-native";
 import { useMutation } from "convex/react";
 import { api } from "../../../convex/_generated/api";
@@ -107,10 +108,12 @@ export default function LoginScreen() {
           <Text style={[styles.title, styles.cairoFont]}>{t("app_name")}</Text>
           <Text style={[styles.subtitle, styles.cairoFont]}>{t("sign_in_subtitle")}</Text>
 
-          <BiometricAuth
-            onSuccess={handleBiometricSuccess}
-            onFallback={handleBiometricFallback}
-          />
+          {Platform.OS === "ios" ? (
+            <BiometricAuth
+              onSuccess={handleBiometricSuccess}
+              onFallback={handleBiometricFallback}
+            />
+          ) : null}
 
           <View style={styles.form}>
             <TextInput

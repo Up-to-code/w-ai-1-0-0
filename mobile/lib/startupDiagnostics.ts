@@ -1,4 +1,5 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { reportRuntimeEvent } from "./runtimeTelemetry";
 
 const DIAGNOSTIC_STATE_KEY = "w_ai_startup_diagnostics_v1";
 
@@ -96,15 +97,23 @@ export async function recordStartupFatal(
   source: string,
   isFatal: boolean
 ): Promise<void> {
+  const message = toMessage(error);
   const state = await readState();
   state.lastFatal = {
-    message: toMessage(error),
+    message,
     source,
     isFatal,
     timestamp: Date.now(),
     phase: inMemoryPhase || state.lastPhase || "unknown",
   };
   await writeState(state);
+  void reportRuntimeEvent({
+    eventName: "startup_fatal",
+    severity: isFatal ? "fatal" : "error",
+    message,
+    phase: inMemoryPhase || state.lastPhase || "unknown",
+    metadata: { source },
+  });
 }
 
 export async function markStartupReady(): Promise<void> {
