@@ -48,6 +48,7 @@ const PHONE_HEADERS = new Set([
     "phone",
     "phone number",
     "number",
+    "numbers",
     "mobile",
     "mobile number",
     "whatsapp",
@@ -110,9 +111,24 @@ function getCellValue(row: Record<string, unknown>, allowedHeaders: Set<string>)
     return undefined
 }
 
+function getPhoneCandidate(row: Record<string, unknown>) {
+    const explicitPhone = getCellValue(row, PHONE_HEADERS)
+    if (String(explicitPhone ?? "").trim()) {
+        return explicitPhone
+    }
+
+    // Fallback for one-column sheets where header may be unknown but values are phone numbers.
+    const nonEmptyValues = Object.values(row).filter((value) => String(value ?? "").trim() !== "")
+    if (nonEmptyValues.length === 1) {
+        return nonEmptyValues[0]
+    }
+
+    return undefined
+}
+
 function parseImportRow(row: Record<string, unknown>, globalTags: string[]): ImportContact {
     const rawName = String(getCellValue(row, NAME_HEADERS) ?? "").trim()
-    const phone = normalizePhone(getCellValue(row, PHONE_HEADERS))
+    const phone = normalizePhone(getPhoneCandidate(row))
     const emailRaw = String(getCellValue(row, EMAIL_HEADERS) ?? "").trim()
     const stageRaw = String(getCellValue(row, STAGE_HEADERS) ?? "").trim()
     const rowTags = parseTags(getCellValue(row, TAGS_HEADERS))
