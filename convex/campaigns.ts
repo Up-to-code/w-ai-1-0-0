@@ -850,10 +850,11 @@ export const sendToContact = internalAction({
                     console.warn("[Campaign] Sync during 132001 retry failed", { campaignId: args.campaignId, error: syncErr instanceof Error ? syncErr.message : String(syncErr) });
                 }
                 // Prefer a different language on retry when Send API rejected the previous one (e.g. "does not exist in ar").
+                const failedLang = (failedLanguage132001 ?? "").trim().toLowerCase().split(/[-_]/)[0];
                 const retryRequestedLanguage =
-                    failedLanguage132001 === "ar"
+                    failedLang === "ar"
                         ? "en"
-                        : failedLanguage132001 === "en"
+                        : failedLang === "en"
                             ? "ar"
                             : requestedLanguage;
                 const newResolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
