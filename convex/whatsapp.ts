@@ -434,14 +434,14 @@ export const fetchTemplates = action({
 
     // Enrich each template with full component structure from single-template fetch.
     // The list endpoint may return empty or truncated components; fetching by name returns full structure.
-    const uniqueNames = [...new Set(templatesList.map((t) => t.name))];
+    const uniqueNames: string[] = [...new Set(templatesList.map((t) => t.name))];
     const componentsByKey = new Map<string, any[]>(); // key: "name|language" -> components
 
     for (const name of uniqueNames) {
       try {
         const url = await withAppSecretProof(
           ctx,
-          `${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${encodeURIComponent(name)}`,
+          `${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${encodeURIComponent(String(name))}`,
           accessToken
         );
         const detailRes = await fetch(url, {

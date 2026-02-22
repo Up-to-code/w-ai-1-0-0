@@ -1,6 +1,7 @@
 import { query, mutation, action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
+import type { Id } from "./_generated/dataModel";
 import { retrier, crons } from "./index";
 import { categorizeWhatsAppError } from "./errorUtils";
 
@@ -12,29 +13,47 @@ function normalizePhone(raw: string | null | undefined): string {
     return String(raw ?? "").replace(/[^\d+]/g, "");
 }
 
-// 1. Create a Campaign
+// Shared args validator - single source of truth for campaign creation (includes test campaign fields)
+const createCampaignArgs = {
+    name: v.string(),
+    templateId: v.id("templates"),
+    templateName: v.string(),
+    phoneNumberId: v.optional(v.string()),
+    isTestCampaign: v.optional(v.boolean()),
+    testBypassRecentContact: v.optional(v.boolean()),
+    testContactPhones: v.optional(v.array(v.string())),
+    segmentId: v.optional(v.id("segments")),
+    targetTags: v.optional(v.array(v.string())),
+    targetContactIds: v.optional(v.array(v.id("contacts"))),
+    scheduledAt: v.number(),
+    recurrenceCronSpec: v.optional(v.string()),
+    sendingConfig: v.optional(v.object({
+        messagesPerSecond: v.number(),
+        delayBetweenMessages: v.number(),
+        maxRetries: v.number(),
+        skipRecentlyContacted: v.boolean(),
+        recentContactHours: v.number(),
+    })),
+};
+
+// 1. Create a Campaign - delegates to createCampaignInternal
 export const create = mutation({
-    args: {
-        name: v.string(),
-        templateId: v.id("templates"),
-        templateName: v.string(), // Cached for recursion
-        phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
-        isTestCampaign: v.optional(v.boolean()),
-        testBypassRecentContact: v.optional(v.boolean()),
-        testContactPhones: v.optional(v.array(v.string())),
-        segmentId: v.optional(v.id("segments")),
-        targetTags: v.optional(v.array(v.string())),
-        targetContactIds: v.optional(v.array(v.id("contacts"))),
-        scheduledAt: v.number(),
-        recurrenceCronSpec: v.optional(v.string()),
-        sendingConfig: v.optional(v.object({
-            messagesPerSecond: v.number(),
-            delayBetweenMessages: v.number(),
-            maxRetries: v.number(),
-            skipRecentlyContacted: v.boolean(),
-            recentContactHours: v.number(),
-        })),
+    args: createCampaignArgs,
+    handler: async (ctx, args): Promise<Id<"campaigns">> => {
+        return await ctx.runMutation(internal.campaigns.createCampaignInternal, args);
     },
+});
+
+// Action that accepts full args including test campaign fields (same as create)
+export const createWithTestConfig = action({
+    args: createCampaignArgs,
+    handler: async (ctx, args): Promise<Id<"campaigns">> => {
+        return await ctx.runMutation(internal.campaigns.createCampaignInternal, args);
+    },
+});
+
+export const createCampaignInternal = internalMutation({
+    args: createCampaignArgs,
     handler: async (ctx, args) => {
         if (!args.phoneNumberId) {
             throw new Error("A sending number is required for scoped template campaigns.");
@@ -55,7 +74,6 @@ export const create = mutation({
             throw new Error(`Test contact phones cannot exceed ${MAX_TEST_CONTACT_PHONES}.`);
         }
 
-        // Validate template exists for the selected phone number when phoneNumberId is provided
         if (args.phoneNumberId) {
             const template = await ctx.db.get(args.templateId);
             if (!template) {
@@ -101,7 +119,6 @@ export const create = mutation({
             );
         }
 
-        // Schedule the starting job
         const delay = Math.max(0, args.scheduledAt - Date.now());
         if (delay > 0) {
             await ctx.scheduler.runAfter(delay, internal.campaigns.startProcessing, { campaignId: id });

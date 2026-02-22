@@ -105,7 +105,8 @@ export default function NewCampaignPage() {
     const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
-    const createCampaign = useMutation(api.campaigns.create)
+    const createCampaignAction = useAction(api.campaigns.createWithTestConfig)
+    const createCampaignMutation = useMutation(api.campaigns.create)
     const syncTemplatesForNumber = useAction(
         enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
     )
@@ -318,24 +319,45 @@ export default function NewCampaignPage() {
         if (testBypassValidationError || testContactOverflowWarning) return
         if (!selectedPhoneNumberId || !selectedTemplate?._id) return
         setIsSubmitting(true)
+        const payload = {
+            name,
+            templateId: selectedTemplate?._id as Id<"templates">,
+            templateName: selectedTemplate?.name || "",
+            phoneNumberId: selectedPhoneNumberId ?? undefined,
+            isTestCampaign: isTestCampaign || undefined,
+            testBypassRecentContact: isTestCampaign ? testBypassRecentContact : undefined,
+            testContactPhones: isTestCampaign && normalizedTestPhones.length > 0 ? normalizedTestPhones : undefined,
+            targetTags: targetAudience === 'tags' ? selectedTags : undefined,
+            targetContactIds: targetAudience === 'selected' && selectedContactIds.length > 0 ? selectedContactIds : undefined,
+            scheduledAt: scheduledAt ? new Date(scheduledAt).getTime() : Date.now(),
+            recurrenceCronSpec: recurrenceCronSpec || undefined,
+            sendingConfig
+        }
         try {
-            await createCampaign({
-                name,
-                templateId: selectedTemplate?._id as Id<"templates">,
-                templateName: selectedTemplate?.name || "",
-                phoneNumberId: selectedPhoneNumberId ?? undefined,
-                isTestCampaign: isTestCampaign || undefined,
-                testBypassRecentContact: isTestCampaign ? testBypassRecentContact : undefined,
-                testContactPhones: isTestCampaign && normalizedTestPhones.length > 0 ? normalizedTestPhones : undefined,
-                targetTags: targetAudience === 'tags' ? selectedTags : undefined,
-                targetContactIds: targetAudience === 'selected' && selectedContactIds.length > 0 ? selectedContactIds : undefined,
-                scheduledAt: scheduledAt ? new Date(scheduledAt).getTime() : Date.now(),
-                recurrenceCronSpec: recurrenceCronSpec || undefined,
-                sendingConfig
-            })
+            await createCampaignAction(payload)
             router.push("/campaigns?success=true")
         } catch (error) {
-            console.error("Failed to create campaign:", error)
+            const msg = error instanceof Error ? error.message : String(error)
+            const isValidationError = msg.includes("ArgumentValidationError") || msg.includes("extra field")
+            if (isValidationError && isTestCampaign) {
+                try {
+                    const { isTestCampaign: _, testBypassRecentContact: __, testContactPhones: ___, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
+                    await createCampaignMutation(fallbackPayload)
+                    router.push("/campaigns?success=true&testFallback=1")
+                } catch (fallbackError) {
+                    console.error("Failed to create campaign (fallback):", fallbackError)
+                }
+            } else if (!isValidationError) {
+                console.error("Failed to create campaign:", error)
+            } else {
+                try {
+                    const { isTestCampaign: _, testBypassRecentContact: __, testContactPhones: ___, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
+                    await createCampaignMutation(fallbackPayload)
+                    router.push("/campaigns?success=true")
+                } catch (fallbackError) {
+                    console.error("Failed to create campaign:", fallbackError)
+                }
+            }
         } finally {
             setIsSubmitting(false)
         }
