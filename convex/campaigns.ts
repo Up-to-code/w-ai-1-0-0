@@ -834,6 +834,7 @@ export const sendToContact = internalAction({
             console.warn(`[Campaign] Template ${campaign.templateName} status is ${template.status}, may fail to send`);
         }
 
+        let failedLanguage132001: string | null = null;
         for (let attempt = 1; attempt <= 2; attempt++) {
             // On second attempt (after 132001): sync from Meta and re-resolve with fallback; retry send only if resolution changed.
             if (attempt === 2) {
@@ -842,10 +843,17 @@ export const sendToContact = internalAction({
                 } catch (syncErr) {
                     console.warn("[Campaign] Sync during 132001 retry failed", { campaignId: args.campaignId, error: syncErr instanceof Error ? syncErr.message : String(syncErr) });
                 }
+                // Prefer a different language on retry when Send API rejected the previous one (e.g. "does not exist in ar").
+                const retryRequestedLanguage =
+                    failedLanguage132001 === "ar"
+                        ? "en"
+                        : failedLanguage132001 === "en"
+                            ? "ar"
+                            : requestedLanguage;
                 const newResolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
                     templateName: campaign.templateName,
                     phoneNumberId: campaign.phoneNumberId ?? undefined,
-                    requestedLanguage,
+                    requestedLanguage: retryRequestedLanguage,
                     allowFallback: true,
                     requireScoped: true,
                 });
@@ -1464,12 +1472,17 @@ export const sendToContact = internalAction({
                         campaignId: args.campaignId,
                         reason: authFailureReason,
                     });
-                } else if (code === 132001 || err.category === "INVALID_TEMPLATE") {
-                    err.retryable = false;
-                    if (attempt === 1) {
-                        console.log("[Campaign] 132001/INVALID_TEMPLATE on first attempt; will sync and retry with fallback", { contactId: args.contactId, campaignId: args.campaignId });
-                        continue;
-                    }
+            } else if (code === 132001 || err.category === "INVALID_TEMPLATE") {
+                err.retryable = false;
+                if (attempt === 1) {
+                    failedLanguage132001 = resolved.selected?.language ?? requestedLanguage ?? null;
+                    console.log("[Campaign] 132001/INVALID_TEMPLATE on first attempt; will sync and retry with fallback", {
+                        contactId: args.contactId,
+                        campaignId: args.campaignId,
+                        failedLanguage: failedLanguage132001,
+                    });
+                    continue;
+                }
                     // Second attempt still failed: fail campaign and log
                     const invalidTemplateReason =
                         `${INVALID_TEMPLATE_PRECHECK_PREFIX} INVALID_TEMPLATE ` +
