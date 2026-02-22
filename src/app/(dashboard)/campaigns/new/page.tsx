@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import { useQuery, useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
@@ -56,6 +56,8 @@ export default function NewCampaignPage() {
         components?: { type?: string; text?: string }[]
         content?: string
     } | null>(null)
+    const [templateAutoClearedMessage, setTemplateAutoClearedMessage] = useState<string | null>(null)
+    const previousPhoneNumberIdRef = useRef<string | null>(null)
     const [targetAudience, setTargetAudience] = useState<"all" | "tags" | "selected">("all")
     const [selectedTags, setSelectedTags] = useState<string[]>([])
     const [selectedContactIds, setSelectedContactIds] = useState<Id<"contacts">[]>([])
@@ -104,6 +106,27 @@ export default function NewCampaignPage() {
             setSelectedPhoneNumberId(activePhoneNumberId ?? numbers[0].businessNumberId)
         }
     }, [numbers, activePhoneNumberId, selectedPhoneNumberId])
+
+    useEffect(() => {
+        const previousPhoneNumberId = previousPhoneNumberIdRef.current
+        if (
+            previousPhoneNumberId !== null &&
+            previousPhoneNumberId !== selectedPhoneNumberId &&
+            selectedTemplate
+        ) {
+            setSelectedTemplate(null)
+            setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
+        }
+        previousPhoneNumberIdRef.current = selectedPhoneNumberId
+    }, [selectedPhoneNumberId, selectedTemplate])
+
+    useEffect(() => {
+        if (!selectedTemplate || !templates) return
+        const stillExists = templates.some((template) => template._id === selectedTemplate._id)
+        if (stillExists) return
+        setSelectedTemplate(null)
+        setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
+    }, [selectedTemplate, templates])
 
     const handleSubmit = async () => {
         setIsSubmitting(true)
@@ -530,7 +553,10 @@ export default function NewCampaignPage() {
                                                         <div
                                                             key={template._id}
                                                             className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedTemplate?._id === template._id ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
-                                                            onClick={() => setSelectedTemplate(template)}
+                                                            onClick={() => {
+                                                                setSelectedTemplate(template)
+                                                                setTemplateAutoClearedMessage(null)
+                                                            }}
                                                         >
                                                             <div className="flex justify-between items-start mb-2">
                                                                 <h4 className="font-semibold">{template.name}</h4>
@@ -565,6 +591,11 @@ export default function NewCampaignPage() {
                                         {selectedTemplate && templateValidation?.ok && templateValidation?.resolutionMode && templateValidation.resolutionMode !== "scoped_exact" && (
                                             <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
                                                 سيتم استخدام مسار بديل للقالب: <span className="font-medium">{templateValidation.resolutionMode}</span>
+                                            </div>
+                                        )}
+                                        {templateAutoClearedMessage && (
+                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                                                {templateAutoClearedMessage}
                                             </div>
                                         )}
                                     </div>

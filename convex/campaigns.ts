@@ -4,6 +4,9 @@ import { internal, api } from "./_generated/api";
 import { retrier, crons } from "./index";
 import { categorizeWhatsAppError } from "./errorUtils";
 
+const INVALID_TEMPLATE_PRECHECK_PREFIX = "[INVALID_TEMPLATE_PRECHECK]";
+const DEFAULT_INVALID_TEMPLATE_NAMES = ["tasees_day2"];
+
 // 1. Create a Campaign
 export const create = mutation({
     args: {
@@ -1340,6 +1343,187 @@ export const finalizeStaleProcessingCampaigns = internalAction({
             finalizedStaleFailed,
             staleMs,
         };
+    },
+});
+
+export const failCampaignForInvalidTemplate = internalMutation({
+    args: {
+        campaignId: v.id("campaigns"),
+        reason: v.string(),
+    },
+    handler: async (ctx, args) => {
+        const campaign = await ctx.db.get(args.campaignId);
+        if (!campaign) {
+            return {
+                updated: false,
+                recurringDisabled: false,
+                previousStatus: null,
+            };
+        }
+
+        let recurringDisabled = false;
+        if (campaign.recurrenceCronSpec) {
+            try {
+                await crons.delete(ctx, { name: `campaign-${campaign._id}` });
+                recurringDisabled = true;
+            } catch (error) {
+                console.warn("[Campaign] Failed to remove recurring cron while failing campaign", {
+                    campaignId: campaign._id,
+                    reason: args.reason,
+                    error: error instanceof Error ? error.message : String(error),
+                });
+            }
+        }
+
+        if (campaign.status !== "FAILED" || campaign.recurrenceCronSpec) {
+            await ctx.db.patch(campaign._id, {
+                status: "FAILED",
+                recurrenceCronSpec: undefined,
+            });
+        }
+
+        return {
+            updated: campaign.status !== "FAILED",
+            recurringDisabled,
+            previousStatus: campaign.status,
+        };
+    },
+});
+
+export const listAllCampaigns = internalQuery({
+    args: {},
+    handler: async (ctx) => {
+        return await ctx.db.query("campaigns").collect();
+    },
+});
+
+export const listLogsForCampaign = internalQuery({
+    args: { campaignId: v.id("campaigns") },
+    handler: async (ctx, args) => {
+        return await ctx.db
+            .query("campaign_logs")
+            .withIndex("by_campaign", (q) => q.eq("campaignId", args.campaignId))
+            .collect();
+    },
+});
+
+export const cleanupInvalidTemplateCampaigns = internalAction({
+    args: {
+        templateNames: v.optional(v.array(v.string())),
+        dryRun: v.optional(v.boolean()),
+    },
+    handler: async (ctx, args) => {
+        const dryRun = args.dryRun ?? false;
+        const templateNames = (args.templateNames && args.templateNames.length > 0
+            ? args.templateNames
+            : DEFAULT_INVALID_TEMPLATE_NAMES
+        )
+            .map((name) => name.trim())
+            .filter((name) => name.length > 0);
+        const normalizedNames = new Set(templateNames.map((name) => name.toLowerCase()));
+
+        const campaigns: any[] = await ctx.runQuery(internal.campaigns.listAllCampaigns, {});
+        let affectedCampaigns = 0;
+        let failedUpdated = 0;
+        let recurringDisabled = 0;
+        const affectedCampaignIds: string[] = [];
+
+        for (const campaign of campaigns) {
+            const campaignTemplateName = String(campaign.templateName || "").toLowerCase();
+            let hasInvalidReference = normalizedNames.has(campaignTemplateName);
+
+            if (!hasInvalidReference) {
+                const logs: any[] = await ctx.runQuery(internal.campaigns.listLogsForCampaign, {
+                    campaignId: campaign._id,
+                });
+                hasInvalidReference = logs.some((log) => {
+                    const error = String(log.error || "").toLowerCase();
+                    if (!error) return false;
+                    if (error.includes(INVALID_TEMPLATE_PRECHECK_PREFIX.toLowerCase())) return true;
+                    if (error.includes("132001")) return true;
+                    for (const templateName of normalizedNames) {
+                        if (error.includes(templateName)) return true;
+                    }
+                    return false;
+                });
+            }
+
+            if (!hasInvalidReference) continue;
+            affectedCampaigns++;
+            affectedCampaignIds.push(String(campaign._id));
+
+            const isMutableStatus =
+                campaign.status === "SCHEDULED" || campaign.status === "PROCESSING";
+            if (!isMutableStatus) {
+                continue;
+            }
+
+            if (dryRun) {
+                failedUpdated++;
+                if (campaign.recurrenceCronSpec) recurringDisabled++;
+                continue;
+            }
+
+            const reason =
+                `${INVALID_TEMPLATE_PRECHECK_PREFIX} TEMPLATE_NOT_FOUND ` +
+                `templateName="${campaign.templateName}" campaignId="${campaign._id}"`;
+            const result: any = await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: campaign._id,
+                reason,
+            });
+            if (result?.updated) failedUpdated++;
+            if (result?.recurringDisabled) recurringDisabled++;
+        }
+
+        return {
+            scanned: campaigns.length,
+            affectedCampaigns,
+            failedUpdated,
+            recurringDisabled,
+            dryRun,
+            templateNames,
+            affectedCampaignIds: affectedCampaignIds.slice(0, 200),
+        };
+    },
+});
+
+export const listRecentInvalidTemplateBlocks = query({
+    args: { limit: v.optional(v.number()) },
+    handler: async (ctx, args) => {
+        const limit = Math.min(Math.max(args.limit ?? 20, 1), 100);
+        const logs = await ctx.db.query("campaign_logs").order("desc").take(limit * 5);
+        const rows: Array<{
+            campaignId: string;
+            contactId: string;
+            status: string;
+            error: string;
+            createdAt: number;
+            campaignName: string | null;
+            templateName: string | null;
+        }> = [];
+
+        for (const log of logs) {
+            const error = String(log.error || "");
+            if (
+                !error.includes(INVALID_TEMPLATE_PRECHECK_PREFIX) &&
+                !error.includes("132001")
+            ) {
+                continue;
+            }
+            const campaign = await ctx.db.get(log.campaignId);
+            rows.push({
+                campaignId: String(log.campaignId),
+                contactId: String(log.contactId),
+                status: log.status,
+                error,
+                createdAt: log._creationTime,
+                campaignName: campaign?.name ?? null,
+                templateName: campaign?.templateName ?? null,
+            });
+            if (rows.length >= limit) break;
+        }
+
+        return rows;
     },
 });
 
