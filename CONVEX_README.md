@@ -73,3 +73,14 @@ To add new features:
 4.  Import `api` from `../convex/_generated/api` in your React components.
 
 For detailed documentation, visit [docs.convex.dev](https://docs.convex.dev).
+
+## 6. Vercel Deployment (Production Build)
+
+The build runs `npx convex deploy --cmd 'next build'`, which requires `CONVEX_DEPLOY_KEY` in Vercel (CI has no interactive login):
+
+1. **Generate key:** [Convex Dashboard](https://dashboard.convex.dev/) → Project Settings → Production Deploy Keys → Generate Production Deploy Key
+2. **Add to Vercel:** Project → Settings → Environment Variables → Add `CONVEX_DEPLOY_KEY` (Production scope only)
+3. **Verify:** `NEXT_PUBLIC_CONVEX_URL` must be set for Production (e.g. `https://hardy-gopher-480.convex.cloud`)
+4. **Redeploy** to apply the new variable
+
+Without `CONVEX_DEPLOY_KEY`, the build fails with `401 Unauthorized: MissingAccessToken`. See [Convex + Vercel](https://docs.convex.dev/production/hosting/vercel).
