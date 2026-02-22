@@ -43,7 +43,9 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const saveFile = useMutation(api.files.saveFile)
   const uploadMediaToMeta = useAction(api.whatsapp.uploadMedia)
   const saveExternalImage = useAction(api.files.saveExternalImage)
-  const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
+  const syncTemplatesForNumber = useAction(
+    enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
+  )
 
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
@@ -267,7 +269,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
     setIsSyncingTemplates(true)
     setTemplateSyncError(null)
     try {
-      await syncScopedTemplates({ phoneNumberId: chat.phoneNumberId })
+      await syncTemplatesForNumber({ phoneNumberId: chat.phoneNumberId })
       markScopedTemplatesSynced(chat.phoneNumberId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -275,7 +277,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
     } finally {
       setIsSyncingTemplates(false)
     }
-  }, [chat?.phoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
+  }, [chat?.phoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
 
   useEffect(() => {
     if (!isTemplateOpen || !chat?.phoneNumberId) return

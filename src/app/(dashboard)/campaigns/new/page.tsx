@@ -106,7 +106,9 @@ export default function NewCampaignPage() {
     const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
     const createCampaign = useMutation(api.campaigns.create)
-    const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
+    const syncTemplatesForNumber = useAction(
+        enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
+    )
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
@@ -156,7 +158,7 @@ export default function NewCampaignPage() {
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
         try {
-            await syncScopedTemplates({ phoneNumberId: selectedPhoneNumberId })
+            await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
             markScopedTemplatesSynced(selectedPhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -164,7 +166,7 @@ export default function NewCampaignPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
+    }, [selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {

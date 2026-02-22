@@ -113,7 +113,9 @@ export default function WorkflowsPage() {
     const updateWorkflow = useMutation(api.workflows.update)
     const toggleWorkflowMutation = useMutation(api.workflows.toggle)
     const deleteWorkflow = useMutation(api.workflows.remove)
-    const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
+    const syncTemplatesForNumber = useAction(
+        enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
+    )
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -156,7 +158,7 @@ export default function WorkflowsPage() {
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
         try {
-            await syncScopedTemplates({ phoneNumberId: effectivePhoneNumberId })
+            await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
             markScopedTemplatesSynced(effectivePhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -164,7 +166,7 @@ export default function WorkflowsPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [effectivePhoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
+    }, [effectivePhoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
 
     useEffect(() => {
         if (!isCreateOpen || !effectivePhoneNumberId) return
