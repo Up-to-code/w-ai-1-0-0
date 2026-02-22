@@ -147,8 +147,10 @@ export default function NewCampaignPage() {
             ? (sendReadiness?.recommendedAction as string | undefined) ||
               "Cannot sync/send templates for this number until sending readiness issues are resolved."
             : null
+    const strictTemplateChecksEnabled = enableExtendedCampaignApis
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
+        if (!enableExtendedCampaignApis) return
         if (!selectedPhoneNumberId) return
         if (isTemplateReadinessHardBlocked) {
             setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
@@ -166,7 +168,7 @@ export default function NewCampaignPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
+    }, [enableExtendedCampaignApis, selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {
@@ -979,7 +981,7 @@ export default function NewCampaignPage() {
                                                 )}
                                             </div>
                                         </ScrollArea>
-                                        {selectedTemplate && templateValidation && !templateValidation.ok && (
+                                        {strictTemplateChecksEnabled && selectedTemplate && templateValidation && !templateValidation.ok && (
                                             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                                                 <p className="font-medium">{templateValidation.message}</p>
                                                 <p className="text-xs mt-1">{templateValidation.suggestedAction}</p>
@@ -1161,11 +1163,11 @@ export default function NewCampaignPage() {
                                                     !selectedPhoneNumberId ||
                                                     isSyncingTemplates ||
                                                     !selectedTemplate ||
-                                                    !!templateSyncError ||
+                                                    (strictTemplateChecksEnabled && !!templateSyncError) ||
                                                     isTemplateReadinessHardBlocked ||
                                                     isTemplateAuthFailed ||
-                                                    isTemplateValidationLoading ||
-                                                    !templateValidation?.ok
+                                                    (strictTemplateChecksEnabled && isTemplateValidationLoading) ||
+                                                    (strictTemplateChecksEnabled && !templateValidation?.ok)
                                                 ))
                                         }
                                         className="px-8 gap-2"

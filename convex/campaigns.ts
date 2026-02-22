@@ -583,13 +583,34 @@ export const processBatch = internalAction({
                 console.log("[Campaign] Synced templates from Meta before first batch send");
             } catch (syncErr) {
                 const syncMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
-                console.error("[Campaign] Template sync failed before first batch; failing campaign", { campaignId: args.campaignId, error: syncMsg });
-                await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
-                    campaignId: args.campaignId,
-                    reason: `Template sync failed before send. Reconnect the number in Integrations and try again. Error: ${syncMsg.slice(0, 200)}`,
+                // If Meta sync fails (e.g., missing whatsapp_business_management permission),
+                // continue with cached scoped templates as long as resolver can still resolve one.
+                const fallbackResolution: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
+                    templateName: campaign.templateName,
+                    phoneNumberId: campaign.phoneNumberId ?? undefined,
+                    requestedLanguage: undefined,
+                    allowFallback: true,
+                    requireScoped: true,
                 });
-                await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, { campaignId: args.campaignId });
-                return;
+                if (!fallbackResolution?.ok) {
+                    console.error("[Campaign] Template sync failed and no cached scoped template could be resolved", {
+                        campaignId: args.campaignId,
+                        error: syncMsg,
+                        reasonCode: fallbackResolution?.reasonCode ?? "SYNC_FAILED",
+                    });
+                    await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                        campaignId: args.campaignId,
+                        reason: `Template sync failed before send. Reconnect the number in Integrations and try again. Error: ${syncMsg.slice(0, 200)}`,
+                    });
+                    await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, { campaignId: args.campaignId });
+                    return;
+                }
+                console.warn("[Campaign] Template sync failed before first batch; continuing with cached scoped template", {
+                    campaignId: args.campaignId,
+                    templateName: campaign.templateName,
+                    resolutionMode: fallbackResolution.resolutionMode ?? "scoped_fallback",
+                    error: syncMsg,
+                });
             }
         }
 
