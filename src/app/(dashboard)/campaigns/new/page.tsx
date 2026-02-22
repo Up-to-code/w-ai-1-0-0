@@ -108,13 +108,13 @@ export default function NewCampaignPage() {
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
-    const filteredContacts = contacts?.filter(c => {
+    const filteredContacts = contacts?.filter((c: any) => {
         if (targetAudience === 'all') return true
         if (targetAudience === 'selected') return selectedContactIds.includes(c._id)
-        return c.tags?.some((t: string) => selectedTags.includes(t))
+        return Array.isArray(c.tags) && c.tags.some((t: string) => selectedTags.includes(t))
     }) || []
 
-    const uniqueTags = Array.from(new Set(contacts?.flatMap(c => c.tags || []) || []))
+    const uniqueTags = Array.from(new Set(contacts?.flatMap((c: any) => c.tags || []) || []))
     const normalizedTestPhones = testContactPhones
         .map((phone) => phone.replace(/[^\d+]/g, ""))
         .filter((phone) => phone.length > 0)
