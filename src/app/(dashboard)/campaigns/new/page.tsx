@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
-import { useQuery, useMutation } from "convex/react"
+import { useQuery, useMutation, useConvex } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { Button } from "@/components/ui/button"
@@ -39,6 +39,7 @@ import type { Id } from "../../../../../convex/_generated/dataModel"
 
 export default function NewCampaignPage() {
     const router = useRouter()
+    const convex = useConvex()
     const { numbers, activePhoneNumberId } = useWorkspace()
     const [currentStep, setCurrentStep] = useState(0)
 
@@ -77,16 +78,8 @@ export default function NewCampaignPage() {
         api.templates.list,
         selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : {}
     )
-    const templateValidation = useQuery(
-        (api as any).campaigns.validateTemplateSelection,
-        selectedTemplate?.name
-            ? {
-                templateName: selectedTemplate.name,
-                phoneNumberId: selectedPhoneNumberId ?? undefined,
-                requestedLanguage: selectedTemplate.language ?? undefined,
-            }
-            : "skip"
-    )
+    const [templateValidation, setTemplateValidation] = useState<any | null>(null)
+    const [templateValidationUnavailable, setTemplateValidationUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 })
 
     const createCampaign = useMutation(api.campaigns.create)
@@ -127,6 +120,50 @@ export default function NewCampaignPage() {
         setSelectedTemplate(null)
         setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
     }, [selectedTemplate, templates])
+
+    useEffect(() => {
+        let cancelled = false
+        const validateTemplate = async () => {
+            if (!selectedTemplate?.name) {
+                if (!cancelled) {
+                    setTemplateValidation(null)
+                    setTemplateValidationUnavailable(false)
+                }
+                return
+            }
+            try {
+                const result = await convex.query((api as any).campaigns.validateTemplateSelection, {
+                    templateName: selectedTemplate.name,
+                    phoneNumberId: selectedPhoneNumberId ?? undefined,
+                    requestedLanguage: selectedTemplate.language ?? undefined,
+                })
+                if (!cancelled) {
+                    setTemplateValidation(result)
+                    setTemplateValidationUnavailable(false)
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                const missingFunction = message.includes("Could not find public function for 'campaigns:validateTemplateSelection'")
+                if (!cancelled) {
+                    if (missingFunction) {
+                        setTemplateValidation({ ok: true, resolutionMode: "validation_unavailable" })
+                        setTemplateValidationUnavailable(true)
+                    } else {
+                        setTemplateValidation({
+                            ok: false,
+                            message: "تعذر التحقق من القالب حالياً",
+                            suggestedAction: "حاول مزامنة القوالب أو إعادة المحاولة بعد قليل.",
+                        })
+                        setTemplateValidationUnavailable(false)
+                    }
+                }
+            }
+        }
+        void validateTemplate()
+        return () => {
+            cancelled = true
+        }
+    }, [convex, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
 
     const handleSubmit = async () => {
         setIsSubmitting(true)
@@ -591,6 +628,11 @@ export default function NewCampaignPage() {
                                         {selectedTemplate && templateValidation?.ok && templateValidation?.resolutionMode && templateValidation.resolutionMode !== "scoped_exact" && (
                                             <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
                                                 سيتم استخدام مسار بديل للقالب: <span className="font-medium">{templateValidation.resolutionMode}</span>
+                                            </div>
+                                        )}
+                                        {selectedTemplate && templateValidationUnavailable && (
+                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                                                تعذر الوصول إلى خدمة التحقق من القالب على الخادم الحالي. يمكنك المتابعة، لكن يُفضل تحديث إعدادات Convex للإنتاج.
                                             </div>
                                         )}
                                         {templateAutoClearedMessage && (
