@@ -13,6 +13,7 @@ import { Bot, FolderTree, ShoppingBag } from "lucide-react";
 import { SallaProductsTab } from "./_components/SallaProductsTab";
 import { ManualProductList } from "./_components/ManualProductList";
 import { CategoryList } from "./_components/CategoryList";
+import { ProductsTabErrorBoundary } from "./_components/ProductsTabErrorBoundary";
 
 export default function ProductsPage() {
   const { activePhoneNumberId, activeWorkspace } = useWorkspace();
@@ -83,7 +84,9 @@ export default function ProductsPage() {
           </TabsList>
 
           <TabsContent value="salla">
-            <SallaProductsTab />
+            <ProductsTabErrorBoundary>
+              <SallaProductsTab />
+            </ProductsTabErrorBoundary>
           </TabsContent>
 
           {manualCatalogReady ? (
