@@ -56,14 +56,6 @@ export function SallaProductsTab() {
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [tokenError, setTokenError] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
-  if (connection === undefined) {
-    return (
-      <div className="flex items-center justify-center min-h-[40vh] text-muted-foreground">
-        <RefreshCw className="h-5 w-5 animate-spin ml-2" />
-        جاري تحميل حالة الربط...
-      </div>
-    );
-  }
   const isConnected = Boolean(connection?.connected);
   const connectionStatus = connection?.status;
 
@@ -128,6 +120,15 @@ export function SallaProductsTab() {
   }, [hasFetched, isLoading, isLoadingMore, search, page, tokenError, totalPages, handleFetchProducts]);
 
   const filteredProducts = products.filter((p) => p.name?.includes(search) || p.sku?.includes(search));
+
+  if (connection === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh] text-muted-foreground">
+        <RefreshCw className="h-5 w-5 animate-spin ml-2" />
+        جاري تحميل حالة الربط...
+      </div>
+    );
+  }
 
   if (!isConnected) {
     return (
