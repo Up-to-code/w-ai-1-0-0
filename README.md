@@ -37,6 +37,7 @@ Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/bui
 
 ## Production / WhatsApp Webhook
 
+- **Convex deployment:** The app uses the Convex deployment whose URL is set in `NEXT_PUBLIC_CONVEX_URL` (e.g. in Vercel). **You must deploy Convex to that deployment** after any Convex code or function changes: run `npx convex deploy` (for production) or use the same deployment as your dev URL. `npx convex dev` only pushes to the dev deployment; production must be updated with `npx convex deploy` or the app may see "Could not find public function" or outdated validators.
 - **Convex (Dashboard → Settings → Environment Variables):** Set `WHATSAPP_VERIFY_TOKEN` (if not set in Integrations webhook form), and `WHATSAPP_APP_SECRET` (recommended) to verify POST webhook signature. Optionally `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_WABA_ID` when not using per-number tokens.
 - **Vercel:** Set `NEXT_PUBLIC_CONVEX_URL` to your Convex deployment URL.
 - **Meta Developer Console:** Webhook URL = `https://<deployment>.convex.site/whatsapp/webhook` (use your Convex deployment host; replace `.convex.cloud` with `.convex.site` from `NEXT_PUBLIC_CONVEX_URL`). Verify token must match the value in Integrations or `WHATSAPP_VERIFY_TOKEN`.

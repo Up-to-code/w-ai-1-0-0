@@ -570,6 +570,23 @@ export const processBatch = internalAction({
 
         console.log(`[Campaign] Processing batch of ${contacts.length} contacts with ${config.delayBetweenMessages}ms delay between messages`);
 
+        // Sync templates from Meta before first batch to avoid 132001 (stale name+language in DB)
+        if (args.cursor === null && campaign.phoneNumberId) {
+            try {
+                await ctx.runAction(api.templates.syncScopedFromMeta, { phoneNumberId: campaign.phoneNumberId });
+                console.log("[Campaign] Synced templates from Meta before first batch send");
+            } catch (syncErr) {
+                const syncMsg = syncErr instanceof Error ? syncErr.message : String(syncErr);
+                console.error("[Campaign] Template sync failed before first batch; failing campaign", { campaignId: args.campaignId, error: syncMsg });
+                await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                    campaignId: args.campaignId,
+                    reason: `Template sync failed before send. Reconnect the number in Integrations and try again. Error: ${syncMsg.slice(0, 200)}`,
+                });
+                await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, { campaignId: args.campaignId });
+                return;
+            }
+        }
+
         // 2. Send Messages via Retrier with anti-spam delay
         for (const contact of contacts) {
             const latestCampaign = await ctx.runQuery(internal.campaigns.getCampaignById, { id: args.campaignId });
@@ -744,7 +761,7 @@ export const sendToContact = internalAction({
             });
         const requestedLanguage =
             selectedTemplate?.language ?? scopedTemplateByName?.language;
-        const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
+        let resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
             templateName: campaign.templateName,
             phoneNumberId: campaign.phoneNumberId ?? undefined,
             requestedLanguage,
@@ -792,7 +809,7 @@ export const sendToContact = internalAction({
         }
 
         // Fetch resolved template to construct components.
-        const template = await ctx.runQuery(api.templates.getById, { id: resolved.selected.templateId });
+        let template = await ctx.runQuery(api.templates.getById, { id: resolved.selected.templateId });
         if (!template) {
             const errorMsg = `[INVALID_TEMPLATE_PRECHECK] Resolved template could not be loaded templateName="${campaign.templateName}" requestedLanguage="${requestedLanguage || "unknown"}" resolvedPhoneNumberId="${campaign.phoneNumberId || "none"}" campaignId="${args.campaignId}"`;
             await ctx.runMutation(internal.campaigns.logBatchResults, {
@@ -817,8 +834,56 @@ export const sendToContact = internalAction({
             console.warn(`[Campaign] Template ${campaign.templateName} status is ${template.status}, may fail to send`);
         }
 
-        const components: any[] = [];
-        console.log(`[Campaign] Template structure:`, {
+        for (let attempt = 1; attempt <= 2; attempt++) {
+            // On second attempt (after 132001): sync from Meta and re-resolve with fallback; retry send only if resolution changed.
+            if (attempt === 2) {
+                try {
+                    await ctx.runAction(api.templates.syncScopedFromMeta, { phoneNumberId: campaign.phoneNumberId! });
+                } catch (syncErr) {
+                    console.warn("[Campaign] Sync during 132001 retry failed", { campaignId: args.campaignId, error: syncErr instanceof Error ? syncErr.message : String(syncErr) });
+                }
+                const newResolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
+                    templateName: campaign.templateName,
+                    phoneNumberId: campaign.phoneNumberId ?? undefined,
+                    requestedLanguage,
+                    allowFallback: true,
+                    requireScoped: true,
+                });
+                if (!newResolved.ok || (newResolved.selected.templateId === resolved.selected.templateId && newResolved.selected.language === resolved.selected.language)) {
+                    // No change or failed; log and finalize then exit loop (contact remains failed)
+                    const noChangeReason = `${INVALID_TEMPLATE_PRECHECK_PREFIX} INVALID_TEMPLATE (retry had no different template) templateName="${campaign.templateName}" requestedLanguage="${resolved.selected?.language ?? requestedLanguage ?? "unknown"}" campaignId="${args.campaignId}"`;
+                    await ctx.runMutation(internal.campaigns.logBatchResults, {
+                        campaignId: args.campaignId,
+                        logs: [{ contactId: args.contactId, status: "failed", error: noChangeReason }],
+                    });
+                    await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                        campaignId: args.campaignId,
+                        reason: noChangeReason,
+                    });
+                    await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, { campaignId: args.campaignId });
+                    break;
+                }
+                resolved = newResolved;
+                const newTemplate = await ctx.runQuery(api.templates.getById, { id: resolved.selected.templateId });
+                if (!newTemplate) {
+                    const noTemplateReason = `${INVALID_TEMPLATE_PRECHECK_PREFIX} INVALID_TEMPLATE (retry resolved but template not found) templateName="${campaign.templateName}" campaignId="${args.campaignId}"`;
+                    await ctx.runMutation(internal.campaigns.logBatchResults, {
+                        campaignId: args.campaignId,
+                        logs: [{ contactId: args.contactId, status: "failed", error: noTemplateReason }],
+                    });
+                    await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                        campaignId: args.campaignId,
+                        reason: noTemplateReason,
+                    });
+                    await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, { campaignId: args.campaignId });
+                    break;
+                }
+                template = newTemplate;
+                console.log("[Campaign] 132001 retry: re-resolved template", { templateName: campaign.templateName, newLanguage: resolved.selected.language, campaignId: args.campaignId });
+            }
+
+            const components: any[] = [];
+            console.log(`[Campaign] Template structure:`, {
             hasComponents: !!template?.components,
             componentsLength: template?.components?.length || 0,
             components: JSON.stringify(template?.components || [], null, 2)
@@ -1287,6 +1352,7 @@ export const sendToContact = internalAction({
             await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, {
                 campaignId: args.campaignId,
             });
+            break; // success; exit retry loop
         } catch (e: unknown) {
             // Try to extract error properties from various error formats
             // Convex action boundaries can strip custom error properties, so we need to parse them
@@ -1345,6 +1411,10 @@ export const sendToContact = internalAction({
                     } else if (err.message.toLowerCase().includes("unauthorized") || err.message.includes("invalid token")) {
                         err.category = "AUTH_ERROR";
                         err.retryable = false;
+                    } else if (err.message.includes("132001") || err.message.includes("Template name does not exist in the translation")) {
+                        err.category = "INVALID_TEMPLATE";
+                        err.retryable = false;
+                        if (!err.code) err.code = 132001;
                     }
                 }
                 
@@ -1357,20 +1427,22 @@ export const sendToContact = internalAction({
             }
             
             const errorMsg = err?.message || String(e);
-            
+            // Normalize code (may be string when error crosses action boundary)
+            const code = err?.code != null ? Number(err.code) : undefined;
+
             // Handle specific WhatsApp errors gracefully
-            if (err.code === 131030) {
+            if (code === 131030) {
                 // Phone number not in allowed list - non-retryable, log as failed
                 // This typically happens in sandbox mode when phone isn't added to test list
                 console.log(`[Campaign] Skipping contact ${args.contactId}: Phone number not in allowed list (sandbox mode)`);
-            } else if (err.code === 10) {
+            } else if (code === 10) {
                 // Permission error - non-retryable, log as failed
                 // This happens when the app doesn't have required WhatsApp Business API permissions
                 console.error(`[Campaign] Permission error for contact ${args.contactId}:`, {
                     error: errorMsg,
                     suggestion: "Check WhatsApp Business API permissions in Meta Business Suite"
                 });
-            } else if (err.code === 132012) {
+            } else if (code === 132012) {
                 // Template format error - non-retryable, log as failed
                 console.error(`[Campaign] Template format error for contact ${args.contactId}:`, {
                     error: errorMsg,
@@ -1380,9 +1452,9 @@ export const sendToContact = internalAction({
                 });
             } else if (
                 err.category === "AUTH_ERROR" ||
-                err.code === 190 ||
-                err.code === 401 ||
-                err.code === 403
+                code === 190 ||
+                code === 401 ||
+                code === 403
             ) {
                 // Authentication/token/app failure - non-retryable and terminal for the campaign.
                 err.retryable = false;
@@ -1396,7 +1468,7 @@ export const sendToContact = internalAction({
                     approvedLanguage: resolved.selected?.language ?? null,
                     resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
                     reasonCode: "AUTH_ERROR",
-                    code: err.code,
+                    code,
                     error: errorMsg,
                     suggestion: "Reconnect this number in Integrations and retry the campaign.",
                 });
@@ -1404,9 +1476,13 @@ export const sendToContact = internalAction({
                     campaignId: args.campaignId,
                     reason: authFailureReason,
                 });
-            } else if (err.code === 132001 || err.category === "INVALID_TEMPLATE") {
-                // Template translation/name mismatch - non-retryable, log as failed
+            } else if (code === 132001 || err.category === "INVALID_TEMPLATE") {
                 err.retryable = false;
+                if (attempt === 1) {
+                    console.log("[Campaign] 132001/INVALID_TEMPLATE on first attempt; will sync and retry with fallback", { contactId: args.contactId, campaignId: args.campaignId });
+                    continue;
+                }
+                // Second attempt still failed: fail campaign and log
                 const invalidTemplateReason =
                     `${INVALID_TEMPLATE_PRECHECK_PREFIX} INVALID_TEMPLATE ` +
                     `templateName="${campaign.templateName}" requestedLanguage="${resolved.selected?.language ?? requestedLanguage ?? "unknown"}" ` +
@@ -1417,7 +1493,7 @@ export const sendToContact = internalAction({
                     approvedLanguage: null,
                     resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
                     reasonCode: "INVALID_TEMPLATE",
-                    code: err.code,
+                    code,
                     error: errorMsg,
                     suggestion: "Ensure template name exists and is approved for the exact language in WABA."
                 });
@@ -1439,33 +1515,34 @@ export const sendToContact = internalAction({
                         });
                     }
                 }
-            } else if (err.code === 80005 || err.code === 200) {
+            } else if (code === 80005 || code === 200) {
                 // Rate limit error - these are retryable
-                console.warn(`[Campaign] Retryable error (${err.code}) for contact ${args.contactId}: ${errorMsg}`);
+                console.warn(`[Campaign] Retryable error (${code}) for contact ${args.contactId}: ${errorMsg}`);
                 // Re-throw to let the retrier handle it
                 throw err;
             } else {
                 // Unknown error - log details for debugging
                 console.error(`[Campaign] Unexpected error for contact ${args.contactId}:`, {
-                    code: err.code,
+                    code,
                     category: err.category,
                     message: errorMsg,
                     retryable: err.retryable,
                 });
             }
-            
+
             // Log the failure
             await ctx.runMutation(internal.campaigns.logBatchResults, {
                 campaignId: args.campaignId,
-                logs: [{ 
-                    contactId: args.contactId, 
-                    status: "failed", 
-                    error: `${err.code ? `[${err.code}] ` : ""}${errorMsg}` 
-                }]
+                logs: [{
+                    contactId: args.contactId,
+                    status: "failed",
+                    error: `${code != null ? `[${code}] ` : ""}${errorMsg}`,
+                }],
             });
             await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, {
                 campaignId: args.campaignId,
             });
+        }
         }
     }
 });

@@ -139,7 +139,12 @@ export default function CampaignsPage() {
       await createQuickScopedCampaign({ phoneNumberId })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      setQuickCampaignError(message || "تعذر إنشاء حملة سريعة. تأكد من وجود قالب معتمد لهذا الرقم.")
+      const isFunctionNotFound = message.includes("Could not find public function") || message.includes("createQuickScopedCampaign")
+      setQuickCampaignError(
+        isFunctionNotFound
+          ? "Quick campaign is not deployed yet. Run npx convex dev (or deploy), or create a campaign from New Campaign."
+          : message || "تعذر إنشاء حملة سريعة. تأكد من وجود قالب معتمد لهذا الرقم."
+      )
     } finally {
       setIsQuickCampaignLoading(false)
     }
