@@ -41,6 +41,7 @@ import { getScopedTemplateSyncTtlMs, markScopedTemplatesSynced, shouldSyncScoped
 import type { Id } from "../../../../../convex/_generated/dataModel"
 
 export default function NewCampaignPage() {
+    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
     const router = useRouter()
     const convex = useConvex()
     const { isAdmin } = useAuth()
@@ -83,17 +84,18 @@ export default function NewCampaignPage() {
     const testContactLimit = 5
 
     // Queries
-    const templates = useQuery(
-        (api as any).templates.listScopedApproved,
+    const templatesSource = useQuery(
+        enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
         selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
     ) as any[] | undefined
+    const templates = templatesSource?.filter((template: any) => template.status === "APPROVED")
     const templateHealth = useQuery(
         (api as any).templates.getScopedTemplateHealth,
-        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
+        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
     ) as any | undefined
     const sendReadiness = useQuery(
         (api as any).campaigns.getSendReadiness,
-        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
+        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
     ) as any | undefined
     const [templateValidation, setTemplateValidation] = useState<any | null>(null)
     const [isTemplateValidationLoading, setIsTemplateValidationLoading] = useState(false)

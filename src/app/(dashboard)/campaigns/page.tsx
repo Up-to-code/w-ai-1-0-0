@@ -41,6 +41,7 @@ import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { useAuth } from "@/contexts/AuthContext"
 
 export default function CampaignsPage() {
+  const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
   const { isAdmin } = useAuth()
   const { activePhoneNumberId, numbers } = useWorkspace()
   
@@ -53,11 +54,13 @@ export default function CampaignsPage() {
     effectivePhoneNumberId ?? (activePhoneNumberId && activePhoneNumberId !== "__all__" ? activePhoneNumberId : numbers[0]?.businessNumberId)
   const sendReadiness = useQuery(
     (api as any).campaigns.getSendReadiness,
-    quickCampaignPhoneNumberId ? { phoneNumberId: quickCampaignPhoneNumberId } : "skip"
+    enableExtendedCampaignApis && quickCampaignPhoneNumberId
+      ? { phoneNumberId: quickCampaignPhoneNumberId }
+      : "skip"
   ) as any | undefined
   const recentAuthBlocks = useQuery(
     (api as any).campaigns.listRecentAuthBlocks,
-    isAdmin ? { limit: 8 } : "skip"
+    enableExtendedCampaignApis && isAdmin ? { limit: 8 } : "skip"
   ) as any[] | undefined
   const removeCampaign = useMutation(api.campaigns.remove)
   const createQuickScopedCampaign = useAction((api as any).campaigns.createQuickScopedCampaign)

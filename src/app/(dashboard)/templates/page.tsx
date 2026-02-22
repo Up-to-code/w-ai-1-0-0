@@ -39,6 +39,7 @@ import {
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 
 export default function TemplatesPage() {
+    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
     const { activePhoneNumberId } = useWorkspace()
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
@@ -48,7 +49,7 @@ export default function TemplatesPage() {
       !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
     const templateHealth = useQuery(
         (api as any).templates.getScopedTemplateHealth,
-        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
     ) as any | undefined
     const templates =
         useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []

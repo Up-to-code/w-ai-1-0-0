@@ -22,19 +22,21 @@ interface ChatInputProps {
 }
 
 export function ChatInput({ chatId }: ChatInputProps) {
+  const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
   const isRealChatId = chatId && chatId !== "new"
   const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip") as any
-  const templates = useQuery(
-    (api as any).templates.listScopedApproved,
+  const templatesSource = useQuery(
+    enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
     chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
   ) as any[] | undefined
+  const templates = (templatesSource || []).filter((template: any) => template.status === "APPROVED")
   const templateHealth = useQuery(
     (api as any).templates.getScopedTemplateHealth,
-    chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
+    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
   ) as any | undefined
   const sendReadiness = useQuery(
     (api as any).campaigns.getSendReadiness,
-    chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
+    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
   ) as any | undefined
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)

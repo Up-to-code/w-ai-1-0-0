@@ -90,21 +90,23 @@ const ACTIONS = [
 ]
 
 export default function WorkflowsPage() {
+    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
     const { activePhoneNumberId } = useWorkspace()
     const effectivePhoneNumberId =
         !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
     const workflows = (useQuery(api.workflows.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined) || []
-    const templates = (useQuery(
-        (api as any).templates.listScopedApproved,
+    const templatesSource = useQuery(
+        enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
         effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
-    ) as any[] | undefined) || []
+    ) as any[] | undefined
+    const templates = (templatesSource || []).filter((template: any) => template.status === "APPROVED")
     const templateHealth = useQuery(
         (api as any).templates.getScopedTemplateHealth,
-        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
     ) as any | undefined
     const sendReadiness = useQuery(
         (api as any).campaigns.getSendReadiness,
-        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
     ) as any | undefined
     const users = (useQuery(api.users.list) as any[] | undefined) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
