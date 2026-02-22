@@ -1430,8 +1430,12 @@ export const sendToContact = internalAction({
                 }
 
                 const errorMsg = err?.message || String(e);
-                // Normalize code
-                const code = err?.code != null ? Number(err.code) : undefined;
+                // Normalize code (may be string or lost across action boundary); ensure 132001 is detected from message
+                let code: number | undefined = err?.code != null ? Number(err.code) : undefined;
+                if (code !== 132001 && (errorMsg.includes("132001") || errorMsg.toLowerCase().includes("template name does not exist in the translation"))) {
+                    code = 132001;
+                    if (!err.category) (err as { category?: string }).category = "INVALID_TEMPLATE";
+                }
 
                 // Handle specific WhatsApp errors gracefully
                 if (code === 131030) {
@@ -1479,7 +1483,7 @@ export const sendToContact = internalAction({
                         campaignId: args.campaignId,
                         reason: authFailureReason,
                     });
-                } else if (code === 132001 || err.category === "INVALID_TEMPLATE") {
+                } else if (code === 132001 || (err as { code?: unknown }).code == 132001 || err.category === "INVALID_TEMPLATE") {
                     err.retryable = false;
                     if (attempt === 1) {
                         failedLanguage132001 = resolved.selected?.language ?? requestedLanguage ?? null;

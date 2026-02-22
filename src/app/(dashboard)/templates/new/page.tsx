@@ -619,6 +619,12 @@ export default function NewTemplatePage() {
                 }
             }
 
+            if (!effectivePhoneNumberId) {
+                alert("اختر رقماً نشطاً من القائمة أعلاه لربط القالب به. التكاملات ← أضف رقم WhatsApp ورمز الوصول.")
+                setIsSubmitting(false)
+                return
+            }
+
             await createTemplate({
                 name: name.toLowerCase().replace(/\s+/g, '_'),
                 category,
@@ -630,7 +636,8 @@ export default function NewTemplatePage() {
             router.push("/templates?success=true")
         } catch (error) {
             console.error("Failed to create template:", error)
-            alert("فشل إنشاء القالب. " + String(error))
+            const msg = error instanceof Error ? error.message : String(error)
+            alert(msg.startsWith("فشل") || msg.startsWith("لا يمكن") ? msg : "فشل إنشاء القالب. " + msg)
         } finally {
             setIsSubmitting(false)
         }

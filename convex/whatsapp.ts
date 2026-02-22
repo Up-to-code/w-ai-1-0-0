@@ -350,7 +350,20 @@ export const createTemplate = action({
 
     if (!response.ok) {
       console.error("WhatsApp Template Creation Error:", data);
-      throw new Error(`WhatsApp API Error: ${data.error?.message || "Unknown error"}`);
+      const err = data?.error;
+      const msg = err?.message ?? "Unknown error";
+      const code = err?.code;
+      // Meta template creation errors: 100 = duplicate, 131047 = invalid param/format, etc.
+      if (code === 100 || (typeof msg === "string" && (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("already exists")))) {
+        throw new Error(`Template name "${args.name}" with language "${args.language}" already exists in your WABA. Use a different name or language, or sync templates to see existing ones.`);
+      }
+      if (code === 131047 || (typeof msg === "string" && msg.toLowerCase().includes("parameter") && msg.toLowerCase().includes("format"))) {
+        throw new Error(`Invalid template format: ${msg}. Check header, body, and button components.`);
+      }
+      if (typeof msg === "string" && msg.toLowerCase().includes("permission")) {
+        throw new Error(`Permission denied. Ensure the number is connected in Integrations and has WhatsApp Business Management permission. ${msg}`);
+      }
+      throw new Error(`WhatsApp API Error: ${msg}`);
     }
 
     // Upsert into local DB

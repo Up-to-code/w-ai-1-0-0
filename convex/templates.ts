@@ -603,21 +603,23 @@ export const createTemplate = action({
     phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args): Promise<any> => {
-    // 1. Create in Meta
-    const res = await ctx.runAction(api.whatsapp.createTemplate, {
-      name: args.name,
-      language: args.language,
-      category: args.category,
-      components: args.components,
-      phoneNumberId: args.phoneNumberId,
-    });
-
-    // 2. Upsert in DB (handled by whatsapp.createTemplate calling internal.templates.upsert, 
-    // but we can ensure it here if needed. 
-    // Actually whatsapp.createTemplate already calls upsert. 
-    // So we just return the result.)
-    return res;
-  }
+    try {
+      const res = await ctx.runAction(api.whatsapp.createTemplate, {
+        name: args.name,
+        language: args.language,
+        category: args.category,
+        components: args.components,
+        phoneNumberId: args.phoneNumberId,
+      });
+      return res;
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      if (message.includes("Missing WhatsApp config") || message.includes("Missing WABA") || message.includes("access token") || message.includes("Integrations")) {
+        throw new Error("لا يمكن إنشاء القالب: اختر رقماً نشطاً من القائمة وربطه في التكاملات (التكاملات ← رقم WhatsApp ← رمز الوصول). " + message);
+      }
+      throw e;
+    }
+  },
 });
 
 export const syncFromMeta = action({
