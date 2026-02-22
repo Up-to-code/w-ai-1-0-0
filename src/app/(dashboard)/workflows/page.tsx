@@ -107,6 +107,10 @@ export default function WorkflowsPage() {
     const [triggerConfig, setTriggerConfig] = useState<any>({})
     const [selectedAction, setSelectedAction] = useState("")
     const [actionConfig, setActionConfig] = useState<any>({})
+    const selectedTemplateDoc = (templates || []).find((t: any) => t.name === actionConfig.template)
+    const isTemplateActionInvalid =
+        selectedAction === "send_template" &&
+        (!actionConfig.template || !selectedTemplateDoc || selectedTemplateDoc.status !== "APPROVED")
 
     const toggleWorkflow = async (id: string) => {
         await toggleWorkflowMutation({ id: id as any })
@@ -124,6 +128,17 @@ export default function WorkflowsPage() {
 
     const handleSave = async () => {
         try {
+            if (selectedAction === "send_template" && isTemplateActionInvalid) {
+                console.error("[INVALID_TEMPLATE_PRECHECK][Workflows][UI] Cannot save workflow with invalid template selection", {
+                    templateName: actionConfig.template ?? null,
+                    requestedLanguage: null,
+                    approvedLanguage: selectedTemplateDoc?.language ?? null,
+                    resolvedPhoneNumberId: effectivePhoneNumberId ?? null,
+                    reasonCode: !actionConfig.template ? "TEMPLATE_MISSING" : "TEMPLATE_INVALID",
+                })
+                return
+            }
+
             if (editingId) {
                 await updateWorkflow({
                     id: editingId as any,
@@ -280,6 +295,16 @@ export default function WorkflowsPage() {
                                                     ))}
                                             </SelectContent>
                                         </Select>
+                                        {selectedTemplateDoc && (
+                                            <div className="text-xs text-muted-foreground">
+                                                اللغة المعتمدة: <span className="font-medium">{selectedTemplateDoc.language}</span>
+                                            </div>
+                                        )}
+                                        {!selectedTemplateDoc && actionConfig.template && (
+                                            <div className="text-xs text-destructive">
+                                                القالب غير متاح لهذا الرقم. يرجى مزامنة القوالب أو اختيار قالب آخر.
+                                            </div>
+                                        )}
                                     </div>
                                 )}
                                 {selectedAction === "add_tag" && (
@@ -336,7 +361,7 @@ export default function WorkflowsPage() {
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>إلغاء</Button>
-                            <Button onClick={handleSave} disabled={!selectedTrigger || !selectedAction}>
+                            <Button onClick={handleSave} disabled={!selectedTrigger || !selectedAction || isTemplateActionInvalid}>
                                 حفظ القاعدة
                             </Button>
                         </DialogFooter>

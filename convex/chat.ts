@@ -497,6 +497,26 @@ export const sendMessage = mutation({
     if (args.type === "text") {
       payloadContent = { body: args.content };
     } else if (args.type === "template") {
+      const requestedLanguage = args.template?.language;
+      const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+        templateName: args.template!.name,
+        phoneNumberId: chat.phoneNumberId ?? undefined,
+        languageCode: requestedLanguage,
+      });
+
+      if (!precheck.ok) {
+        const diagnostic = {
+          templateName: args.template!.name,
+          requestedLanguage: requestedLanguage ?? null,
+          approvedLanguage: null,
+          resolvedPhoneNumberId: chat.phoneNumberId ?? null,
+          reasonCode: precheck.reasonCode,
+        };
+        console.error("[INVALID_TEMPLATE_PRECHECK][Chat] Blocking template send", diagnostic);
+        await ctx.db.patch(messageId, { status: "failed" });
+        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${precheck.message}`);
+      }
+
       // Fetch template from database to get its structure
       const template = await ctx.runQuery(internal.templates.getTemplateByName, {
         name: args.template!.name,
@@ -538,7 +558,7 @@ export const sendMessage = mutation({
             messageId: messageId,
             to: chat.contactPhone,
             templateName: template.name,
-            language: args.template!.language,
+            language: precheck.language,
             template: template,
             phoneNumberId: chat.phoneNumberId ?? undefined,
           });
@@ -560,13 +580,13 @@ export const sendMessage = mutation({
       if (components === null) {
         payloadContent = {
           name: template.name,
-          language: { code: args.template!.language },
+          language: { code: precheck.language },
           components: [],
         };
       } else {
         payloadContent = {
           name: template.name,
-          language: { code: args.template!.language },
+          language: { code: precheck.language },
           components: components,
         };
       }
@@ -619,6 +639,27 @@ export const buildAndSendCarouselTemplate = internalAction({
   },
   handler: async (ctx, args): Promise<any> => {
     try {
+      const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+        templateName: args.templateName,
+        phoneNumberId: args.phoneNumberId,
+        languageCode: args.language,
+      });
+      if (!precheck.ok) {
+        const diagnostic = {
+          templateName: args.templateName,
+          requestedLanguage: args.language ?? null,
+          approvedLanguage: null,
+          resolvedPhoneNumberId: args.phoneNumberId ?? null,
+          reasonCode: precheck.reasonCode,
+        };
+        console.error("[INVALID_TEMPLATE_PRECHECK][Chat][Carousel] Blocking template send", diagnostic);
+        await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
+          messageId: args.messageId,
+          status: "failed",
+        });
+        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${precheck.message}`);
+      }
+
       const template = args.template;
       const carouselComp = template.components?.find((c: any) =>
         c.type === "CAROUSEL" || c.type === "carousel"
@@ -831,7 +872,7 @@ export const buildAndSendCarouselTemplate = internalAction({
       // Send the message with built components
       const payloadContent = {
         name: args.templateName,
-        language: { code: args.language },
+        language: { code: precheck.language },
         components: components,
       };
 

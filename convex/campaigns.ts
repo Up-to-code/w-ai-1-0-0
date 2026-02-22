@@ -4,6 +4,10 @@ import { internal, api } from "./_generated/api";
 import { retrier, crons } from "./index";
 import { categorizeWhatsAppError } from "./errorUtils";
 
+function normalizeLanguageCode(lang: string | undefined): string {
+    return (lang || "").trim().toLowerCase().replace("-", "_");
+}
+
 // 1. Create a Campaign
 export const create = mutation({
     args: {
@@ -78,10 +82,158 @@ export const create = mutation({
     },
 });
 
+export const validateTemplateSelection = query({
+    args: {
+        templateName: v.string(),
+        phoneNumberId: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        const template = await ctx.db
+            .query("templates")
+            .withIndex("by_phone_number_id_name", (q) =>
+                q.eq("phoneNumberId", args.phoneNumberId).eq("name", args.templateName)
+            )
+            .first();
+
+        if (!template) {
+            return {
+                ok: false as const,
+                reasonCode: "TEMPLATE_NOT_FOUND",
+                message: `Template "${args.templateName}" was not found for this sending number.`,
+                suggestedAction: "Sync templates from Meta and select an approved template for this number.",
+            };
+        }
+
+        if (template.status !== "APPROVED") {
+            return {
+                ok: false as const,
+                reasonCode: "TEMPLATE_NOT_APPROVED",
+                message: `Template "${template.name}" is not approved (status=${template.status}).`,
+                suggestedAction: "Use an approved template before scheduling the campaign.",
+            };
+        }
+
+        return {
+            ok: true as const,
+            templateId: template._id,
+            name: template.name,
+            language: template.language,
+            status: template.status,
+        };
+    },
+});
+
+export const validateTemplateForSend = internalQuery({
+    args: {
+        templateName: v.string(),
+        phoneNumberId: v.optional(v.string()),
+        languageCode: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        const template = await ctx.db
+            .query("templates")
+            .withIndex("by_phone_number_id_name", (q) =>
+                q.eq("phoneNumberId", args.phoneNumberId).eq("name", args.templateName)
+            )
+            .first();
+
+        if (!template) {
+            return {
+                ok: false as const,
+                reasonCode: "TEMPLATE_NOT_FOUND",
+                message: `Template "${args.templateName}" was not found for this number.`,
+                suggestedAction: "Sync templates from Meta and select a valid template.",
+            };
+        }
+
+        if (template.status !== "APPROVED") {
+            return {
+                ok: false as const,
+                reasonCode: "TEMPLATE_NOT_APPROVED",
+                message: `Template "${template.name}" is not approved (status=${template.status}).`,
+                suggestedAction: "Use an APPROVED template.",
+            };
+        }
+
+        const requestedLanguage = normalizeLanguageCode(args.languageCode);
+        const templateLanguage = normalizeLanguageCode(template.language);
+        if (!requestedLanguage) {
+            return {
+                ok: false as const,
+                reasonCode: "LANGUAGE_MISSING",
+                message: `Template "${template.name}" has no resolvable language for sending.`,
+                suggestedAction: "Reselect/sync the template so language is available.",
+            };
+        }
+
+        if (requestedLanguage !== templateLanguage) {
+            return {
+                ok: false as const,
+                reasonCode: "LANGUAGE_MISMATCH",
+                message: `Template "${template.name}" is not available in "${requestedLanguage}" for this number (approved language: "${templateLanguage}").`,
+                suggestedAction: "Use the exact approved template language for this number.",
+            };
+        }
+
+        return {
+            ok: true as const,
+            templateId: template._id,
+            name: template.name,
+            language: template.language,
+            status: template.status,
+        };
+    },
+});
+
 // 2. Start Processing (Internal) - Initial Setup
 export const startProcessing = internalAction({
     args: { campaignId: v.id("campaigns") },
     handler: async (ctx, args) => {
+        const campaign = await ctx.runQuery(internal.campaigns.getCampaignById, { id: args.campaignId });
+        if (!campaign) {
+            throw new Error(`Campaign not found: ${args.campaignId}`);
+        }
+
+        // Preflight: sync templates for this number and validate template-language pair before batch processing.
+        try {
+            await ctx.runAction(api.templates.syncFromMeta, {
+                phoneNumberId: campaign.phoneNumberId ?? undefined,
+            });
+        } catch (syncError) {
+            console.warn("[Campaign] Template sync preflight failed; continuing with local template state", {
+                campaignId: args.campaignId,
+                phoneNumberId: campaign.phoneNumberId ?? null,
+                error: syncError instanceof Error ? syncError.message : String(syncError),
+            });
+        }
+
+        const currentTemplate = await ctx.runQuery(internal.templates.getTemplateByName, {
+            name: campaign.templateName,
+            phoneNumberId: campaign.phoneNumberId ?? undefined,
+        });
+        const requestedLanguage = currentTemplate?.language;
+        const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+            templateName: campaign.templateName,
+            phoneNumberId: campaign.phoneNumberId ?? undefined,
+            languageCode: requestedLanguage,
+        });
+        if (!precheck.ok) {
+            console.error("[INVALID_TEMPLATE_PRECHECK][Campaign][Start] Blocking campaign start", {
+                templateName: campaign.templateName,
+                requestedLanguage: requestedLanguage ?? null,
+                approvedLanguage: null,
+                resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
+                reasonCode: precheck.reasonCode,
+                campaignId: args.campaignId,
+            });
+            await ctx.runMutation(internal.campaigns.updateStatus, {
+                campaignId: args.campaignId,
+                status: "FAILED",
+                total: 0,
+            });
+            return;
+        }
+
         // 1. Count target audience
         const contacts = await ctx.runQuery(internal.campaigns.getCampaignContacts, {
             campaignId: args.campaignId,
@@ -701,7 +853,34 @@ export const sendToContact = internalAction({
         console.log(`[Campaign] Final components to send:`, JSON.stringify(components, null, 2));
 
         try {
-            const templateLanguage = template.language || "ar";
+            const templateLanguage = template.language;
+            const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+                templateName: campaign.templateName,
+                phoneNumberId: campaign.phoneNumberId ?? undefined,
+                languageCode: templateLanguage,
+            });
+            if (!precheck.ok) {
+                const precheckError = `[INVALID_TEMPLATE_PRECHECK] ${precheck.message} templateName="${campaign.templateName}" requestedLanguage="${templateLanguage || "unknown"}" resolvedPhoneNumberId="${campaign.phoneNumberId || "none"}" campaignId="${args.campaignId}"`;
+                console.error("[Campaign] Blocking send due to template precheck:", {
+                    templateName: campaign.templateName,
+                    requestedLanguage: templateLanguage ?? null,
+                    approvedLanguage: null,
+                    resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
+                    reasonCode: precheck.reasonCode,
+                    message: precheck.message,
+                    suggestedAction: precheck.suggestedAction,
+                    campaignId: args.campaignId,
+                });
+                await ctx.runMutation(internal.campaigns.logBatchResults, {
+                    campaignId: args.campaignId,
+                    logs: [{
+                        contactId: args.contactId,
+                        status: "failed",
+                        error: precheckError,
+                    }]
+                });
+                return;
+            }
             const res = await ctx.runAction(api.whatsapp.sendMessage, {
                 to: (contact as { phone?: string }).phone as string,
                 type: "template",
@@ -816,11 +995,14 @@ export const sendToContact = internalAction({
             } else if (err.code === 132001 || err.category === "INVALID_TEMPLATE") {
                 // Template translation/name mismatch - non-retryable, log as failed
                 err.retryable = false;
-                console.error(`[Campaign] Invalid template for contact ${args.contactId}:`, {
+                console.error(`[INVALID_TEMPLATE_PRECHECK][Campaign] Invalid template for contact ${args.contactId}:`, {
+                    templateName: campaign.templateName,
+                    requestedLanguage: template?.language ?? null,
+                    approvedLanguage: null,
+                    resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
+                    reasonCode: "INVALID_TEMPLATE",
                     code: err.code,
                     error: errorMsg,
-                    templateName: campaign.templateName,
-                    templateLanguage: template?.language || "ar",
                     suggestion: "Ensure template name exists and is approved for the exact language in WABA."
                 });
             } else if (err.code === 80005 || err.code === 200) {

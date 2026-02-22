@@ -67,6 +67,15 @@ export default function NewCampaignPage() {
         api.templates.list,
         selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : {}
     )
+    const templateValidation = useQuery(
+        (api as any).campaigns.validateTemplateSelection,
+        selectedTemplate?.name
+            ? {
+                templateName: selectedTemplate.name,
+                phoneNumberId: selectedPhoneNumberId ?? undefined,
+            }
+            : "skip"
+    )
     const contacts = useQuery(api.contacts.list, { limit: 1000 })
 
     const createCampaign = useMutation(api.campaigns.create)
@@ -530,6 +539,12 @@ export default function NewCampaignPage() {
                                                 )}
                                             </div>
                                         </ScrollArea>
+                                        {selectedTemplate && templateValidation && !templateValidation.ok && (
+                                            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
+                                                <p className="font-medium">{templateValidation.message}</p>
+                                                <p className="text-xs mt-1">{templateValidation.suggestedAction}</p>
+                                            </div>
+                                        )}
                                     </div>
 
                                     {/* Phone Preview */}
@@ -673,7 +688,7 @@ export default function NewCampaignPage() {
                                         disabled={
                                             (currentStep === 0 && !name) ||
                                             (currentStep === 1 && (filteredContacts.length === 0 || (targetAudience === 'selected' && selectedContactIds.length === 0))) ||
-                                            (currentStep === 2 && !selectedTemplate)
+                                            (currentStep === 2 && (!selectedTemplate || (templateValidation ? !templateValidation.ok : false)))
                                         }
                                         className="px-8 gap-2"
                                     >
