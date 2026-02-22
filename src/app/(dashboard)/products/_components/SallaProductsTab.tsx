@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Search, Package, RefreshCw, Link2, ShoppingBag, Info, AlertCircle } from "lucide-react";
+  
 
 export function SallaProductsTab() {
   const connection = useQuery(api.salla.getConnection);
