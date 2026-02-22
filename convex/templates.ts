@@ -445,17 +445,17 @@ export const upsert = internalMutation({
     components: v.any(),
     metaTemplateId: v.optional(v.string()),
   },
-  handler: async (ctx, args) => {
+    handler: async (ctx, args) => {
     const existing = args.phoneNumberId
       ? await ctx.db
           .query("templates")
-          .withIndex("by_phone_number_id_name", (q) =>
-            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
+          .withIndex("by_phone_number_id_name_language", (q) =>
+            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name).eq("language", args.language)
           )
           .first()
       : await ctx.db
           .query("templates")
-          .filter((q: any) => q.eq(q.field("name"), args.name))
+          .filter((q: any) => q.and(q.eq(q.field("name"), args.name), q.eq(q.field("language"), args.language)))
           .first();
 
     if (existing) {
@@ -527,19 +527,19 @@ export const updateStatusById = internalMutation({
 export const deleteInternal = internalMutation({
   args: { name: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    const template = args.phoneNumberId
+    const templates = args.phoneNumberId
       ? await ctx.db
           .query("templates")
           .withIndex("by_phone_number_id_name", (q) =>
             q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
           )
-          .first()
+          .collect()
       : await ctx.db
           .query("templates")
           .filter((q: any) => q.eq(q.field("name"), args.name))
-          .first();
+          .collect();
 
-    if (template) {
+    for (const template of templates) {
       await ctx.db.delete(template._id);
     }
   },
@@ -624,8 +624,6 @@ export const syncFromMeta = action({
     const metaTemplates: any[] = await ctx.runAction(api.whatsapp.fetchTemplates, {
       phoneNumberId: args.phoneNumberId ?? undefined,
     });
-    const metaTemplateNames = metaTemplates.map((t: any) => t.name);
-
     // 2. Upsert each template into local DB
     for (const t of metaTemplates) {
       await ctx.runMutation(internal.templates.upsert, {
@@ -639,9 +637,9 @@ export const syncFromMeta = action({
       });
     }
 
-    // 3. Remove local templates that are not in Meta
+    // 3. Remove local templates whose (name, language) is not in Meta
     await ctx.runMutation(internal.templates.pruneLocal, {
-      metaTemplateNames,
+      metaNameLangPairs: metaTemplates.map((t: any) => ({ name: t.name, language: t.language })),
       phoneNumberId: args.phoneNumberId,
     });
 
@@ -650,8 +648,12 @@ export const syncFromMeta = action({
 });
 
 export const pruneLocal = internalMutation({
-  args: { metaTemplateNames: v.array(v.string()), phoneNumberId: v.optional(v.string()) },
+  args: {
+    metaNameLangPairs: v.array(v.object({ name: v.string(), language: v.string() })),
+    phoneNumberId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
+    const metaSet = new Set(args.metaNameLangPairs.map((p) => `${p.name}\0${p.language}`));
     const localTemplates = args.phoneNumberId
       ? await ctx.db
           .query("templates")
@@ -660,7 +662,8 @@ export const pruneLocal = internalMutation({
       : await ctx.db.query("templates").collect();
 
     for (const local of localTemplates) {
-      if (!args.metaTemplateNames.includes(local.name)) {
+      const key = `${local.name}\0${local.language}`;
+      if (!metaSet.has(key)) {
         await ctx.db.delete(local._id);
       }
     }

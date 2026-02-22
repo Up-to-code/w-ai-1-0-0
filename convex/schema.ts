@@ -131,7 +131,8 @@ export default defineSchema({
     metaTemplateId: v.optional(v.string()),
     lastSyncedAt: v.number(),
   }).index("by_phone_number_id", ["phoneNumberId"])
-    .index("by_phone_number_id_name", ["phoneNumberId", "name"]),
+    .index("by_phone_number_id_name", ["phoneNumberId", "name"])
+    .index("by_phone_number_id_name_language", ["phoneNumberId", "name", "language"]),
 
   // Template store: library of default + user-added template definitions (not yet on Meta)
   template_store: defineTable({
