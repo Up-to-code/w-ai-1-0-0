@@ -497,6 +497,17 @@ export const sendMessage = mutation({
     if (args.type === "text") {
       payloadContent = { body: args.content };
     } else if (args.type === "template") {
+      if (chat.phoneNumberId) {
+        const number = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+          businessNumberId: chat.phoneNumberId,
+        });
+        if (number?.tokenStatus === "auth_failed") {
+          await ctx.db.patch(messageId, { status: "failed" });
+          throw new Error(
+            "[INVALID_TEMPLATE_PRECHECK] Cannot send template for this number until WhatsApp token is reconnected in Integrations."
+          );
+        }
+      }
       const requestedLanguage = args.template?.language;
       const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
         templateName: args.template!.name,
@@ -651,6 +662,20 @@ export const buildAndSendCarouselTemplate = internalAction({
   },
   handler: async (ctx, args): Promise<any> => {
     try {
+      if (args.phoneNumberId) {
+        const number = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+          businessNumberId: args.phoneNumberId,
+        });
+        if (number?.tokenStatus === "auth_failed") {
+          await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
+            messageId: args.messageId,
+            status: "failed",
+          });
+          throw new Error(
+            "[INVALID_TEMPLATE_PRECHECK] Cannot send carousel template for this number until WhatsApp token is reconnected in Integrations."
+          );
+        }
+      }
       const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
         templateName: args.templateName,
         phoneNumberId: args.phoneNumberId,

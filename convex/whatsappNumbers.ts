@@ -47,12 +47,58 @@ export const add = mutation({
       phone: args.phone,
       name: args.name,
       accessToken: args.accessToken,
+      tokenStatus: args.accessToken?.trim() ? "connected" : undefined,
+      lastAuthErrorCode: undefined,
+      lastAuthErrorMessage: undefined,
+      lastAuthErrorAt: undefined,
       createdAt: Date.now(),
     });
     await ctx.runMutation(api.agents.ensureForPhoneNumber, {
       phoneNumberId: normalizedBusinessNumberId,
     });
     return id;
+  },
+});
+
+export const markAuthFailure = internalMutation({
+  args: {
+    businessNumberId: v.string(),
+    code: v.number(),
+    message: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("whatsapp_numbers")
+      .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", args.businessNumberId))
+      .first();
+    if (!row) return { updated: false as const };
+    await ctx.db.patch(row._id, {
+      tokenStatus: "auth_failed",
+      lastAuthErrorCode: args.code,
+      lastAuthErrorMessage: args.message,
+      lastAuthErrorAt: Date.now(),
+    });
+    return { updated: true as const };
+  },
+});
+
+export const markAuthHealthy = internalMutation({
+  args: {
+    businessNumberId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const row = await ctx.db
+      .query("whatsapp_numbers")
+      .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", args.businessNumberId))
+      .first();
+    if (!row) return { updated: false as const };
+    await ctx.db.patch(row._id, {
+      tokenStatus: row.accessToken?.trim() ? "connected" : undefined,
+      lastAuthErrorCode: undefined,
+      lastAuthErrorMessage: undefined,
+      lastAuthErrorAt: undefined,
+    });
+    return { updated: true as const };
   },
 });
 
@@ -166,6 +212,10 @@ export const update = mutation({
     if (updates.accessToken !== undefined) {
       const t = updates.accessToken?.trim();
       filtered.accessToken = t && t.length > 0 ? t : undefined;
+      filtered.tokenStatus = t && t.length > 0 ? "connected" : undefined;
+      filtered.lastAuthErrorCode = undefined;
+      filtered.lastAuthErrorMessage = undefined;
+      filtered.lastAuthErrorAt = undefined;
     }
     if (Object.keys(filtered).length === 0) return id;
     await ctx.db.patch(id, filtered);

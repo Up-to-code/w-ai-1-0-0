@@ -27,6 +27,14 @@ export default defineSchema({
     phone: v.string(),
     name: v.string(),
     accessToken: v.optional(v.string()),
+    tokenStatus: v.optional(v.union(
+      v.literal("connected"),
+      v.literal("token_invalid"),
+      v.literal("auth_failed")
+    )),
+    lastAuthErrorCode: v.optional(v.number()),
+    lastAuthErrorMessage: v.optional(v.string()),
+    lastAuthErrorAt: v.optional(v.number()),
     createdAt: v.number(),
   }).index("by_business_number_id", ["businessNumberId"]),
 

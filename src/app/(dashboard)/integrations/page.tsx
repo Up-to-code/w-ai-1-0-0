@@ -656,8 +656,20 @@ export default function IntegrationsPage() {
                                             <div className="bg-success/10 text-[10px] px-2 py-0.5 rounded-full text-success font-bold uppercase tracking-widest">
                                                 Active
                                             </div>
-                                            <div className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${n.accessToken ? "bg-blue-500/10 text-blue-600" : "bg-amber-500/10 text-amber-700"}`}>
-                                                {n.accessToken ? "Token Ready" : "Token Missing"}
+                                            <div
+                                                className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${
+                                                    n.tokenStatus === "auth_failed"
+                                                        ? "bg-destructive/10 text-destructive"
+                                                        : n.accessToken
+                                                          ? "bg-blue-500/10 text-blue-600"
+                                                          : "bg-amber-500/10 text-amber-700"
+                                                }`}
+                                            >
+                                                {n.tokenStatus === "auth_failed"
+                                                    ? "Auth Failed"
+                                                    : n.accessToken
+                                                      ? "Token Ready"
+                                                      : "Token Missing"}
                                             </div>
                                             {defaultPhoneNumberId === n.businessNumberId && (
                                                 <div className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest bg-primary/10 text-primary">
@@ -706,6 +718,11 @@ export default function IntegrationsPage() {
                                                     </div>
                                                 )
                                             })()}
+                                            {n.tokenStatus === "auth_failed" && (
+                                                <div className="text-[10px] mt-1 text-destructive max-w-[220px] text-right">
+                                                    {n.lastAuthErrorMessage || "Meta authentication failed for this number. Reconnect token."}
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                     {editingTokenFor === n._id && (

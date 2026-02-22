@@ -38,8 +38,10 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { useAuth } from "@/contexts/AuthContext"
 
 export default function CampaignsPage() {
+  const { isAdmin } = useAuth()
   const { activePhoneNumberId, numbers } = useWorkspace()
   
   // "__all__" or null = show all. Convex expects undefined, not null.
@@ -47,6 +49,16 @@ export default function CampaignsPage() {
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
   const campaigns = useQuery(api.campaigns.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined
+  const quickCampaignPhoneNumberId =
+    effectivePhoneNumberId ?? (activePhoneNumberId && activePhoneNumberId !== "__all__" ? activePhoneNumberId : numbers[0]?.businessNumberId)
+  const sendReadiness = useQuery(
+    (api as any).campaigns.getSendReadiness,
+    quickCampaignPhoneNumberId ? { phoneNumberId: quickCampaignPhoneNumberId } : "skip"
+  ) as any | undefined
+  const recentAuthBlocks = useQuery(
+    (api as any).campaigns.listRecentAuthBlocks,
+    isAdmin ? { limit: 8 } : "skip"
+  ) as any[] | undefined
   const removeCampaign = useMutation(api.campaigns.remove)
   const createQuickScopedCampaign = useAction((api as any).campaigns.createQuickScopedCampaign)
   const [searchQuery, setSearchQuery] = useState("")
@@ -54,6 +66,11 @@ export default function CampaignsPage() {
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date())
   const [quickCampaignError, setQuickCampaignError] = useState<string | null>(null)
   const [isQuickCampaignLoading, setIsQuickCampaignLoading] = useState(false)
+  const quickCampaignBlockingReason = sendReadiness?.blockingReason as string | null | undefined
+  const isQuickCampaignHardBlocked =
+    quickCampaignBlockingReason === "AUTH_FAILED" ||
+    quickCampaignBlockingReason === "TOKEN_MISSING" ||
+    quickCampaignBlockingReason === "NUMBER_NOT_FOUND"
 
   const calendarDays = useMemo(() => {
     const startMonth = startOfMonth(currentMonth)
@@ -101,9 +118,16 @@ export default function CampaignsPage() {
   }, [campaigns])
 
   const handleQuickCampaign = async () => {
-    const phoneNumberId = effectivePhoneNumberId ?? activePhoneNumberId ?? numbers[0]?.businessNumberId ?? undefined
+    const phoneNumberId = quickCampaignPhoneNumberId ?? undefined
     if (!phoneNumberId || phoneNumberId === "__all__") {
       setQuickCampaignError("اختر رقم إرسال محدد قبل إنشاء حملة سريعة.")
+      return
+    }
+    if (isQuickCampaignHardBlocked) {
+      setQuickCampaignError(
+        (sendReadiness?.recommendedAction as string | undefined) ||
+          "This number is not ready for campaign sending."
+      )
       return
     }
     setQuickCampaignError(null)
@@ -147,7 +171,7 @@ export default function CampaignsPage() {
           <Button 
             variant="outline" 
             onClick={handleQuickCampaign}
-            disabled={isQuickCampaignLoading}
+            disabled={isQuickCampaignLoading || isQuickCampaignHardBlocked}
             className="hidden sm:flex"
           >
             <Play className="h-4 w-4 ml-2 text-primary" />
@@ -167,6 +191,39 @@ export default function CampaignsPage() {
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {quickCampaignError}
         </div>
+      ) : null}
+      {isQuickCampaignHardBlocked && !quickCampaignError ? (
+        <div className="rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+          {(sendReadiness?.recommendedAction as string | undefined) ||
+            "Quick campaign is blocked for this number until auth/token readiness is fixed."}
+        </div>
+      ) : null}
+
+      {isAdmin && (recentAuthBlocks?.length ?? 0) > 0 ? (
+        <Card className="p-4 border border-destructive/20 bg-destructive/5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-destructive">Auth Incident Panel</h2>
+            <Link href="/integrations" className="text-xs underline underline-offset-2 text-destructive">
+              Reconnect numbers
+            </Link>
+          </div>
+          <div className="space-y-2">
+            {recentAuthBlocks!.map((row) => (
+              <div key={`${row.source}-${row.phoneNumberId}-${row.createdAt}-${row.campaignId ?? "none"}`} className="rounded-lg border border-destructive/20 bg-background/70 px-3 py-2 text-xs">
+                <div className="font-medium">
+                  {(row.phoneNumberName || row.phoneNumberId) as string}
+                </div>
+                <div className="text-muted-foreground">
+                  {(row.error || row.lastAuthErrorMessage || "Authentication issue detected") as string}
+                </div>
+                <div className="text-muted-foreground mt-1">
+                  {row.campaignName ? `Campaign: ${row.campaignName} · ` : ""}
+                  {new Date(row.createdAt).toLocaleString("en-US")}
+                </div>
+              </div>
+            ))}
+          </div>
+        </Card>
       ) : null}
 
       {/* Stats Cards */}

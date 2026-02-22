@@ -54,11 +54,20 @@ export const getScopedTemplateHealth = query({
     const hasAnyGlobalApproved = (await ctx.db.query("templates").take(5000)).some(
       (template) => !template.phoneNumberId && template.status === "APPROVED"
     );
+    const number = await ctx.db
+      .query("whatsapp_numbers")
+      .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", args.phoneNumberId))
+      .first();
+    const tokenStatus = number?.tokenStatus ?? (number?.accessToken?.trim() ? "connected" : "missing");
 
     return {
       scopedApprovedCount: scopedApproved.length,
       lastSyncAt,
       hasAnyGlobalApproved,
+      tokenStatus,
+      lastAuthErrorCode: number?.lastAuthErrorCode ?? null,
+      lastAuthErrorMessage: number?.lastAuthErrorMessage ?? null,
+      lastAuthErrorAt: number?.lastAuthErrorAt ?? null,
     };
   },
 });
@@ -334,9 +343,17 @@ export const resolveTemplateForSendWithSync = internalAction({
     requestedLanguage: v.optional(v.string()),
     allowFallback: v.optional(v.boolean()),
     requireScoped: v.optional(v.boolean()),
+    failOnSyncError: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
-    const before: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, args);
+    const resolveArgs = {
+      templateName: args.templateName,
+      phoneNumberId: args.phoneNumberId,
+      requestedLanguage: args.requestedLanguage,
+      allowFallback: args.allowFallback,
+      requireScoped: args.requireScoped,
+    };
+    const before: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, resolveArgs);
     let syncError: string | null = null;
     try {
       if (args.phoneNumberId) {
@@ -352,7 +369,7 @@ export const resolveTemplateForSendWithSync = internalAction({
       syncError = error instanceof Error ? error.message : String(error);
     }
 
-    const after: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, args);
+    const after: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, resolveArgs);
     const attempted = [
       ...(after?.attempted || []),
       {
@@ -361,6 +378,17 @@ export const resolveTemplateForSendWithSync = internalAction({
         note: syncError ? `sync failed: ${syncError}` : "sync succeeded",
       },
     ];
+    const failOnSyncError = args.failOnSyncError ?? false;
+
+    if (syncError && failOnSyncError && !after?.ok) {
+      return {
+        ok: false as const,
+        reasonCode: "SYNC_FAILED",
+        message:
+          "Template sync failed for this number. Reconnect the WhatsApp token in Integrations and sync templates again before sending.",
+        attempted,
+      };
+    }
 
     if (!after?.ok) {
       return {
@@ -374,9 +402,11 @@ export const resolveTemplateForSendWithSync = internalAction({
       before?.selected?.templateId !== after?.selected?.templateId ||
       before?.selected?.language !== after?.selected?.language ||
       before?.selected?.phoneNumberId !== after?.selected?.phoneNumberId;
-    const resolutionMode = changedSelection
-      ? (`synced_${after.resolutionMode}` as const)
-      : after.resolutionMode;
+    const resolutionMode = syncError
+      ? `cached_${after.resolutionMode}`
+      : changedSelection
+        ? `synced_${after.resolutionMode}`
+        : after.resolutionMode;
 
     return {
       ...after,
@@ -475,6 +505,22 @@ export const updateStatus = mutation({
         lastSyncedAt: Date.now(),
       });
     }
+  },
+});
+
+export const updateStatusById = internalMutation({
+  args: {
+    id: v.id("templates"),
+    status: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const template = await ctx.db.get(args.id);
+    if (!template) return false;
+    await ctx.db.patch(args.id, {
+      status: args.status as any,
+      lastSyncedAt: Date.now(),
+    });
+    return true;
   },
 });
 

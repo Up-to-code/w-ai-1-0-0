@@ -46,8 +46,14 @@ export default function TemplatesPage() {
     // "__all__" or null = default number. Convex expects undefined, not null.
     const effectivePhoneNumberId =
       !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+    const templateHealth = useQuery(
+        (api as any).templates.getScopedTemplateHealth,
+        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+    ) as any | undefined
     const templates =
         useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
+    const isTokenAuthFailed = templateHealth?.tokenStatus === "auth_failed"
+    const tokenAuthFailedMessage = templateHealth?.lastAuthErrorMessage as string | undefined
 
     const [search, setSearch] = useState("")
     const [activeTab, setActiveTab] = useState("all")
@@ -63,6 +69,10 @@ export default function TemplatesPage() {
     }
 
     const handleSync = async () => {
+        if (isTokenAuthFailed) {
+            showToast("error", "لا يمكن مزامنة القوالب حتى إعادة ربط Access Token لهذا الرقم.")
+            return
+        }
         setIsSyncing(true)
         try {
             const count = await syncFromMeta(effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
@@ -152,7 +162,7 @@ export default function TemplatesPage() {
                             متجر القوالب
                         </Button>
                     </Link>
-                    <Button variant="outline" className="gap-2" onClick={handleSync} disabled={isSyncing}>
+                    <Button variant="outline" className="gap-2" onClick={handleSync} disabled={isSyncing || isTokenAuthFailed}>
                         <RefreshCw className={`h-4 w-4 ${isSyncing ? 'animate-spin' : ''}`} />
                         مزامنة
                     </Button>
@@ -193,6 +203,17 @@ export default function TemplatesPage() {
             </div>
 
             {/* Search & Filter */}
+            {isTokenAuthFailed && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+                    لا يمكن مزامنة القوالب لهذا الرقم حتى إعادة ربط Access Token من صفحة الإعدادات والربط.
+                    {tokenAuthFailedMessage ? ` (${tokenAuthFailedMessage})` : ""}
+                    <div className="mt-2">
+                        <Link href="/integrations" className="underline underline-offset-2">
+                            فتح الإعدادات والربط
+                        </Link>
+                    </div>
+                </div>
+            )}
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">
                 <div className="relative flex-1 min-w-[200px] max-w-md w-full">
                     <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />

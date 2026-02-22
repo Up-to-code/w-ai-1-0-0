@@ -98,6 +98,14 @@ export default function WorkflowsPage() {
         (api as any).templates.listScopedApproved,
         effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
     ) as any[] | undefined) || []
+    const templateHealth = useQuery(
+        (api as any).templates.getScopedTemplateHealth,
+        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+    ) as any | undefined
+    const sendReadiness = useQuery(
+        (api as any).campaigns.getSendReadiness,
+        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+    ) as any | undefined
     const users = (useQuery(api.users.list) as any[] | undefined) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
     const updateWorkflow = useMutation(api.workflows.update)
@@ -114,14 +122,34 @@ export default function WorkflowsPage() {
     const [actionConfig, setActionConfig] = useState<any>({})
     const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
     const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
+    const isTemplateAuthFailed = templateHealth?.tokenStatus === "auth_failed"
+    const templateAuthFailedMessage = templateHealth?.lastAuthErrorMessage as string | undefined
+    const readinessBlockingReason = sendReadiness?.blockingReason as string | null | undefined
+    const isTemplateReadinessHardBlocked =
+        readinessBlockingReason === "AUTH_FAILED" ||
+        readinessBlockingReason === "TOKEN_MISSING" ||
+        readinessBlockingReason === "NUMBER_NOT_FOUND"
+    const readinessBlockingMessage =
+        isTemplateReadinessHardBlocked
+            ? (sendReadiness?.recommendedAction as string | undefined) ||
+              "Cannot sync/send templates for this number until sending readiness issues are resolved."
+            : null
     const selectedTemplateDoc = (templates || []).find((t: any) => t._id === actionConfig.templateId)
         || (templates || []).find((t: any) => t.name === actionConfig.template)
     const isTemplateActionInvalid =
         selectedAction === "send_template" &&
-        (!effectivePhoneNumberId || !actionConfig.templateId || !selectedTemplateDoc)
+        (!effectivePhoneNumberId || !actionConfig.templateId || !selectedTemplateDoc || isTemplateAuthFailed || isTemplateReadinessHardBlocked)
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
         if (!effectivePhoneNumberId) return
+        if (isTemplateReadinessHardBlocked) {
+            setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
+            return
+        }
+        if (isTemplateAuthFailed) {
+            setTemplateSyncError("لا يمكن مزامنة القوالب لهذا الرقم حتى إعادة ربط Access Token من صفحة الإعدادات والربط.")
+            return
+        }
         if (!force && !shouldSyncScopedTemplates(effectivePhoneNumberId)) return
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
@@ -134,7 +162,7 @@ export default function WorkflowsPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [effectivePhoneNumberId, syncScopedTemplates])
+    }, [effectivePhoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
 
     useEffect(() => {
         if (!isCreateOpen || !effectivePhoneNumberId) return
@@ -340,12 +368,31 @@ export default function WorkflowsPage() {
                                                 type="button"
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={!effectivePhoneNumberId || isSyncingTemplates}
+                                                disabled={!effectivePhoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked}
                                                 onClick={() => void triggerScopedTemplateSync(true)}
                                             >
                                                 {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
                                             </Button>
                                         </div>
+                                        {isTemplateReadinessHardBlocked && (
+                                            <div className="space-y-2 text-xs text-destructive">
+                                                <div>{readinessBlockingMessage}</div>
+                                                <a href="/integrations" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
+                                                    فتح الإعدادات والربط
+                                                </a>
+                                            </div>
+                                        )}
+                                        {isTemplateAuthFailed && (
+                                            <div className="space-y-2 text-xs text-destructive">
+                                                <div>
+                                                    لا يمكن مزامنة أو إرسال القوالب لهذا الرقم حتى إعادة ربط Access Token.
+                                                    {templateAuthFailedMessage ? ` (${templateAuthFailedMessage})` : ""}
+                                                </div>
+                                                <a href="/integrations" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
+                                                    فتح الإعدادات والربط
+                                                </a>
+                                            </div>
+                                        )}
                                         <Select
                                             value={actionConfig.templateId || ""}
                                             onValueChange={(v) => {

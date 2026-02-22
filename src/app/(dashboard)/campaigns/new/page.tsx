@@ -91,6 +91,10 @@ export default function NewCampaignPage() {
         (api as any).templates.getScopedTemplateHealth,
         selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
     ) as any | undefined
+    const sendReadiness = useQuery(
+        (api as any).campaigns.getSendReadiness,
+        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
+    ) as any | undefined
     const [templateValidation, setTemplateValidation] = useState<any | null>(null)
     const [isTemplateValidationLoading, setIsTemplateValidationLoading] = useState(false)
     const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
@@ -107,7 +111,7 @@ export default function NewCampaignPage() {
     const filteredContacts = contacts?.filter(c => {
         if (targetAudience === 'all') return true
         if (targetAudience === 'selected') return selectedContactIds.includes(c._id)
-        return c.tags?.some(t => selectedTags.includes(t))
+        return c.tags?.some((t: string) => selectedTags.includes(t))
     }) || []
 
     const uniqueTags = Array.from(new Set(contacts?.flatMap(c => c.tags || []) || []))
@@ -127,9 +131,25 @@ export default function NewCampaignPage() {
             ? `تحذير: جمهور حملة الاختبار أكبر من ${testContactLimit} مستلمين.`
             : null
     const syncTtlMinutes = Math.floor(getScopedTemplateSyncTtlMs() / 60000)
+    const isTemplateAuthFailed = templateHealth?.tokenStatus === "auth_failed"
+    const templateAuthFailedMessage = templateHealth?.lastAuthErrorMessage
+    const readinessBlockingReason = sendReadiness?.blockingReason as string | null | undefined
+    const isTemplateReadinessHardBlocked =
+        readinessBlockingReason === "AUTH_FAILED" ||
+        readinessBlockingReason === "TOKEN_MISSING" ||
+        readinessBlockingReason === "NUMBER_NOT_FOUND"
+    const readinessBlockingMessage =
+        isTemplateReadinessHardBlocked
+            ? (sendReadiness?.recommendedAction as string | undefined) ||
+              "Cannot sync/send templates for this number until sending readiness issues are resolved."
+            : null
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
         if (!selectedPhoneNumberId) return
+        if (isTemplateReadinessHardBlocked) {
+            setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
+            return
+        }
         if (!force && !shouldSyncScopedTemplates(selectedPhoneNumberId)) return
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
@@ -142,7 +162,7 @@ export default function NewCampaignPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [selectedPhoneNumberId, syncScopedTemplates])
+    }, [selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {
@@ -816,13 +836,29 @@ export default function NewCampaignPage() {
                                                 <Button
                                                     size="sm"
                                                     variant="outline"
-                                                    disabled={!selectedPhoneNumberId || isSyncingTemplates}
+                                                    disabled={!selectedPhoneNumberId || isSyncingTemplates || isTemplateReadinessHardBlocked}
                                                     onClick={() => void triggerScopedTemplateSync(true)}
                                                 >
                                                     {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة القوالب"}
                                                 </Button>
                                             </div>
                                         </div>
+                                        {isTemplateReadinessHardBlocked && (
+                                            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                                                {readinessBlockingMessage}
+                                                <div className="mt-2">
+                                                    <Button size="sm" variant="ghost" onClick={() => router.push("/integrations")}>
+                                                        فتح الإعدادات والربط
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {isTemplateAuthFailed && (
+                                            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                                                لا يمكن مزامنة أو إرسال القوالب لهذا الرقم حتى إعادة ربط Access Token من صفحة الإعدادات والربط.
+                                                {templateAuthFailedMessage ? ` (${templateAuthFailedMessage})` : ""}
+                                            </div>
+                                        )}
 
                                         {isSyncingTemplates && (
                                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
@@ -855,8 +891,16 @@ export default function NewCampaignPage() {
                                                             </p>
                                                         ) : null}
                                                         <div className="flex gap-2">
-                                                            <Button size="sm" variant="outline" onClick={() => void triggerScopedTemplateSync(true)} disabled={isSyncingTemplates}>
+                                                            <Button
+                                                                size="sm"
+                                                                variant="outline"
+                                                                onClick={() => void triggerScopedTemplateSync(true)}
+                                                                disabled={isSyncingTemplates || isTemplateReadinessHardBlocked}
+                                                            >
                                                                 مزامنة القوالب
+                                                            </Button>
+                                                            <Button size="sm" variant="ghost" onClick={() => router.push("/integrations")}>
+                                                                إعادة ربط الرقم
                                                             </Button>
                                                             <Button size="sm" variant="ghost" onClick={() => router.push("/templates")}>
                                                                 الذهاب إلى القوالب
@@ -1073,6 +1117,8 @@ export default function NewCampaignPage() {
                                                     isSyncingTemplates ||
                                                     !selectedTemplate ||
                                                     !!templateSyncError ||
+                                                    isTemplateReadinessHardBlocked ||
+                                                    isTemplateAuthFailed ||
                                                     isTemplateValidationLoading ||
                                                     !templateValidation?.ok
                                                 ))

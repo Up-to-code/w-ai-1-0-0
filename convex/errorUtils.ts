@@ -162,6 +162,14 @@ export const WHATSAPP_ERROR_CODES: Record<number, WhatsAppErrorCode> = {
     description: "Application does not have permission for this action",
     suggestedAction: "Check WhatsApp Business API permissions in Meta Business Suite",
   },
+  190: {
+    code: 190,
+    name: "Invalid OAuth access token",
+    category: "AUTH_ERROR",
+    retryable: false,
+    description: "Access token is invalid, expired, or app is deleted/unlinked",
+    suggestedAction: "Reconnect your WhatsApp number in Integrations and replace the access token from the active Meta app.",
+  },
   401: {
     code: 401,
     name: "Unauthorized",

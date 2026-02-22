@@ -13,6 +13,20 @@ export type WhatsAppConfig = {
   source: "db_number" | "db_first_with_token" | "env_fallback" | "webhook_fallback";
 };
 
+type TypedWhatsAppError = Error & {
+  code?: number;
+  category?: string;
+  retryable?: boolean;
+};
+
+const INFO_LOG_SAMPLE_RATE = 0.03;
+
+function sampledInfo(...args: any[]): void {
+  if (process.env.NODE_ENV !== "production" || Math.random() < INFO_LOG_SAMPLE_RATE) {
+    console.log(...args);
+  }
+}
+
 async function withAppSecretProof(ctx: any, url: string, accessToken: string): Promise<string> {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret?.trim()) return url;
@@ -30,6 +44,70 @@ function normalizeToken(token: string | null | undefined): string | null {
   return t && t.length > 0 ? t : null;
 }
 
+function makeTypedWhatsAppError(
+  message: string,
+  code: number,
+  category: string,
+  retryable: boolean
+): TypedWhatsAppError {
+  const error = new Error(message) as TypedWhatsAppError;
+  Object.defineProperty(error, "code", {
+    value: code,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(error, "category", {
+    value: category,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  Object.defineProperty(error, "retryable", {
+    value: retryable,
+    enumerable: true,
+    writable: true,
+    configurable: true,
+  });
+  return error;
+}
+
+async function markNumberAuthFailureSafe(
+  ctx: any,
+  businessNumberId: string | undefined,
+  code: number,
+  message: string
+): Promise<void> {
+  if (!businessNumberId) return;
+  try {
+    await ctx.runMutation(internal.whatsappNumbers.markAuthFailure, {
+      businessNumberId,
+      code,
+      message: message.slice(0, 1000),
+    });
+  } catch (error) {
+    console.warn("[WhatsApp] Failed to persist auth failure status", {
+      businessNumberId,
+      code,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+async function markNumberAuthHealthySafe(ctx: any, businessNumberId: string | undefined): Promise<void> {
+  if (!businessNumberId) return;
+  try {
+    await ctx.runMutation(internal.whatsappNumbers.markAuthHealthy, {
+      businessNumberId,
+    });
+  } catch (error) {
+    console.warn("[WhatsApp] Failed to clear auth failure status", {
+      businessNumberId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): Promise<WhatsAppConfig> {
   if (phoneNumberId) {
     const config = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, { businessNumberId: phoneNumberId });
@@ -42,6 +120,11 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
       if (!phoneId) {
         throw new Error(`Number ${phoneNumberId} has invalid configuration. Check Integrations (ربط المتجر).`);
       }
+      if (config.tokenStatus === "auth_failed") {
+        throw new Error(
+          `Number "${config.name ?? phoneNumberId}" authentication is blocked (Meta OAuth error ${config.lastAuthErrorCode ?? 190}). Reconnect this number in Integrations before syncing or sending templates.`
+        );
+      }
       return { accessToken, phoneId, wabaId: config.businessAccountId, source: "db_number" };
     } else {
       throw new Error(`Number ${phoneNumberId} is not configured. Add it in Integrations (ربط المتجر) and set its access token.`);
@@ -51,7 +134,12 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const first = await ctx.runQuery(internal.whatsappNumbers.getFirstWithToken, {});
   const firstToken = normalizeToken(first?.accessToken);
   if (firstToken && first?.businessNumberId?.trim()) {
-    console.log(`[WhatsApp Config] Using first number with token: ${first.name ?? first.businessNumberId}`);
+    if (first.tokenStatus === "auth_failed") {
+      throw new Error(
+        `Default number "${first.name ?? first.businessNumberId}" authentication is blocked (Meta OAuth error ${first.lastAuthErrorCode ?? 190}). Reconnect this number in Integrations.`
+      );
+    }
+    sampledInfo(`[WhatsApp Config] Using first number with token: ${first.name ?? first.businessNumberId}`);
     return {
       accessToken: firstToken,
       phoneId: first.businessNumberId,
@@ -63,7 +151,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const phoneId = (process.env.WHATSAPP_PHONE_ID ?? "").trim();
   const wabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (accessToken && phoneId) {
-    console.log(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
+    sampledInfo(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
     return { accessToken, phoneId, wabaId, source: "env_fallback" };
   }
   const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
@@ -71,7 +159,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const fallbackPhoneId = webhook?.defaultPhoneNumberId?.trim() || (process.env.WHATSAPP_PHONE_ID ?? "").trim();
   const fallbackWabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (fallbackToken && fallbackPhoneId) {
-    console.log(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
+    sampledInfo(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
     return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId, source: "webhook_fallback" };
   }
   throw new Error(
@@ -111,8 +199,8 @@ export const sendMessage = action({
       throw error;
     }
 
-    console.log(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
-    console.log("[WhatsApp] Config resolved", {
+    sampledInfo(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
+    sampledInfo("[WhatsApp] Config resolved", {
       selectedPhoneNumberId: args.phoneNumberId ?? null,
       resolvedPhoneId: phoneId,
       source,
@@ -126,8 +214,10 @@ export const sendMessage = action({
       [args.type]: args.content,
     };
 
-    console.log(`[WhatsApp] Sending payload to ${recipient} via ${WHATSAPP_API_URL}/${phoneId}/messages`);
-    console.log(`[WhatsApp] Payload:`, JSON.stringify(payload, null, 2));
+    sampledInfo(`[WhatsApp] Sending payload to ${recipient} via ${WHATSAPP_API_URL}/${phoneId}/messages`);
+    if (process.env.NODE_ENV !== "production") {
+      console.log(`[WhatsApp] Payload:`, JSON.stringify(payload, null, 2));
+    }
 
     try {
       const sendUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/messages`, accessToken);
@@ -140,21 +230,17 @@ export const sendMessage = action({
         body: JSON.stringify(payload),
       });
 
-      console.log(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
+      sampledInfo(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
       const data = await response.json();
 
       if (!response.ok) {
         const errorCode = data.error?.code ?? response.status;
         const errorMessage = data.error?.message ?? "Unknown error";
 
-        if (response.status === 401 || response.status === 403) {
-          const authMsg =
-            "Access token is invalid or expired. Update the token in Integrations (ربط المتجر) or Webhook settings.";
-          console.error("[WhatsApp] Auth error:", response.status, errorMessage);
-          throw new Error(authMsg);
-        }
-
         const errorCategory = categorizeWhatsAppError(errorCode, errorMessage);
+        if (errorCategory.category === "AUTH_ERROR" || errorCode === 190 || response.status === 401 || response.status === 403) {
+          await markNumberAuthFailureSafe(ctx, args.phoneNumberId ?? phoneId, errorCode, errorMessage);
+        }
         const suggestedAction = errorCategory.suggestedAction ?? "Review error message and retry";
         const userMessage =
           suggestedAction && !errorMessage.includes(suggestedAction)
@@ -186,37 +272,16 @@ export const sendMessage = action({
         });
         console.error("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
 
-        // Create and throw a typed error with user-friendly message (includes suggested action)
-        const error = new Error(userMessage) as Error & {
-          code?: number;
-          category?: string;
-          retryable?: boolean;
-        };
-
-        // Set properties and make them enumerable
-        Object.defineProperty(error, 'code', {
-          value: errorCode,
-          enumerable: true,
-          writable: true,
-          configurable: true
-        });
-        Object.defineProperty(error, 'category', {
-          value: errorCategory.category,
-          enumerable: true,
-          writable: true,
-          configurable: true
-        });
-        Object.defineProperty(error, 'retryable', {
-          value: errorCategory.retryable,
-          enumerable: true,
-          writable: true,
-          configurable: true
-        });
-
-        throw error;
+        throw makeTypedWhatsAppError(
+          userMessage,
+          errorCode,
+          errorCategory.category,
+          errorCategory.retryable
+        );
       }
 
-      console.log("[WhatsApp] Send Success:", JSON.stringify(data));
+      await markNumberAuthHealthySafe(ctx, args.phoneNumberId ?? phoneId);
+      sampledInfo("[WhatsApp] Send Success:", JSON.stringify(data));
 
       // Link Meta ID to Internal Message
       if (args.messageId && data.messages?.[0]?.id) {
@@ -225,7 +290,7 @@ export const sendMessage = action({
           messageId: args.messageId,
           metaMessageId: wamid,
         });
-        console.log(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
+        sampledInfo(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
       }
 
       return data;
@@ -309,7 +374,7 @@ export const fetchTemplates = action({
   },
   handler: async (ctx, args) => {
     const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
-    const { accessToken, wabaId } = config;
+    const { accessToken, wabaId, phoneId } = config;
     if (!wabaId) {
       throw new Error(
         "Missing WhatsApp config: set a number with access token in Integrations, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_WABA_ID in the environment."
@@ -334,15 +399,37 @@ export const fetchTemplates = action({
       console.error("WhatsApp Fetch Templates Error:", data);
       const err = data.error;
       const code = err?.code;
+      const message = err?.message ?? "Unknown error";
       const subcode = err?.error_subcode;
+      const normalizedCode = code ?? response.status;
+      const categorized = categorizeWhatsAppError(normalizedCode, message);
+      if (categorized.category === "AUTH_ERROR" || normalizedCode === 190 || response.status === 401 || response.status === 403) {
+        await markNumberAuthFailureSafe(ctx, args.phoneNumberId ?? phoneId, normalizedCode, message);
+      }
+
+      const suggestedAction = categorized.suggestedAction ?? "Review error message and retry";
+      const fallbackMessage =
+        suggestedAction && !message.includes(suggestedAction)
+          ? `${message} — ${suggestedAction}`
+          : message;
       if (code === 100 || subcode === 33) {
-        throw new Error(
+        throw makeTypedWhatsAppError(
           "Cannot load templates: the WhatsApp Business Account ID may be wrong or the access token does not have permission. In Integrations, ensure the number's Business Account ID is the WABA ID (from Meta Business Suite), not the Phone Number ID. Also check your Meta app has the whatsapp_business_management permission."
+          ,
+          normalizedCode,
+          categorized.category,
+          categorized.retryable
         );
       }
-      throw new Error(`WhatsApp API Error: ${err?.message || "Unknown error"}`);
+      throw makeTypedWhatsAppError(
+        fallbackMessage,
+        normalizedCode,
+        categorized.category,
+        categorized.retryable
+      );
     }
 
+    await markNumberAuthHealthySafe(ctx, args.phoneNumberId ?? phoneId);
     return data.data || [];
   },
 });
@@ -490,6 +577,12 @@ export const uploadMedia = action({
       const errorMessage = data.error?.message || "Upload failed";
 
       if (errorCode === 190) {
+        await markNumberAuthFailureSafe(
+          ctx,
+          args.phoneNumberId ?? phoneId,
+          190,
+          errorMessage
+        );
         // Authentication Error (OAuthException)
         const error = new Error(
           "WhatsApp API Authentication Error: Invalid or expired access token. Update the access token on the number in Integrations (ربط المتجر), or set WHATSAPP_ACCESS_TOKEN in the environment."
@@ -521,6 +614,7 @@ export const uploadMedia = action({
       throw error;
     }
 
+    await markNumberAuthHealthySafe(ctx, args.phoneNumberId ?? phoneId);
     return data.id; // Meta Media ID
   }
 });

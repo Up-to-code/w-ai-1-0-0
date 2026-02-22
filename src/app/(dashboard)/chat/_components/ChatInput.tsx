@@ -28,6 +28,14 @@ export function ChatInput({ chatId }: ChatInputProps) {
     (api as any).templates.listScopedApproved,
     chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
   ) as any[] | undefined
+  const templateHealth = useQuery(
+    (api as any).templates.getScopedTemplateHealth,
+    chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
+  ) as any | undefined
+  const sendReadiness = useQuery(
+    (api as any).campaigns.getSendReadiness,
+    chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
+  ) as any | undefined
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)
@@ -43,6 +51,18 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
   const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
+  const isTemplateAuthFailed = templateHealth?.tokenStatus === "auth_failed"
+  const templateAuthFailedMessage = templateHealth?.lastAuthErrorMessage as string | undefined
+  const readinessBlockingReason = sendReadiness?.blockingReason as string | null | undefined
+  const isTemplateReadinessHardBlocked =
+    readinessBlockingReason === "AUTH_FAILED" ||
+    readinessBlockingReason === "TOKEN_MISSING" ||
+    readinessBlockingReason === "NUMBER_NOT_FOUND"
+  const readinessBlockingMessage =
+    isTemplateReadinessHardBlocked
+      ? (sendReadiness?.recommendedAction as string | undefined) ||
+        "Cannot sync/send templates for this number until sending readiness issues are resolved."
+      : null
 
   const isAiActive = chat?.aiMode
 
@@ -233,6 +253,14 @@ export function ChatInput({ chatId }: ChatInputProps) {
 
   const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
     if (!chat?.phoneNumberId) return
+    if (isTemplateReadinessHardBlocked) {
+      setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
+      return
+    }
+    if (isTemplateAuthFailed) {
+      setTemplateSyncError("لا يمكن مزامنة القوالب لهذا الرقم حتى إعادة ربط Access Token من صفحة الإعدادات والربط.")
+      return
+    }
     if (!force && !shouldSyncScopedTemplates(chat.phoneNumberId)) return
     setIsSyncingTemplates(true)
     setTemplateSyncError(null)
@@ -245,7 +273,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
     } finally {
       setIsSyncingTemplates(false)
     }
-  }, [chat?.phoneNumberId, syncScopedTemplates])
+  }, [chat?.phoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncScopedTemplates])
 
   useEffect(() => {
     if (!isTemplateOpen || !chat?.phoneNumberId) return
@@ -334,12 +362,23 @@ export function ChatInput({ chatId }: ChatInputProps) {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!chat?.phoneNumberId || isSyncingTemplates}
+                  disabled={!chat?.phoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked}
                   onClick={() => void triggerScopedTemplateSync(true)}
                 >
                   {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
                 </Button>
               </div>
+              {isTemplateReadinessHardBlocked ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  {readinessBlockingMessage}
+                </div>
+              ) : null}
+              {isTemplateAuthFailed ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  لا يمكن مزامنة أو إرسال القوالب لهذا الرقم حتى إعادة ربط Access Token.
+                  {templateAuthFailedMessage ? ` (${templateAuthFailedMessage})` : ""}
+                </div>
+              ) : null}
               {templateSyncError ? (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                   تعذر مزامنة القوالب: {templateSyncError}
@@ -367,6 +406,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
                       {approvedTemplates.map((t: any) => (
                         <Card key={t._id} className="cursor-pointer hover:border-primary transition-all" onClick={async () => {
+                          if (isTemplateAuthFailed || isTemplateReadinessHardBlocked) return
                           setIsSending(true)
                           setIsTemplateOpen(false)
                           try {
@@ -405,6 +445,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
                       {(allTemplates).map((t: any) => (
                         <Card key={t._id} className="cursor-pointer hover:border-primary transition-all" onClick={async () => {
+                          if (isTemplateAuthFailed || isTemplateReadinessHardBlocked) return
                           if (t.status !== 'APPROVED') return
                           setIsSending(true)
                           setIsTemplateOpen(false)

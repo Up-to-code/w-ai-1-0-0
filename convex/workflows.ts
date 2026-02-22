@@ -107,6 +107,28 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
                 if (!templateName) {
                     throw new Error("Workflow template is missing template name.");
                 }
+                if (scopedPhoneNumberId) {
+                    const number = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+                        businessNumberId: scopedPhoneNumberId,
+                    });
+                    if (number?.tokenStatus === "auth_failed") {
+                        console.error("[INVALID_TEMPLATE_PRECHECK][Workflows] Blocking template send due to auth_failed number", {
+                            templateName,
+                            requestedLanguage: workflow.actionConfig?.language ?? null,
+                            approvedLanguage: null,
+                            resolvedPhoneNumberId: scopedPhoneNumberId,
+                            reasonCode: "AUTH_FAILED",
+                            resolutionMode: null,
+                        });
+                        await ctx.scheduler.runAfter(0, internal.notifications.create, {
+                            type: "warning",
+                            title: "Workflow Template Send Blocked",
+                            message: "Cannot sync/send templates for this number until the token is reconnected in Integrations.",
+                            link: "/integrations",
+                        });
+                        return;
+                    }
+                }
                 if (templateById && templateById.phoneNumberId !== scopedPhoneNumberId) {
                     throw new Error("Workflow template is no longer scoped to this sending number.");
                 }

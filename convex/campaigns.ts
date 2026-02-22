@@ -118,16 +118,33 @@ export const createQuickScopedCampaign = action({
         phoneNumberId: v.string(),
     },
     handler: async (ctx, args): Promise<{ campaignId: string; templateName: string; language: string }> => {
-        await ctx.runAction(api.templates.syncFromMeta, {
-            phoneNumberId: args.phoneNumberId,
-        });
+        let syncWarning: string | null = null;
+        try {
+            await ctx.runAction((api as any).templates.syncScopedFromMeta, {
+                phoneNumberId: args.phoneNumberId,
+            });
+        } catch (error) {
+            syncWarning = error instanceof Error ? error.message : String(error);
+        }
 
         const scopedTemplates = await ctx.runQuery(internal.campaigns.listApprovedTemplatesByPhone, {
             phoneNumberId: args.phoneNumberId,
         });
         const selectedTemplate = scopedTemplates[0];
         if (!selectedTemplate) {
+            if (syncWarning) {
+                throw new Error(
+                    `Cannot create quick campaign because template sync failed for this number and there are no cached scoped templates. ${syncWarning}`
+                );
+            }
             throw new Error("لا توجد قوالب معتمدة لهذا الرقم بعد المزامنة.");
+        }
+        if (syncWarning) {
+            console.warn("[Campaign] Quick campaign using cached scoped template because sync failed", {
+                phoneNumberId: args.phoneNumberId,
+                templateName: selectedTemplate.name,
+                warning: syncWarning,
+            });
         }
 
         const campaignId = await ctx.runMutation(internal.campaigns.insertQuickCampaignInternal, {
@@ -214,6 +231,142 @@ export const validateTemplateSelection = query({
     },
 });
 
+export const getSendReadiness = query({
+    args: {
+        phoneNumberId: v.string(),
+    },
+    handler: async (ctx, args) => {
+        const number = await ctx.db
+            .query("whatsapp_numbers")
+            .withIndex("by_business_number_id", (q) => q.eq("businessNumberId", args.phoneNumberId))
+            .first();
+        const scopedApprovedCount: number = await ctx.runQuery(
+            internal.templates.getScopedApprovedCountInternal,
+            { phoneNumberId: args.phoneNumberId }
+        );
+
+        const hasToken = Boolean(number?.accessToken?.trim());
+        const tokenStatus =
+            number?.tokenStatus ??
+            (hasToken ? "connected" : "missing");
+
+        let blockingReason: "NUMBER_NOT_FOUND" | "TOKEN_MISSING" | "AUTH_FAILED" | "NO_SCOPED_TEMPLATES" | null = null;
+        let recommendedAction = "Ready to send.";
+
+        if (!number) {
+            blockingReason = "NUMBER_NOT_FOUND";
+            recommendedAction = "Select a valid sending number from Integrations.";
+        } else if (!hasToken) {
+            blockingReason = "TOKEN_MISSING";
+            recommendedAction = "Set an access token for this number in Integrations.";
+        } else if (tokenStatus === "auth_failed") {
+            blockingReason = "AUTH_FAILED";
+            recommendedAction =
+                "Reconnect this number in Integrations and replace the access token from the active Meta app.";
+        } else if (scopedApprovedCount === 0) {
+            blockingReason = "NO_SCOPED_TEMPLATES";
+            recommendedAction = "Sync templates from Meta for this number, then pick an approved scoped template.";
+        }
+
+        return {
+            ready: blockingReason === null,
+            phoneNumberId: args.phoneNumberId,
+            phoneNumberName: number?.name ?? null,
+            tokenStatus,
+            scopedApprovedCount,
+            blockingReason,
+            recommendedAction,
+            lastAuthErrorCode: number?.lastAuthErrorCode ?? null,
+            lastAuthErrorMessage: number?.lastAuthErrorMessage ?? null,
+            lastAuthErrorAt: number?.lastAuthErrorAt ?? null,
+        };
+    },
+});
+
+export const listRecentAuthBlocks = query({
+    args: { limit: v.optional(v.number()) },
+    handler: async (ctx, args) => {
+        const limit = Math.min(Math.max(args.limit ?? 20, 1), 100);
+        const numbers = await ctx.db.query("whatsapp_numbers").collect();
+        const numberById = new Map(numbers.map((n) => [n.businessNumberId, n]));
+
+        const rows: Array<{
+            source: "number_status" | "campaign_log";
+            phoneNumberId: string;
+            phoneNumberName: string | null;
+            tokenStatus: string;
+            campaignId: string | null;
+            campaignName: string | null;
+            error: string | null;
+            createdAt: number;
+            lastAuthErrorCode: number | null;
+            lastAuthErrorMessage: string | null;
+            lastAuthErrorAt: number | null;
+        }> = [];
+
+        for (const number of numbers) {
+            if (number.tokenStatus !== "auth_failed") continue;
+            rows.push({
+                source: "number_status",
+                phoneNumberId: number.businessNumberId,
+                phoneNumberName: number.name ?? null,
+                tokenStatus: number.tokenStatus,
+                campaignId: null,
+                campaignName: null,
+                error: number.lastAuthErrorMessage ?? null,
+                createdAt: number.lastAuthErrorAt ?? number._creationTime,
+                lastAuthErrorCode: number.lastAuthErrorCode ?? null,
+                lastAuthErrorMessage: number.lastAuthErrorMessage ?? null,
+                lastAuthErrorAt: number.lastAuthErrorAt ?? null,
+            });
+        }
+
+        const logs = await ctx.db.query("campaign_logs").order("desc").take(limit * 20);
+        const campaignCache = new Map<string, any>();
+        for (const log of logs) {
+            const error = String(log.error || "");
+            if (!error) continue;
+            const lower = error.toLowerCase();
+            const isAuthBlock =
+                lower.includes("[auth_error_precheck]") ||
+                lower.includes("(#190)") ||
+                lower.includes("[190]") ||
+                lower.includes("auth_error") ||
+                lower.includes("invalid or expired access token") ||
+                lower.includes("application has been deleted");
+            if (!isAuthBlock) continue;
+
+            const campaignId = String(log.campaignId);
+            let campaign = campaignCache.get(campaignId);
+            if (!campaign) {
+                campaign = await ctx.db.get(log.campaignId);
+                campaignCache.set(campaignId, campaign);
+            }
+            const phoneNumberId = campaign?.phoneNumberId ? String(campaign.phoneNumberId) : null;
+            if (!phoneNumberId) continue;
+            const number = numberById.get(phoneNumberId);
+            rows.push({
+                source: "campaign_log",
+                phoneNumberId,
+                phoneNumberName: number?.name ?? null,
+                tokenStatus: number?.tokenStatus ?? (number?.accessToken?.trim() ? "connected" : "missing"),
+                campaignId,
+                campaignName: campaign?.name ?? null,
+                error,
+                createdAt: log._creationTime,
+                lastAuthErrorCode: number?.lastAuthErrorCode ?? null,
+                lastAuthErrorMessage: number?.lastAuthErrorMessage ?? null,
+                lastAuthErrorAt: number?.lastAuthErrorAt ?? null,
+            });
+            if (rows.length >= limit * 3) break;
+        }
+
+        return rows
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, limit);
+    },
+});
+
 export const validateTemplateForSend = internalQuery({
     args: {
         templateName: v.string(),
@@ -292,8 +445,13 @@ export const startProcessing = internalAction({
             requestedLanguage,
             allowFallback: true,
             requireScoped: true,
+            failOnSyncError: true,
         });
         if (!precheck.ok) {
+            const reason =
+                `${INVALID_TEMPLATE_PRECHECK_PREFIX} ${precheck.reasonCode ?? "PRECHECK_FAILED"} ` +
+                `templateName="${campaign.templateName}" requestedLanguage="${requestedLanguage ?? "unknown"}" ` +
+                `resolvedPhoneNumberId="${campaign.phoneNumberId ?? "none"}" campaignId="${args.campaignId}"`;
             console.error("[INVALID_TEMPLATE_PRECHECK][Campaign][Start] Blocking campaign start", {
                 templateName: campaign.templateName,
                 requestedLanguage: requestedLanguage ?? null,
@@ -303,10 +461,9 @@ export const startProcessing = internalAction({
                 resolutionMode: precheck.resolutionMode ?? null,
                 campaignId: args.campaignId,
             });
-            await ctx.runMutation(internal.campaigns.updateStatus, {
+            await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
                 campaignId: args.campaignId,
-                status: "FAILED",
-                total: 0,
+                reason,
             });
             return;
         }
@@ -1204,6 +1361,32 @@ export const sendToContact = internalAction({
                     componentsSent: components.length,
                     templateComponents: template?.components?.length || 0
                 });
+            } else if (
+                err.category === "AUTH_ERROR" ||
+                err.code === 190 ||
+                err.code === 401 ||
+                err.code === 403
+            ) {
+                // Authentication/token/app failure - non-retryable and terminal for the campaign.
+                err.retryable = false;
+                const authFailureReason =
+                    `[AUTH_ERROR_PRECHECK] AUTH_ERROR ` +
+                    `templateName="${campaign.templateName}" requestedLanguage="${resolved.selected?.language ?? requestedLanguage ?? "unknown"}" ` +
+                    `resolvedPhoneNumberId="${campaign.phoneNumberId ?? "none"}" campaignId="${args.campaignId}"`;
+                console.error(`[AUTH_ERROR_PRECHECK][Campaign] Auth failure for contact ${args.contactId}:`, {
+                    templateName: campaign.templateName,
+                    requestedLanguage: resolved.selected?.language ?? requestedLanguage ?? null,
+                    approvedLanguage: resolved.selected?.language ?? null,
+                    resolvedPhoneNumberId: campaign.phoneNumberId ?? null,
+                    reasonCode: "AUTH_ERROR",
+                    code: err.code,
+                    error: errorMsg,
+                    suggestion: "Reconnect this number in Integrations and retry the campaign.",
+                });
+                await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                    campaignId: args.campaignId,
+                    reason: authFailureReason,
+                });
             } else if (err.code === 132001 || err.category === "INVALID_TEMPLATE") {
                 // Template translation/name mismatch - non-retryable, log as failed
                 err.retryable = false;
@@ -1225,6 +1408,20 @@ export const sendToContact = internalAction({
                     campaignId: args.campaignId,
                     reason: invalidTemplateReason,
                 });
+                if (resolved?.selected?.templateId) {
+                    try {
+                        await ctx.runMutation(internal.templates.updateStatusById, {
+                            id: resolved.selected.templateId,
+                            status: "REJECTED",
+                        });
+                    } catch (markError) {
+                        console.warn("[Campaign] Failed to mark template as REJECTED after 132001", {
+                            templateId: resolved.selected.templateId,
+                            campaignId: args.campaignId,
+                            error: markError instanceof Error ? markError.message : String(markError),
+                        });
+                    }
+                }
             } else if (err.code === 80005 || err.code === 200) {
                 // Rate limit error - these are retryable
                 console.warn(`[Campaign] Retryable error (${err.code}) for contact ${args.contactId}: ${errorMsg}`);
