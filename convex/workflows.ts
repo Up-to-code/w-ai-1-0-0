@@ -98,61 +98,58 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
         if (templateName) {
             try {
                 const scopedPhoneNumberId = phoneNumberId ?? workflow.phoneNumberId ?? undefined;
-                const template = await ctx.runQuery(internal.templates.getTemplateByName, {
+                const scopedTemplateByName = await ctx.runQuery(internal.templates.getTemplateByName, {
                     name: templateName,
                     phoneNumberId: scopedPhoneNumberId,
                 });
-                if (!template) {
-                    console.error("[INVALID_TEMPLATE_PRECHECK][Workflows] Blocking template send", {
-                        templateName,
-                        requestedLanguage: null,
-                        approvedLanguage: null,
-                        resolvedPhoneNumberId: scopedPhoneNumberId ?? null,
-                        reasonCode: "TEMPLATE_NOT_FOUND",
+                const globalTemplateByName = scopedTemplateByName
+                    ? null
+                    : await ctx.runQuery(internal.templates.getTemplateByName, {
+                        name: templateName,
+                        phoneNumberId: undefined,
                     });
-                    await ctx.scheduler.runAfter(0, internal.notifications.create, {
-                        type: "warning",
-                        title: "Workflow Template Missing",
-                        message: `Template "${templateName}" was not found for the selected number.`,
-                        link: "/templates",
-                    });
-                    return;
-                }
-
-                if (template.status !== "APPROVED") {
-                    console.error("[INVALID_TEMPLATE_PRECHECK][Workflows] Blocking template send", {
-                        templateName,
-                        requestedLanguage: template.language ?? null,
-                        approvedLanguage: template.language ?? null,
-                        resolvedPhoneNumberId: scopedPhoneNumberId ?? null,
-                        reasonCode: "TEMPLATE_NOT_APPROVED",
-                    });
-                    await ctx.scheduler.runAfter(0, internal.notifications.create, {
-                        type: "warning",
-                        title: "Workflow Template Not Approved",
-                        message: `Template "${template.name}" status is ${template.status}.`,
-                        link: "/templates",
-                    });
-                    return;
-                }
-
-                const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
-                    templateName: template.name,
+                const requestedLanguage = scopedTemplateByName?.language ?? globalTemplateByName?.language;
+                const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
+                    templateName,
                     phoneNumberId: scopedPhoneNumberId,
-                    languageCode: template.language,
+                    requestedLanguage,
+                    allowFallback: true,
                 });
-                if (!precheck.ok) {
+                if (!resolved.ok) {
                     console.error("[INVALID_TEMPLATE_PRECHECK][Workflows] Blocking template send", {
-                        templateName: template.name,
-                        requestedLanguage: template.language ?? null,
+                        templateName,
+                        requestedLanguage: requestedLanguage ?? null,
                         approvedLanguage: null,
                         resolvedPhoneNumberId: scopedPhoneNumberId ?? null,
-                        reasonCode: precheck.reasonCode,
+                        reasonCode: resolved.reasonCode,
+                        resolutionMode: resolved.resolutionMode ?? null,
                     });
                     await ctx.scheduler.runAfter(0, internal.notifications.create, {
                         type: "warning",
                         title: "Workflow Template Validation Failed",
-                        message: `[INVALID_TEMPLATE_PRECHECK] ${precheck.message}`,
+                        message: `[INVALID_TEMPLATE_PRECHECK] ${resolved.message}`,
+                        link: "/templates",
+                    });
+                    return;
+                }
+
+                if (resolved.resolutionMode !== "scoped_exact") {
+                    console.warn("[Workflows] Template resolved using fallback", {
+                        templateName,
+                        requestedLanguage: null,
+                        approvedLanguage: resolved.selected?.language ?? null,
+                        resolvedPhoneNumberId: scopedPhoneNumberId ?? null,
+                        reasonCode: "FALLBACK_USED",
+                        resolutionMode: resolved.resolutionMode,
+                    });
+                }
+
+                const template = await ctx.db.get(resolved.selected.templateId);
+                if (!template) {
+                    await ctx.scheduler.runAfter(0, internal.notifications.create, {
+                        type: "warning",
+                        title: "Workflow Template Missing",
+                        message: `Resolved template "${templateName}" could not be loaded.`,
                         link: "/templates",
                     });
                     return;
@@ -179,8 +176,8 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
                     to: contactPhone,
                     type: "template",
                     content: {
-                        name: template.name,
-                        language: { code: precheck.language },
+                        name: resolved.selected.name,
+                        language: { code: resolved.selected.language },
                         components,
                     },
                     phoneNumberId: scopedPhoneNumberId,

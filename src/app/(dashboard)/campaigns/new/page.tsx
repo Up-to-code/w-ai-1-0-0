@@ -47,7 +47,15 @@ export default function NewCampaignPage() {
     const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string | null>(null)
     const [scheduledAt, setScheduledAt] = useState<string>("")
     const [recurrenceCronSpec, setRecurrenceCronSpec] = useState<string>("")
-    const [selectedTemplate, setSelectedTemplate] = useState<{ _id: string; name: string; components?: { type?: string; text?: string }[]; content?: string } | null>(null)
+    const [selectedTemplate, setSelectedTemplate] = useState<{
+        _id: string
+        name: string
+        language?: string
+        phoneNumberId?: string | null
+        status?: string
+        components?: { type?: string; text?: string }[]
+        content?: string
+    } | null>(null)
     const [targetAudience, setTargetAudience] = useState<"all" | "tags" | "selected">("all")
     const [selectedTags, setSelectedTags] = useState<string[]>([])
     const [selectedContactIds, setSelectedContactIds] = useState<Id<"contacts">[]>([])
@@ -73,6 +81,7 @@ export default function NewCampaignPage() {
             ? {
                 templateName: selectedTemplate.name,
                 phoneNumberId: selectedPhoneNumberId ?? undefined,
+                requestedLanguage: selectedTemplate.language ?? undefined,
             }
             : "skip"
     )
@@ -533,6 +542,9 @@ export default function NewCampaignPage() {
                                                             <div className="mt-3 flex gap-2">
                                                                 <Badge variant="secondary" className="text-[10px]">{template.category}</Badge>
                                                                 <Badge variant="outline" className="text-[10px]">{template.language}</Badge>
+                                                                <Badge variant="outline" className="text-[10px]">
+                                                                    {template.phoneNumberId ? "Scoped" : "Global"}
+                                                                </Badge>
                                                             </div>
                                                         </div>
                                                     ))
@@ -543,6 +555,16 @@ export default function NewCampaignPage() {
                                             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                                                 <p className="font-medium">{templateValidation.message}</p>
                                                 <p className="text-xs mt-1">{templateValidation.suggestedAction}</p>
+                                                <div className="mt-2">
+                                                    <Button size="sm" variant="outline" onClick={() => router.push("/templates")}>
+                                                        مزامنة القوالب
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {selectedTemplate && templateValidation?.ok && templateValidation?.resolutionMode && templateValidation.resolutionMode !== "scoped_exact" && (
+                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                                                سيتم استخدام مسار بديل للقالب: <span className="font-medium">{templateValidation.resolutionMode}</span>
                                             </div>
                                         )}
                                     </div>

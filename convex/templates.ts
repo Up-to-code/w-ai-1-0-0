@@ -1,6 +1,17 @@
-import { query, mutation, action, internalMutation, internalQuery } from "./_generated/server";
+import { query, mutation, action, internalAction, internalMutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+
+function normalizeLanguageCode(lang: string | undefined): string {
+  return (lang || "").trim().toLowerCase().replace("-", "_");
+}
+
+function pickMostRecentTemplate<T extends { _creationTime: number; lastSyncedAt?: number }>(rows: T[]): T | null {
+  if (rows.length === 0) return null;
+  return rows
+    .slice()
+    .sort((a, b) => (b.lastSyncedAt ?? b._creationTime) - (a.lastSyncedAt ?? a._creationTime))[0];
+}
 
 export const list = query({
   args: { phoneNumberId: v.optional(v.string()) },
@@ -56,6 +67,216 @@ export const getTemplateByName = internalQuery({
       .query("templates")
       .filter((q: any) => q.eq(q.field("name"), args.name))
       .first();
+  },
+});
+
+export const resolveTemplateForSend = internalQuery({
+  args: {
+    templateName: v.string(),
+    phoneNumberId: v.optional(v.string()),
+    requestedLanguage: v.optional(v.string()),
+    allowFallback: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const allowFallback = args.allowFallback ?? true;
+    const requestedLanguage = normalizeLanguageCode(args.requestedLanguage);
+    const attempted: Array<{ step: string; matched: boolean; note?: string }> = [];
+
+    const scopedByName = args.phoneNumberId
+      ? await ctx.db
+          .query("templates")
+          .withIndex("by_phone_number_id_name", (q) =>
+            q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.templateName)
+          )
+          .collect()
+      : [];
+    const scopedApproved = scopedByName.filter((t) => t.status === "APPROVED");
+
+    if (args.phoneNumberId) {
+      if (requestedLanguage) {
+        const scopedExact = scopedApproved.find(
+          (t) => normalizeLanguageCode(t.language) === requestedLanguage
+        );
+        attempted.push({
+          step: "scoped_exact",
+          matched: !!scopedExact,
+          note: `candidates=${scopedApproved.length}`,
+        });
+        if (scopedExact) {
+          return {
+            ok: true as const,
+            selected: {
+              templateId: scopedExact._id,
+              name: scopedExact.name,
+              language: scopedExact.language,
+              phoneNumberId: scopedExact.phoneNumberId ?? null,
+            },
+            resolutionMode: "scoped_exact" as const,
+            attempted,
+          };
+        }
+      } else {
+        attempted.push({
+          step: "scoped_exact",
+          matched: false,
+          note: "requestedLanguage missing",
+        });
+      }
+    } else {
+      attempted.push({
+        step: "scoped_exact",
+        matched: false,
+        note: "phoneNumberId missing",
+      });
+    }
+
+    if (allowFallback && scopedApproved.length > 0) {
+      const scopedAny = pickMostRecentTemplate(scopedApproved);
+      if (scopedAny) {
+        attempted.push({
+          step: "scoped_same_name_any_lang",
+          matched: true,
+          note: `selectedLanguage=${scopedAny.language}`,
+        });
+        return {
+          ok: true as const,
+          selected: {
+            templateId: scopedAny._id,
+            name: scopedAny.name,
+            language: scopedAny.language,
+            phoneNumberId: scopedAny.phoneNumberId ?? null,
+          },
+          resolutionMode: "scoped_same_name_any_lang" as const,
+          attempted,
+        };
+      }
+    } else {
+      attempted.push({
+        step: "scoped_same_name_any_lang",
+        matched: false,
+        note: allowFallback ? "no scoped approved templates" : "fallback disabled",
+      });
+    }
+
+    const templatesByName = await ctx.db
+      .query("templates")
+      .filter((q: any) => q.eq(q.field("name"), args.templateName))
+      .collect();
+    const globalApproved = templatesByName.filter((t) => !t.phoneNumberId && t.status === "APPROVED");
+
+    if (!requestedLanguage) {
+      attempted.push({
+        step: "global_exact",
+        matched: false,
+        note: "requestedLanguage missing",
+      });
+      return {
+        ok: false as const,
+        reasonCode: "LANGUAGE_MISSING",
+        message: `Template "${args.templateName}" cannot be resolved because requested language is missing.`,
+        attempted,
+      };
+    }
+
+    const globalExact = globalApproved.find(
+      (t) => normalizeLanguageCode(t.language) === requestedLanguage
+    );
+    attempted.push({
+      step: "global_exact",
+      matched: !!globalExact,
+      note: `candidates=${globalApproved.length}`,
+    });
+    if (allowFallback && globalExact) {
+      return {
+        ok: true as const,
+        selected: {
+          templateId: globalExact._id,
+          name: globalExact.name,
+          language: globalExact.language,
+          phoneNumberId: globalExact.phoneNumberId ?? null,
+        },
+        resolutionMode: "global_exact" as const,
+        attempted,
+      };
+    }
+
+    const hasAnyByName = templatesByName.length > 0;
+    const hasApprovedByName = templatesByName.some((t) => t.status === "APPROVED");
+    if (!hasAnyByName) {
+      return {
+        ok: false as const,
+        reasonCode: "TEMPLATE_NOT_FOUND",
+        message: `Template "${args.templateName}" was not found.`,
+        attempted,
+      };
+    }
+    if (!hasApprovedByName) {
+      return {
+        ok: false as const,
+        reasonCode: "TEMPLATE_NOT_APPROVED",
+        message: `Template "${args.templateName}" is not approved in any available scope.`,
+        attempted,
+      };
+    }
+
+    return {
+      ok: false as const,
+      reasonCode: "LANGUAGE_MISMATCH",
+      message: `Template "${args.templateName}" is not available in requested language "${requestedLanguage}".`,
+      attempted,
+    };
+  },
+});
+
+export const resolveTemplateForSendWithSync = internalAction({
+  args: {
+    templateName: v.string(),
+    phoneNumberId: v.optional(v.string()),
+    requestedLanguage: v.optional(v.string()),
+    allowFallback: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const before: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, args);
+    let syncError: string | null = null;
+    try {
+      await ctx.runAction(api.templates.syncFromMeta, {
+        phoneNumberId: args.phoneNumberId ?? undefined,
+      });
+    } catch (error) {
+      syncError = error instanceof Error ? error.message : String(error);
+    }
+
+    const after: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, args);
+    const attempted = [
+      ...(after?.attempted || []),
+      {
+        step: "sync_from_meta",
+        matched: syncError === null,
+        note: syncError ? `sync failed: ${syncError}` : "sync succeeded",
+      },
+    ];
+
+    if (!after?.ok) {
+      return {
+        ...after,
+        attempted,
+      };
+    }
+
+    const changedSelection =
+      !before?.ok ||
+      before?.selected?.templateId !== after?.selected?.templateId ||
+      before?.selected?.language !== after?.selected?.language ||
+      before?.selected?.phoneNumberId !== after?.selected?.phoneNumberId;
+    const resolutionMode = changedSelection
+      ? (`synced_${after.resolutionMode}` as const)
+      : after.resolutionMode;
+
+    return {
+      ...after,
+      resolutionMode,
+      attempted,
+    };
   },
 });
 

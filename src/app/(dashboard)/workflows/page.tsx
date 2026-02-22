@@ -301,8 +301,11 @@ export default function WorkflowsPage() {
                                             </div>
                                         )}
                                         {!selectedTemplateDoc && actionConfig.template && (
-                                            <div className="text-xs text-destructive">
-                                                القالب غير متاح لهذا الرقم. يرجى مزامنة القوالب أو اختيار قالب آخر.
+                                            <div className="space-y-2 text-xs text-destructive">
+                                                <div>القالب غير متاح لهذا الرقم. يرجى مزامنة القوالب أو اختيار قالب آخر.</div>
+                                                <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
+                                                    مزامنة القوالب
+                                                </a>
                                             </div>
                                         )}
                                     </div>

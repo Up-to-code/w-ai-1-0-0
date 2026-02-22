@@ -226,6 +226,9 @@ export function ChatInput({ chatId }: ChatInputProps) {
 
   const approvedTemplates = filterTemplates((templates || []).filter((t: any) => t.status === "APPROVED"))
   const allTemplates = filterTemplates(templates || [])
+  const hasOnlyGlobalTemplatesForNumber = Boolean(chat?.phoneNumberId) &&
+    approvedTemplates.length > 0 &&
+    approvedTemplates.every((t: any) => !t.phoneNumberId)
 
   return (
     <div className="flex flex-col">
@@ -316,6 +319,11 @@ export function ChatInput({ chatId }: ChatInputProps) {
                 </TabsList>
 
                 <div className="flex-1 overflow-y-auto mt-4 pr-1">
+                  {hasOnlyGlobalTemplatesForNumber && (
+                    <div className="mb-3 rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                      لا توجد قوالب مرتبطة بهذا الرقم حالياً. سيتم استخدام قوالب عامة (Global fallback).
+                    </div>
+                  )}
                   <TabsContent value="approved" className="mt-0 h-full">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
                       {approvedTemplates.map((t: any) => (
@@ -337,7 +345,12 @@ export function ChatInput({ chatId }: ChatInputProps) {
                             <div className="font-semibold text-foreground text-sm">{t.name}</div>
                             <div className="text-xs text-muted-foreground mt-1 flex justify-between">
                               <span>{t.category}</span>
-                              <span className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 rounded text-[10px]">{t.language}</span>
+                              <div className="flex items-center gap-1">
+                                <span className="bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400 px-1.5 py-0.5 rounded text-[10px]">{t.language}</span>
+                                <span className="bg-muted text-muted-foreground px-1.5 py-0.5 rounded text-[10px]">
+                                  {t.phoneNumberId ? "Scoped" : "Global"}
+                                </span>
+                              </div>
                             </div>
                           </CardContent>
                         </Card>
@@ -373,7 +386,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
                               </div>
                             </div>
                             <div className="text-xs text-muted-foreground mt-1">
-                              {t.category} · {t.language}
+                              {t.category} · {t.language} · {t.phoneNumberId ? "Scoped" : "Global"}
                             </div>
                           </CardContent>
                         </Card>

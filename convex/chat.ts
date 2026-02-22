@@ -498,33 +498,44 @@ export const sendMessage = mutation({
       payloadContent = { body: args.content };
     } else if (args.type === "template") {
       const requestedLanguage = args.template?.language;
-      const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+      const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
         templateName: args.template!.name,
         phoneNumberId: chat.phoneNumberId ?? undefined,
-        languageCode: requestedLanguage,
+        requestedLanguage,
+        allowFallback: true,
       });
 
-      if (!precheck.ok) {
+      if (!resolved.ok) {
         const diagnostic = {
           templateName: args.template!.name,
           requestedLanguage: requestedLanguage ?? null,
           approvedLanguage: null,
           resolvedPhoneNumberId: chat.phoneNumberId ?? null,
-          reasonCode: precheck.reasonCode,
+          reasonCode: resolved.reasonCode,
+          resolutionMode: resolved.resolutionMode ?? null,
         };
         console.error("[INVALID_TEMPLATE_PRECHECK][Chat] Blocking template send", diagnostic);
         await ctx.db.patch(messageId, { status: "failed" });
-        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${precheck.message}`);
+        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${resolved.message}`);
+      }
+      if (resolved.resolutionMode !== "scoped_exact") {
+        console.warn("[Chat] Template resolved using fallback", {
+          templateName: args.template!.name,
+          requestedLanguage: requestedLanguage ?? null,
+          approvedLanguage: resolved.selected?.language ?? null,
+          resolvedPhoneNumberId: chat.phoneNumberId ?? null,
+          reasonCode: "FALLBACK_USED",
+          resolutionMode: resolved.resolutionMode,
+        });
       }
 
       // Fetch template from database to get its structure
-      const template = await ctx.runQuery(internal.templates.getTemplateByName, {
-        name: args.template!.name,
-        phoneNumberId: chat.phoneNumberId ?? undefined,
+      const template = await ctx.runQuery(api.templates.getById, {
+        id: resolved.selected.templateId,
       });
 
       if (!template) {
-        throw new Error(`Template not found: ${args.template!.name}`);
+        throw new Error(`Template not found after resolution: ${args.template!.name}`);
       }
 
       if (template.status !== "APPROVED") {
@@ -557,8 +568,8 @@ export const sendMessage = mutation({
           await ctx.scheduler.runAfter(0, internal.chat.buildAndSendCarouselTemplate, {
             messageId: messageId,
             to: chat.contactPhone,
-            templateName: template.name,
-            language: precheck.language,
+            templateName: resolved.selected.name,
+            language: resolved.selected.language,
             template: template,
             phoneNumberId: chat.phoneNumberId ?? undefined,
           });
@@ -579,14 +590,14 @@ export const sendMessage = mutation({
       // For static carousels, we can send empty components
       if (components === null) {
         payloadContent = {
-          name: template.name,
-          language: { code: precheck.language },
+          name: resolved.selected.name,
+          language: { code: resolved.selected.language },
           components: [],
         };
       } else {
         payloadContent = {
-          name: template.name,
-          language: { code: precheck.language },
+          name: resolved.selected.name,
+          language: { code: resolved.selected.language },
           components: components,
         };
       }
@@ -639,28 +650,45 @@ export const buildAndSendCarouselTemplate = internalAction({
   },
   handler: async (ctx, args): Promise<any> => {
     try {
-      const precheck = await ctx.runQuery(internal.campaigns.validateTemplateForSend, {
+      const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
         templateName: args.templateName,
         phoneNumberId: args.phoneNumberId,
-        languageCode: args.language,
+        requestedLanguage: args.language,
+        allowFallback: true,
       });
-      if (!precheck.ok) {
+      if (!resolved.ok) {
         const diagnostic = {
           templateName: args.templateName,
           requestedLanguage: args.language ?? null,
           approvedLanguage: null,
           resolvedPhoneNumberId: args.phoneNumberId ?? null,
-          reasonCode: precheck.reasonCode,
+          reasonCode: resolved.reasonCode,
+          resolutionMode: resolved.resolutionMode ?? null,
         };
         console.error("[INVALID_TEMPLATE_PRECHECK][Chat][Carousel] Blocking template send", diagnostic);
         await ctx.runMutation(internal.chat.updateMessageStatusDirect, {
           messageId: args.messageId,
           status: "failed",
         });
-        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${precheck.message}`);
+        throw new Error(`[INVALID_TEMPLATE_PRECHECK] ${resolved.message}`);
+      }
+      if (resolved.resolutionMode !== "scoped_exact") {
+        console.warn("[Chat] Carousel template resolved using fallback", {
+          templateName: args.templateName,
+          requestedLanguage: args.language ?? null,
+          approvedLanguage: resolved.selected?.language ?? null,
+          resolvedPhoneNumberId: args.phoneNumberId ?? null,
+          reasonCode: "FALLBACK_USED",
+          resolutionMode: resolved.resolutionMode,
+        });
       }
 
-      const template = args.template;
+      const template = await ctx.runQuery(api.templates.getById, {
+        id: resolved.selected.templateId,
+      });
+      if (!template) {
+        throw new Error(`Template not found after resolution: ${args.templateName}`);
+      }
       const carouselComp = template.components?.find((c: any) =>
         c.type === "CAROUSEL" || c.type === "carousel"
       );
@@ -871,8 +899,8 @@ export const buildAndSendCarouselTemplate = internalAction({
 
       // Send the message with built components
       const payloadContent = {
-        name: args.templateName,
-        language: { code: precheck.language },
+        name: resolved.selected.name,
+        language: { code: resolved.selected.language },
         components: components,
       };
 
