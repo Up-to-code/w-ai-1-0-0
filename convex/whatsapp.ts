@@ -6,7 +6,12 @@ import { extractWebhookChanges, resolvePhoneNumberCandidate } from "./webhookUti
 
 const WHATSAPP_API_URL = "https://graph.facebook.com/v21.0";
 
-export type WhatsAppConfig = { accessToken: string; phoneId: string; wabaId?: string };
+export type WhatsAppConfig = {
+  accessToken: string;
+  phoneId: string;
+  wabaId?: string;
+  source: "db_number" | "db_first_with_token" | "env_fallback" | "webhook_fallback";
+};
 
 async function withAppSecretProof(ctx: any, url: string, accessToken: string): Promise<string> {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
@@ -37,7 +42,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
       if (!phoneId) {
         throw new Error(`Number ${phoneNumberId} has invalid configuration. Check Integrations (ربط المتجر).`);
       }
-      return { accessToken, phoneId, wabaId: config.businessAccountId };
+      return { accessToken, phoneId, wabaId: config.businessAccountId, source: "db_number" };
     } else {
       throw new Error(`Number ${phoneNumberId} is not configured. Add it in Integrations (ربط المتجر) and set its access token.`);
     }
@@ -51,6 +56,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
       accessToken: firstToken,
       phoneId: first.businessNumberId,
       wabaId: first.businessAccountId,
+      source: "db_first_with_token",
     };
   }
   const accessToken = normalizeToken(process.env.WHATSAPP_ACCESS_TOKEN);
@@ -58,7 +64,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const wabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (accessToken && phoneId) {
     console.log(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
-    return { accessToken, phoneId, wabaId };
+    return { accessToken, phoneId, wabaId, source: "env_fallback" };
   }
   const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
   const fallbackToken = normalizeToken(webhook?.accessToken ?? undefined);
@@ -66,7 +72,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const fallbackWabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (fallbackToken && fallbackPhoneId) {
     console.log(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
-    return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId };
+    return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId, source: "webhook_fallback" };
   }
   throw new Error(
     "Missing WhatsApp config. Add an access token: go to Integrations (ربط المتجر), add a number and set its Access Token, or set Access Token and Default Phone Number in Webhook settings, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_PHONE_ID in the environment."
@@ -90,7 +96,10 @@ export const sendMessage = action({
     phoneNumberId: v.optional(v.string()), // Meta phone_number_id; when set, use that number's config
   },
   handler: async (ctx, args) => {
-    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    if (args.type === "template" && !args.phoneNumberId) {
+      throw new Error("Template sends require an explicit phoneNumberId. Select a sending number for the campaign/chat/workflow.");
+    }
+    const { accessToken, phoneId, source } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     // Validate and clean phone number
     let recipient: string;
@@ -103,6 +112,12 @@ export const sendMessage = action({
     }
 
     console.log(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
+    console.log("[WhatsApp] Config resolved", {
+      selectedPhoneNumberId: args.phoneNumberId ?? null,
+      resolvedPhoneId: phoneId,
+      source,
+      type: args.type,
+    });
 
     const payload: any = {
       messaging_product: "whatsapp",

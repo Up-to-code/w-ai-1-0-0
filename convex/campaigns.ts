@@ -181,6 +181,25 @@ export const startProcessing = internalAction({
         if (!campaign) {
             throw new Error(`Campaign not found: ${args.campaignId}`);
         }
+        if (!campaign.phoneNumberId) {
+            const reason =
+                `${INVALID_TEMPLATE_PRECHECK_PREFIX} PHONE_NUMBER_REQUIRED ` +
+                `templateName="${campaign.templateName}" campaignId="${args.campaignId}"`;
+            console.error("[INVALID_TEMPLATE_PRECHECK][Campaign][Start] Blocking campaign start: missing sending number", {
+                templateName: campaign.templateName,
+                requestedLanguage: null,
+                approvedLanguage: null,
+                resolvedPhoneNumberId: null,
+                reasonCode: "PHONE_NUMBER_REQUIRED",
+                resolutionMode: null,
+                campaignId: args.campaignId,
+            });
+            await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: args.campaignId,
+                reason,
+            });
+            return;
+        }
 
         const selectedTemplate = await ctx.runQuery(api.templates.getById, { id: campaign.templateId });
         const scopedTemplateByName = selectedTemplate
@@ -400,6 +419,27 @@ export const sendToContact = internalAction({
             throw new Error("Campaign or contact not found");
         }
         if (campaign.status !== "PROCESSING") {
+            return;
+        }
+        if (!campaign.phoneNumberId) {
+            const reason =
+                `${INVALID_TEMPLATE_PRECHECK_PREFIX} PHONE_NUMBER_REQUIRED ` +
+                `templateName="${campaign.templateName}" campaignId="${args.campaignId}"`;
+            await ctx.runMutation(internal.campaigns.logBatchResults, {
+                campaignId: args.campaignId,
+                logs: [{
+                    contactId: args.contactId,
+                    status: "failed",
+                    error: reason,
+                }],
+            });
+            await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: args.campaignId,
+                reason,
+            });
+            await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, {
+                campaignId: args.campaignId,
+            });
             return;
         }
 
@@ -985,7 +1025,7 @@ export const sendToContact = internalAction({
                     language: { code: templateLanguage },
                     components: components
                 },
-                phoneNumberId: campaign.phoneNumberId ?? undefined,
+                phoneNumberId: campaign.phoneNumberId,
             });
             await ctx.runMutation(internal.campaigns.logBatchResults, {
                 campaignId: args.campaignId,

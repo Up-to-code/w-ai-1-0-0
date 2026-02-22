@@ -26,7 +26,8 @@ import {
     ChevronDown,
     Play,
     Shield,
-    X
+    X,
+    AlertTriangle
 } from "lucide-react"
 import { format } from "date-fns"
 import { ar } from "date-fns/locale"
@@ -87,6 +88,8 @@ export default function NewCampaignPage() {
     )
     const [templateValidation, setTemplateValidation] = useState<any | null>(null)
     const [templateValidationUnavailable, setTemplateValidationUnavailable] = useState(false)
+    const [runtimeInfo, setRuntimeInfo] = useState<any | null>(null)
+    const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 })
 
     const createCampaign = useMutation(api.campaigns.create)
@@ -195,6 +198,41 @@ export default function NewCampaignPage() {
         }
     }, [convex, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
 
+    useEffect(() => {
+        let cancelled = false
+        const loadRuntimeInfo = async () => {
+            if (!isAdmin) return
+            try {
+                const result = await convex.query((api as any).system.getRuntimeDeploymentInfo, {
+                    includeEnvKeys: true,
+                })
+                if (!cancelled) {
+                    setRuntimeInfo(result)
+                    setRuntimeInfoUnavailable(false)
+                }
+            } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                const missingFunction = message.includes("Could not find public function for 'system:getRuntimeDeploymentInfo'")
+                if (!cancelled) {
+                    if (missingFunction) {
+                        setRuntimeInfoUnavailable(true)
+                        setRuntimeInfo(null)
+                    } else {
+                        setRuntimeInfo({
+                            deploymentUrl: "unknown",
+                            buildMarker: "unknown",
+                            error: "Runtime diagnostics are temporarily unavailable.",
+                        })
+                    }
+                }
+            }
+        }
+        void loadRuntimeInfo()
+        return () => {
+            cancelled = true
+        }
+    }, [convex, isAdmin])
+
     const handleSubmit = async () => {
         if (testBypassValidationError || testContactOverflowWarning) return
         setIsSubmitting(true)
@@ -251,6 +289,36 @@ export default function NewCampaignPage() {
                     <p className="text-muted-foreground">قم بإعداد حملتك في 4 خطوات بسيطة</p>
                 </div>
             </div>
+            {isAdmin && (
+                <Card className="mb-6 border-dashed">
+                    <CardContent className="py-4 space-y-2 text-sm">
+                        <div className="flex items-center gap-2 font-medium">
+                            <Shield className="h-4 w-4" />
+                            Runtime Deployment Diagnostics
+                        </div>
+                        {runtimeInfoUnavailable ? (
+                            <div className="flex items-center gap-2 text-amber-600">
+                                <AlertTriangle className="h-4 w-4" />
+                                <span>`system:getRuntimeDeploymentInfo` is unavailable on this deployment.</span>
+                            </div>
+                        ) : (
+                            <>
+                                <div>
+                                    <span className="text-muted-foreground">Deployment URL:</span>{" "}
+                                    <code>{runtimeInfo?.deploymentUrl ?? "loading..."}</code>
+                                </div>
+                                <div>
+                                    <span className="text-muted-foreground">Build Marker:</span>{" "}
+                                    <code>{runtimeInfo?.buildMarker ?? "loading..."}</code>
+                                </div>
+                                {runtimeInfo?.error ? (
+                                    <div className="text-amber-600">{runtimeInfo.error}</div>
+                                ) : null}
+                            </>
+                        )}
+                    </CardContent>
+                </Card>
+            )}
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
                 {/* Steps Sidebar */}
