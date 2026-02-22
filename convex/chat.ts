@@ -503,6 +503,7 @@ export const sendMessage = mutation({
         phoneNumberId: chat.phoneNumberId ?? undefined,
         requestedLanguage,
         allowFallback: true,
+        requireScoped: true,
       });
 
       if (!resolved.ok) {
@@ -655,6 +656,7 @@ export const buildAndSendCarouselTemplate = internalAction({
         phoneNumberId: args.phoneNumberId,
         requestedLanguage: args.language,
         allowFallback: true,
+        requireScoped: true,
       });
       if (!resolved.ok) {
         const diagnostic = {

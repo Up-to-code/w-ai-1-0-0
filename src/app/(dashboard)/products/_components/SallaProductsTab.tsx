@@ -33,6 +33,7 @@ export function SallaProductsTab() {
   };
   type FetchResult = {
     connected: boolean;
+    status?: "connected" | "disconnected" | "token_invalid" | "refresh_failed";
     products: Product[];
     pagination?: {
       currentPage?: number;
@@ -53,7 +54,18 @@ export function SallaProductsTab() {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
+  const [tokenError, setTokenError] = useState(false);
   const sentinelRef = useRef<HTMLDivElement | null>(null);
+  if (connection === undefined) {
+    return (
+      <div className="flex items-center justify-center min-h-[40vh] text-muted-foreground">
+        <RefreshCw className="h-5 w-5 animate-spin ml-2" />
+        جاري تحميل حالة الربط...
+      </div>
+    );
+  }
+  const isConnected = Boolean(connection?.connected);
+  const connectionStatus = connection?.status;
 
   const handleFetchProducts = useCallback(async (initial?: boolean) => {
     if (initial) {
@@ -65,8 +77,10 @@ export function SallaProductsTab() {
           setPage(result.pagination?.currentPage || 1);
           setTotalPages(result.pagination?.totalPages || 1);
           setLoadError(result.errorMessage || null);
+          setTokenError(false);
         } else {
           setLoadError(result.errorMessage || "تعذر جلب المنتجات من سلة.");
+          setTokenError(Boolean(result.tokenError));
         }
         setHasFetched(true);
       } finally {
@@ -84,8 +98,10 @@ export function SallaProductsTab() {
         setPage(result.pagination?.currentPage || nextPage);
         setTotalPages(result.pagination?.totalPages || totalPages);
         if (result.errorMessage) setLoadError(result.errorMessage);
+        setTokenError(false);
       } else if (result.errorMessage) {
         setLoadError(result.errorMessage);
+        setTokenError(Boolean(result.tokenError));
       }
     } finally {
       setIsLoadingMore(false);
@@ -93,14 +109,14 @@ export function SallaProductsTab() {
   }, [fetchProducts, isLoadingMore, page, totalPages]);
 
   useEffect(() => {
-    if (connection && !hasFetched && !isLoading) {
+    if (isConnected && !hasFetched && !isLoading) {
       handleFetchProducts(true);
     }
-  }, [connection, hasFetched, isLoading, handleFetchProducts]);
+  }, [isConnected, hasFetched, isLoading, handleFetchProducts]);
 
   useEffect(() => {
     const el = sentinelRef.current;
-    if (!el || !hasFetched) return;
+    if (!el || !hasFetched || tokenError) return;
     const observer = new IntersectionObserver((entries) => {
       const [entry] = entries;
       if (entry.isIntersecting && !isLoading && !isLoadingMore && search.trim() === "") {
@@ -109,22 +125,30 @@ export function SallaProductsTab() {
     }, { rootMargin: "200px" });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [hasFetched, isLoading, isLoadingMore, search, page, totalPages, handleFetchProducts]);
+  }, [hasFetched, isLoading, isLoadingMore, search, page, tokenError, totalPages, handleFetchProducts]);
 
   const filteredProducts = products.filter((p) => p.name?.includes(search) || p.sku?.includes(search));
 
-  if (!connection) {
+  if (!isConnected) {
     return (
       <div className="flex flex-col items-center justify-center min-h-[40vh] text-center">
         <div className="w-16 h-16 rounded-full bg-[#004D3D]/10 flex items-center justify-center mb-4">
           <ShoppingBag className="h-8 w-8 text-[#004D3D]" />
         </div>
-        <h2 className="text-lg font-bold mb-2">لم يتم ربط متجر سلة</h2>
-        <p className="text-muted-foreground mb-4 max-w-sm">قم بربط متجرك على سلة لعرض المنتجات</p>
+        <h2 className="text-lg font-bold mb-2">
+          {connectionStatus === "token_invalid" || connectionStatus === "refresh_failed"
+            ? "انتهت صلاحية ربط سلة"
+            : "لم يتم ربط متجر سلة"}
+        </h2>
+        <p className="text-muted-foreground mb-4 max-w-sm">
+          {connectionStatus === "token_invalid" || connectionStatus === "refresh_failed"
+            ? "رمز سلة غير صالح حالياً. أعد الربط من صفحة التكاملات."
+            : "قم بربط متجرك على سلة لعرض المنتجات"}
+        </p>
         <Link href="/integrations">
           <Button className="gap-2 bg-[#004D3D] hover:bg-[#003D2D]">
             <Link2 className="h-4 w-4" />
-            ربط متجر سلة
+            إعادة ربط سلة
           </Button>
         </Link>
       </div>
@@ -136,9 +160,9 @@ export function SallaProductsTab() {
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-xl font-bold">منتجات سلة</h2>
-          <p className="text-muted-foreground text-sm">{connection.storeName || "متجر سلة"} • {products.length} منتج</p>
+          <p className="text-muted-foreground text-sm">{connection?.storeName || "متجر سلة"} • {products.length} منتج</p>
         </div>
-        <Button variant="outline" onClick={() => handleFetchProducts(true)} disabled={isLoading} className="gap-2">
+        <Button variant="outline" onClick={() => handleFetchProducts(true)} disabled={isLoading || tokenError} className="gap-2">
           <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
           تحديث
         </Button>
@@ -149,11 +173,27 @@ export function SallaProductsTab() {
         <Input placeholder="بحث بالاسم أو SKU..." className="pr-10 h-11" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
 
-      {loadError && (
+      {loadError && !tokenError && (
         <Card className="border-amber-300/60 bg-amber-50 dark:bg-amber-900/20">
           <CardContent className="py-3 px-4 flex items-start gap-2 text-amber-900 dark:text-amber-300">
             <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
             <p className="text-sm">{loadError}</p>
+          </CardContent>
+        </Card>
+      )}
+
+      {tokenError && (
+        <Card className="border-amber-300/60 bg-amber-50 dark:bg-amber-900/20">
+          <CardContent className="py-3 px-4 flex items-start justify-between gap-3 text-amber-900 dark:text-amber-300">
+            <div className="flex items-start gap-2">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <p className="text-sm">{loadError || "انتهت صلاحية ربط سلة. أعد الربط للمتابعة."}</p>
+            </div>
+            <Link href="/integrations">
+              <Button size="sm" className="bg-[#004D3D] hover:bg-[#003D2D]">
+                إعادة الربط
+              </Button>
+            </Link>
           </CardContent>
         </Card>
       )}

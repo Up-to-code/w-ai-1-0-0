@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
-import { useAction } from "convex/react"
+import { useEffect, useState } from "react"
+import Link from "next/link"
+import { useAction, useQuery } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
@@ -20,6 +21,7 @@ interface Product {
 }
 interface FetchProductsResult {
     connected: boolean
+    status?: "connected" | "disconnected" | "token_invalid" | "refresh_failed"
     products: Product[]
     pagination?: {
         currentPage?: number
@@ -38,6 +40,7 @@ interface ProductPickerProps {
 
 export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
     const fetchProducts = useAction(api.salla.fetchProducts)
+    const connection = useQuery(api.salla.getConnection)
     const [products, setProducts] = useState<Product[]>([])
     const [isLoading, setIsLoading] = useState(false)
     const [isOpen, setIsOpen] = useState(false)
@@ -45,8 +48,20 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
     const [loadError, setLoadError] = useState<string | null>(null)
     const [currentPage, setCurrentPage] = useState(1)
     const [totalItems, setTotalItems] = useState(0)
+    const [tokenError, setTokenError] = useState(false)
+    const isConnected = Boolean(connection?.connected)
 
     const loadProducts = async (page = 1) => {
+        if (connection === undefined) {
+            return
+        }
+        if (!isConnected) {
+            setHasLoaded(true)
+            setProducts([])
+            setTokenError(true)
+            setLoadError("انتهت صلاحية ربط سلة. أعد الربط من صفحة التكاملات.")
+            return
+        }
         setIsLoading(true)
         try {
             const result = await fetchProducts({ page }) as FetchProductsResult
@@ -59,8 +74,10 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                 setCurrentPage(page)
                 setTotalItems(result.pagination?.totalItems || 0)
                 setLoadError(result.errorMessage || null)
+                setTokenError(false)
             } else {
                 setLoadError(result.errorMessage || "تعذر جلب منتجات سلة حالياً.")
+                setTokenError(Boolean(result.tokenError))
             }
             setHasLoaded(true)
         } catch (error) {
@@ -73,8 +90,16 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
 
     const handleOpenChange = (open: boolean) => {
         setIsOpen(open)
-        if (open && !hasLoaded) loadProducts(1)
+        if (open && !hasLoaded && connection !== undefined) loadProducts(1)
     }
+
+    useEffect(() => {
+        if (isOpen && !hasLoaded && connection !== undefined) {
+            void loadProducts(1)
+        }
+        // loadProducts intentionally omitted to avoid recreating effect on every render.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [isOpen, hasLoaded, connection])
 
     return (
         <Dialog open={isOpen} onOpenChange={handleOpenChange}>
@@ -99,9 +124,19 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                 </div>
 
                 <ScrollArea className="flex-1 p-2">
-                    {loadError && (
+                    {loadError && !tokenError && (
                         <div className="mb-3 rounded-md border border-amber-300/60 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
                             {loadError}
+                        </div>
+                    )}
+                    {tokenError && (
+                        <div className="mb-3 rounded-md border border-amber-300/60 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300 space-y-2">
+                            <p>{loadError || "انتهت صلاحية ربط سلة. أعد الربط من صفحة التكاملات."}</p>
+                            <Link href="/integrations" className="inline-block">
+                                <Button size="sm" className="h-7 bg-[#004D3D] hover:bg-[#003D2D] text-white">
+                                    إعادة ربط سلة
+                                </Button>
+                            </Link>
                         </div>
                     )}
                     {isLoading ? (
@@ -157,7 +192,7 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                                 variant="outline"
                                 size="sm"
                                 onClick={() => loadProducts(currentPage + 1)}
-                                disabled={isLoading || (products.length >= totalItems)}
+                                disabled={isLoading || tokenError || (products.length >= totalItems)}
                                 className="w-full text-xs"
                             >
                                 {isLoading ? (

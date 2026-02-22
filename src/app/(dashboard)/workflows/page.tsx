@@ -1,9 +1,10 @@
 "use client"
 
-import { useState } from "react"
-import { useQuery, useMutation } from "convex/react"
+import { useState, useEffect, useCallback } from "react"
+import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -92,13 +93,17 @@ export default function WorkflowsPage() {
     const { activePhoneNumberId } = useWorkspace()
     const effectivePhoneNumberId =
         !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
-    const workflows = useQuery(api.workflows.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
-    const templates = useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
-    const users = useQuery(api.users.list) || [] // Add this query
+    const workflows = (useQuery(api.workflows.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined) || []
+    const templates = (useQuery(
+        (api as any).templates.listScopedApproved,
+        effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
+    ) as any[] | undefined) || []
+    const users = (useQuery(api.users.list) as any[] | undefined) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
     const updateWorkflow = useMutation(api.workflows.update)
     const toggleWorkflowMutation = useMutation(api.workflows.toggle)
     const deleteWorkflow = useMutation(api.workflows.remove)
+    const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -107,10 +112,49 @@ export default function WorkflowsPage() {
     const [triggerConfig, setTriggerConfig] = useState<any>({})
     const [selectedAction, setSelectedAction] = useState("")
     const [actionConfig, setActionConfig] = useState<any>({})
-    const selectedTemplateDoc = (templates || []).find((t: any) => t.name === actionConfig.template)
+    const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
+    const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
+    const selectedTemplateDoc = (templates || []).find((t: any) => t._id === actionConfig.templateId)
+        || (templates || []).find((t: any) => t.name === actionConfig.template)
     const isTemplateActionInvalid =
         selectedAction === "send_template" &&
-        (!actionConfig.template || !selectedTemplateDoc || selectedTemplateDoc.status !== "APPROVED")
+        (!effectivePhoneNumberId || !actionConfig.templateId || !selectedTemplateDoc)
+
+    const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
+        if (!effectivePhoneNumberId) return
+        if (!force && !shouldSyncScopedTemplates(effectivePhoneNumberId)) return
+        setIsSyncingTemplates(true)
+        setTemplateSyncError(null)
+        try {
+            await syncScopedTemplates({ phoneNumberId: effectivePhoneNumberId })
+            markScopedTemplatesSynced(effectivePhoneNumberId)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            setTemplateSyncError(message || "تعذر مزامنة القوالب.")
+        } finally {
+            setIsSyncingTemplates(false)
+        }
+    }, [effectivePhoneNumberId, syncScopedTemplates])
+
+    useEffect(() => {
+        if (!isCreateOpen || !effectivePhoneNumberId) return
+        void triggerScopedTemplateSync(false)
+    }, [isCreateOpen, effectivePhoneNumberId, triggerScopedTemplateSync])
+
+    useEffect(() => {
+        if (selectedAction !== "send_template") return
+        if (!actionConfig.templateId && actionConfig.template && templates.length > 0) {
+            const matched = templates.find((template: any) => template.name === actionConfig.template)
+            if (matched) {
+                setActionConfig((prev: any) => ({
+                    ...prev,
+                    templateId: matched._id,
+                    template: matched.name,
+                    language: matched.language,
+                }))
+            }
+        }
+    }, [actionConfig.template, actionConfig.templateId, selectedAction, templates])
 
     const toggleWorkflow = async (id: string) => {
         await toggleWorkflowMutation({ id: id as any })
@@ -122,7 +166,16 @@ export default function WorkflowsPage() {
         setSelectedTrigger(workflow.trigger)
         setTriggerConfig(workflow.triggerConfig || {})
         setSelectedAction(workflow.action)
-        setActionConfig(workflow.actionConfig || {})
+        const nextActionConfig = { ...(workflow.actionConfig || {}) }
+        if (workflow.action === "send_template" && !nextActionConfig.templateId && nextActionConfig.template) {
+            const matched = templates.find((template: any) => template.name === nextActionConfig.template)
+            if (matched) {
+                nextActionConfig.templateId = matched._id
+                nextActionConfig.language = matched.language
+            }
+        }
+        setActionConfig(nextActionConfig)
+        setTemplateSyncError(null)
         setIsCreateOpen(true)
     }
 
@@ -134,8 +187,11 @@ export default function WorkflowsPage() {
                     requestedLanguage: null,
                     approvedLanguage: selectedTemplateDoc?.language ?? null,
                     resolvedPhoneNumberId: effectivePhoneNumberId ?? null,
-                    reasonCode: !actionConfig.template ? "TEMPLATE_MISSING" : "TEMPLATE_INVALID",
+                    reasonCode: !actionConfig.templateId ? "TEMPLATE_MISSING" : "TEMPLATE_INVALID",
                 })
+                return
+            }
+            if (selectedAction === "send_template" && templateSyncError) {
                 return
             }
 
@@ -173,6 +229,7 @@ export default function WorkflowsPage() {
         setTriggerConfig({})
         setSelectedAction("")
         setActionConfig({})
+        setTemplateSyncError(null)
     }
 
     return (
@@ -277,30 +334,67 @@ export default function WorkflowsPage() {
                                 </div>
                                 {selectedAction === "send_template" && (
                                     <div className="space-y-2 p-4 bg-muted/50 rounded-xl">
-                                        <Label>اختر القالب</Label>
+                                        <div className="flex items-center justify-between">
+                                            <Label>اختر القالب</Label>
+                                            <Button
+                                                type="button"
+                                                size="sm"
+                                                variant="outline"
+                                                disabled={!effectivePhoneNumberId || isSyncingTemplates}
+                                                onClick={() => void triggerScopedTemplateSync(true)}
+                                            >
+                                                {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
+                                            </Button>
+                                        </div>
                                         <Select
-                                            value={actionConfig.template}
-                                            onValueChange={(v) => setActionConfig({ ...actionConfig, template: v })}
+                                            value={actionConfig.templateId || ""}
+                                            onValueChange={(v) => {
+                                                const template = templates.find((row: any) => row._id === v)
+                                                setActionConfig({
+                                                    ...actionConfig,
+                                                    templateId: v,
+                                                    template: template?.name,
+                                                    language: template?.language,
+                                                })
+                                            }}
                                         >
                                             <SelectTrigger>
                                                 <SelectValue placeholder="اختر قالب..." />
                                             </SelectTrigger>
                                             <SelectContent>
                                                 {templates
-                                                    .filter(t => t.status === "APPROVED")
                                                     .map(t => (
-                                                        <SelectItem key={t._id} value={t.name}>
-                                                            {t.name}
+                                                        <SelectItem key={t._id} value={t._id}>
+                                                            {t.name} ({t.language})
                                                         </SelectItem>
                                                     ))}
                                             </SelectContent>
                                         </Select>
+                                        {!effectivePhoneNumberId && (
+                                            <div className="text-xs text-destructive">اختر رقمًا محددًا بدلاً من &quot;كل الأرقام&quot;.</div>
+                                        )}
+                                        {templateSyncError && (
+                                            <div className="space-y-2 text-xs text-destructive">
+                                                <div>تعذر مزامنة القوالب: {templateSyncError}</div>
+                                                <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
+                                                    افتح صفحة القوالب
+                                                </a>
+                                            </div>
+                                        )}
+                                        {templates.length === 0 && effectivePhoneNumberId && !isSyncingTemplates && !templateSyncError && (
+                                            <div className="space-y-2 text-xs text-muted-foreground">
+                                                <div>لا توجد قوالب مرتبطة بهذا الرقم بعد المزامنة.</div>
+                                                <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
+                                                    إدارة القوالب
+                                                </a>
+                                            </div>
+                                        )}
                                         {selectedTemplateDoc && (
                                             <div className="text-xs text-muted-foreground">
                                                 اللغة المعتمدة: <span className="font-medium">{selectedTemplateDoc.language}</span>
                                             </div>
                                         )}
-                                        {!selectedTemplateDoc && actionConfig.template && (
+                                        {!selectedTemplateDoc && actionConfig.templateId && (
                                             <div className="space-y-2 text-xs text-destructive">
                                                 <div>القالب غير متاح لهذا الرقم. يرجى مزامنة القوالب أو اختيار قالب آخر.</div>
                                                 <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
@@ -364,7 +458,10 @@ export default function WorkflowsPage() {
                         </div>
                         <DialogFooter>
                             <Button variant="outline" onClick={() => setIsCreateOpen(false)}>إلغاء</Button>
-                            <Button onClick={handleSave} disabled={!selectedTrigger || !selectedAction || isTemplateActionInvalid}>
+                            <Button
+                                onClick={handleSave}
+                                disabled={!selectedTrigger || !selectedAction || isTemplateActionInvalid || isSyncingTemplates || !!templateSyncError}
+                            >
                                 حفظ القاعدة
                             </Button>
                         </DialogFooter>

@@ -1,10 +1,11 @@
 "use client"
 
 import { cn } from "@/lib/utils"
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect, useCallback } from "react"
 import { ProductPicker } from "./ProductPicker"
 import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
+import { markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Send, Paperclip, Mic, Image as ImageIcon, FileText, Smile, Search } from "lucide-react"
@@ -22,19 +23,25 @@ interface ChatInputProps {
 
 export function ChatInput({ chatId }: ChatInputProps) {
   const isRealChatId = chatId && chatId !== "new"
-  const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip")
-  const templates = useQuery(api.templates.list, chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : {})
+  const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip") as any
+  const templates = useQuery(
+    (api as any).templates.listScopedApproved,
+    chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
+  ) as any[] | undefined
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)
   const uploadMediaToMeta = useAction(api.whatsapp.uploadMedia)
   const saveExternalImage = useAction(api.files.saveExternalImage)
+  const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
 
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
   const [isSending, setIsSending] = useState(false)
   const [templateSearch, setTemplateSearch] = useState("")
   const [isTemplateOpen, setIsTemplateOpen] = useState(false)
+  const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
+  const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
   const imageInputRef = useRef<HTMLInputElement>(null)
 
   const isAiActive = chat?.aiMode
@@ -224,11 +231,29 @@ export function ChatInput({ chatId }: ChatInputProps) {
     return list.filter(t => t.name.toLowerCase().includes(templateSearch.toLowerCase()))
   }
 
-  const approvedTemplates = filterTemplates((templates || []).filter((t: any) => t.status === "APPROVED"))
-  const allTemplates = filterTemplates(templates || [])
-  const hasOnlyGlobalTemplatesForNumber = Boolean(chat?.phoneNumberId) &&
-    approvedTemplates.length > 0 &&
-    approvedTemplates.every((t: any) => !t.phoneNumberId)
+  const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
+    if (!chat?.phoneNumberId) return
+    if (!force && !shouldSyncScopedTemplates(chat.phoneNumberId)) return
+    setIsSyncingTemplates(true)
+    setTemplateSyncError(null)
+    try {
+      await syncScopedTemplates({ phoneNumberId: chat.phoneNumberId })
+      markScopedTemplatesSynced(chat.phoneNumberId)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setTemplateSyncError(message || "تعذر مزامنة القوالب.")
+    } finally {
+      setIsSyncingTemplates(false)
+    }
+  }, [chat?.phoneNumberId, syncScopedTemplates])
+
+  useEffect(() => {
+    if (!isTemplateOpen || !chat?.phoneNumberId) return
+    void triggerScopedTemplateSync(false)
+  }, [chat?.phoneNumberId, isTemplateOpen, triggerScopedTemplateSync])
+
+  const approvedTemplates = filterTemplates(templates || [])
+  const allTemplates = approvedTemplates
 
   return (
     <div className="flex flex-col">
@@ -302,6 +327,25 @@ export function ChatInput({ chatId }: ChatInputProps) {
                 <DialogTitle>قوالب الرسائل</DialogTitle>
               </DialogHeader>
 
+              <div className="flex items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {chat?.phoneNumberId ? "القوالب المرتبطة بالرقم الحالي فقط" : "اختر محادثة برقم إرسال لعرض القوالب"}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!chat?.phoneNumberId || isSyncingTemplates}
+                  onClick={() => void triggerScopedTemplateSync(true)}
+                >
+                  {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
+                </Button>
+              </div>
+              {templateSyncError ? (
+                <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                  تعذر مزامنة القوالب: {templateSyncError}
+                </div>
+              ) : null}
+
               <div className="relative mb-4">
                 <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
@@ -319,11 +363,6 @@ export function ChatInput({ chatId }: ChatInputProps) {
                 </TabsList>
 
                 <div className="flex-1 overflow-y-auto mt-4 pr-1">
-                  {hasOnlyGlobalTemplatesForNumber && (
-                    <div className="mb-3 rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-                      لا توجد قوالب مرتبطة بهذا الرقم حالياً. سيتم استخدام قوالب عامة (Global fallback).
-                    </div>
-                  )}
                   <TabsContent value="approved" className="mt-0 h-full">
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pb-4">
                       {approvedTemplates.map((t: any) => (
@@ -355,7 +394,11 @@ export function ChatInput({ chatId }: ChatInputProps) {
                           </CardContent>
                         </Card>
                       ))}
-                      {approvedTemplates.length === 0 && <div className="text-center text-muted-foreground py-8">لا توجد قوالب معتمدة</div>}
+                      {approvedTemplates.length === 0 && (
+                        <div className="text-center text-muted-foreground py-8">
+                          لا توجد قوالب معتمدة لهذا الرقم. قم بالمزامنة أو افتح صفحة القوالب.
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
                   <TabsContent value="all" className="mt-0 h-full">

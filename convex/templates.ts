@@ -27,6 +27,53 @@ export const list = query({
   },
 });
 
+export const listScopedApproved = query({
+  args: { phoneNumberId: v.string() },
+  handler: async (ctx, args) => {
+    const scoped = await ctx.db
+      .query("templates")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .order("desc")
+      .collect();
+    return scoped.filter((template) => template.status === "APPROVED");
+  },
+});
+
+export const getScopedTemplateHealth = query({
+  args: { phoneNumberId: v.string() },
+  handler: async (ctx, args) => {
+    const scoped = await ctx.db
+      .query("templates")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .collect();
+    const scopedApproved = scoped.filter((template) => template.status === "APPROVED");
+    const lastSyncAt =
+      scoped.length > 0
+        ? Math.max(...scoped.map((template) => template.lastSyncedAt ?? template._creationTime))
+        : null;
+    const hasAnyGlobalApproved = (await ctx.db.query("templates").take(5000)).some(
+      (template) => !template.phoneNumberId && template.status === "APPROVED"
+    );
+
+    return {
+      scopedApprovedCount: scopedApproved.length,
+      lastSyncAt,
+      hasAnyGlobalApproved,
+    };
+  },
+});
+
+export const getScopedApprovedCountInternal = internalQuery({
+  args: { phoneNumberId: v.string() },
+  handler: async (ctx, args) => {
+    const scoped = await ctx.db
+      .query("templates")
+      .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+      .collect();
+    return scoped.filter((template) => template.status === "APPROVED").length;
+  },
+});
+
 export const getByName = query({
   args: { name: v.string(), phoneNumberId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -76,9 +123,11 @@ export const resolveTemplateForSend = internalQuery({
     phoneNumberId: v.optional(v.string()),
     requestedLanguage: v.optional(v.string()),
     allowFallback: v.optional(v.boolean()),
+    requireScoped: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const allowFallback = args.allowFallback ?? true;
+    const requireScoped = args.requireScoped ?? false;
     const requestedLanguage = normalizeLanguageCode(args.requestedLanguage);
     const attempted: Array<{ step: string; matched: boolean; note?: string }> = [];
 
@@ -158,6 +207,56 @@ export const resolveTemplateForSend = internalQuery({
       });
     }
 
+    if (requireScoped) {
+      attempted.push({
+        step: "global_exact",
+        matched: false,
+        note: "requireScoped enabled",
+      });
+
+      if (!args.phoneNumberId) {
+        return {
+          ok: false as const,
+          reasonCode: "PHONE_NUMBER_REQUIRED",
+          message: `Template "${args.templateName}" requires a scoped phone number for sending.`,
+          attempted,
+        };
+      }
+
+      const hasAnyScopedByName = scopedByName.length > 0;
+      const hasApprovedScopedByName = scopedApproved.length > 0;
+      if (!hasAnyScopedByName) {
+        return {
+          ok: false as const,
+          reasonCode: "TEMPLATE_NOT_FOUND",
+          message: `Template "${args.templateName}" is not available for this sending number.`,
+          attempted,
+        };
+      }
+      if (!hasApprovedScopedByName) {
+        return {
+          ok: false as const,
+          reasonCode: "TEMPLATE_NOT_APPROVED",
+          message: `Template "${args.templateName}" is not approved for this sending number.`,
+          attempted,
+        };
+      }
+      if (!requestedLanguage) {
+        return {
+          ok: false as const,
+          reasonCode: "LANGUAGE_MISSING",
+          message: `Template "${args.templateName}" cannot be resolved because requested language is missing.`,
+          attempted,
+        };
+      }
+      return {
+        ok: false as const,
+        reasonCode: "LANGUAGE_MISMATCH",
+        message: `Template "${args.templateName}" is not available in requested language "${requestedLanguage}" for this number.`,
+        attempted,
+      };
+    }
+
     const templatesByName = await ctx.db
       .query("templates")
       .filter((q: any) => q.eq(q.field("name"), args.templateName))
@@ -234,14 +333,21 @@ export const resolveTemplateForSendWithSync = internalAction({
     phoneNumberId: v.optional(v.string()),
     requestedLanguage: v.optional(v.string()),
     allowFallback: v.optional(v.boolean()),
+    requireScoped: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const before: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, args);
     let syncError: string | null = null;
     try {
-      await ctx.runAction(api.templates.syncFromMeta, {
-        phoneNumberId: args.phoneNumberId ?? undefined,
-      });
+      if (args.phoneNumberId) {
+        await ctx.runAction((api as any).templates.syncScopedFromMeta, {
+          phoneNumberId: args.phoneNumberId,
+        });
+      } else {
+        await ctx.runAction(api.templates.syncFromMeta, {
+          phoneNumberId: undefined,
+        });
+      }
     } catch (error) {
       syncError = error instanceof Error ? error.message : String(error);
     }
@@ -276,6 +382,25 @@ export const resolveTemplateForSendWithSync = internalAction({
       ...after,
       resolutionMode,
       attempted,
+    };
+  },
+});
+
+export const syncScopedFromMeta = action({
+  args: {
+    phoneNumberId: v.string(),
+  },
+  handler: async (ctx, args): Promise<{ syncedCount: number; scopedApprovedCount: number }> => {
+    const syncedCount: number = await ctx.runAction(api.templates.syncFromMeta, {
+      phoneNumberId: args.phoneNumberId,
+    });
+    const scopedApprovedCount: number = await ctx.runQuery(
+      internal.templates.getScopedApprovedCountInternal,
+      { phoneNumberId: args.phoneNumberId }
+    );
+    return {
+      syncedCount,
+      scopedApprovedCount,
     };
   },
 });

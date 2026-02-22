@@ -1,6 +1,6 @@
 "use client"
 
-import { useQuery, useMutation } from "convex/react"
+import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -46,13 +46,14 @@ export default function CampaignsPage() {
   const effectivePhoneNumberId =
     !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
 
-  const campaigns = useQuery(api.campaigns.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
-  const templates = useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
+  const campaigns = useQuery(api.campaigns.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined
   const removeCampaign = useMutation(api.campaigns.remove)
-  const createCampaign = useMutation(api.campaigns.create)
+  const createQuickScopedCampaign = useAction((api as any).campaigns.createQuickScopedCampaign)
   const [searchQuery, setSearchQuery] = useState("")
   const [view, setView] = useState<"list" | "calendar">("list")
   const [currentMonth, setCurrentMonth] = useState<Date>(new Date())
+  const [quickCampaignError, setQuickCampaignError] = useState<string | null>(null)
+  const [isQuickCampaignLoading, setIsQuickCampaignLoading] = useState(false)
 
   const calendarDays = useMemo(() => {
     const startMonth = startOfMonth(currentMonth)
@@ -100,16 +101,21 @@ export default function CampaignsPage() {
   }, [campaigns])
 
   const handleQuickCampaign = async () => {
-    const approved = (templates || []).find(t => t.status === "APPROVED") as { _id: Id<"templates">; name: string } | undefined
-    if (!approved) return
     const phoneNumberId = effectivePhoneNumberId ?? activePhoneNumberId ?? numbers[0]?.businessNumberId ?? undefined
-    await createCampaign({
-      name: `حملة سريعة ${format(new Date(), "d MMM", { locale: ar })}`,
-      templateId: approved._id,
-      templateName: approved.name,
-      phoneNumberId,
-      scheduledAt: Date.now()
-    })
+    if (!phoneNumberId || phoneNumberId === "__all__") {
+      setQuickCampaignError("اختر رقم إرسال محدد قبل إنشاء حملة سريعة.")
+      return
+    }
+    setQuickCampaignError(null)
+    setIsQuickCampaignLoading(true)
+    try {
+      await createQuickScopedCampaign({ phoneNumberId })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      setQuickCampaignError(message || "تعذر إنشاء حملة سريعة. تأكد من وجود قالب معتمد لهذا الرقم.")
+    } finally {
+      setIsQuickCampaignLoading(false)
+    }
   }
 
   const handleDelete = async (id: Id<"campaigns">) => {
@@ -141,10 +147,11 @@ export default function CampaignsPage() {
           <Button 
             variant="outline" 
             onClick={handleQuickCampaign}
+            disabled={isQuickCampaignLoading}
             className="hidden sm:flex"
           >
             <Play className="h-4 w-4 ml-2 text-primary" />
-            حملة سريعة
+            {isQuickCampaignLoading ? "جارٍ الإنشاء..." : "حملة سريعة"}
           </Button>
 
           <Link href="/campaigns/new">
@@ -155,6 +162,12 @@ export default function CampaignsPage() {
           </Link>
         </div>
       </div>
+
+      {quickCampaignError ? (
+        <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
+          {quickCampaignError}
+        </div>
+      ) : null}
 
       {/* Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">

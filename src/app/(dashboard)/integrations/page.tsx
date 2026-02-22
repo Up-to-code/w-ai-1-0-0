@@ -448,7 +448,16 @@ export default function IntegrationsPage() {
     const productionReadyCount = productionChecks.filter((c) => c.ok).length
     const productionReady = productionReadyCount === productionChecks.length
 
-    const isConnected = !!connection
+    const isConnected = Boolean(connection?.connected)
+    const sallaStatus = connection?.status ?? "disconnected"
+    const sallaStatusLabel =
+        sallaStatus === "connected"
+            ? "متصل"
+            : sallaStatus === "token_invalid"
+              ? "الرمز غير صالح"
+              : sallaStatus === "refresh_failed"
+                ? "فشل تجديد الرمز"
+                : "غير متصل"
 
     return (
         <div className="space-y-8 p-6 sm:p-8 max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -487,11 +496,11 @@ export default function IntegrationsPage() {
                             </div>
                             {isConnected ? (
                                 <Badge className="bg-success/10 text-success border-success/20 hover:bg-success/20 shadow-none">
-                                    <Check className="h-3 w-3 mr-1" /> متصل
+                                    <Check className="h-3 w-3 mr-1" /> {sallaStatusLabel}
                                 </Badge>
                             ) : (
-                                <Badge variant="outline" className="border-dashed shadow-none">
-                                    غير متصل
+                                <Badge variant="outline" className={`border-dashed shadow-none ${sallaStatus === "token_invalid" || sallaStatus === "refresh_failed" ? "border-amber-500/40 text-amber-700 dark:text-amber-300" : ""}`}>
+                                    {sallaStatusLabel}
                                 </Badge>
                             )}
                         </div>
@@ -505,8 +514,13 @@ export default function IntegrationsPage() {
                                     <p className="text-xs text-muted-foreground mb-1 uppercase tracking-wider">المتجر المتصل</p>
                                     <p className="font-bold text-lg">{connection.storeName || "متجر غير معروف"}</p>
                                     <p className="text-xs text-muted-foreground mt-2">
-                                        تاريخ الربط: {new Date(connection.connectedAt).toLocaleDateString('ar-SA')}
+                                        تاريخ الربط: {new Date(connection.connectedAt ?? Date.now()).toLocaleDateString('ar-SA')}
                                     </p>
+                                    {(sallaStatus === "token_invalid" || sallaStatus === "refresh_failed") && (
+                                        <p className="text-xs text-amber-700 dark:text-amber-300 mt-2">
+                                            {connection.lastTokenErrorMessage || "رمز الوصول منتهي أو غير صالح. أعد الربط لتحديث البيانات."}
+                                        </p>
+                                    )}
                                 </div>
                                 <div className="flex gap-2">
                                     <Link href="/products" className="flex-1">
@@ -524,6 +538,20 @@ export default function IntegrationsPage() {
                                         <XCircle className="h-5 w-5" />
                                     </Button>
                                 </div>
+                                {(sallaStatus === "token_invalid" || sallaStatus === "refresh_failed") && (
+                                    <Button
+                                        className="w-full h-11 rounded-xl bg-[#004D3D] hover:bg-[#003D2D] text-white"
+                                        onClick={handleConnect}
+                                        disabled={isConnecting}
+                                    >
+                                        {isConnecting ? (
+                                            <RefreshCw className="h-5 w-5 animate-spin mr-2" />
+                                        ) : (
+                                            <Link2 className="h-5 w-5 mr-2" />
+                                        )}
+                                        إعادة ربط سلة
+                                    </Button>
+                                )}
                             </div>
                         ) : (
                             <Button

@@ -36,6 +36,9 @@ export const create = mutation({
         })),
     },
     handler: async (ctx, args) => {
+        if (!args.phoneNumberId) {
+            throw new Error("A sending number is required for scoped template campaigns.");
+        }
         const isTestCampaign = args.isTestCampaign ?? false;
         const testBypassRecentContact = args.testBypassRecentContact ?? false;
         const testContactPhones = (args.testContactPhones ?? [])
@@ -58,12 +61,14 @@ export const create = mutation({
             if (!template) {
                 throw new Error("Template not found. Please select a valid template.");
             }
-            const templateScopedToNumber = template.phoneNumberId !== undefined && template.phoneNumberId !== null && template.phoneNumberId !== "";
-            if (templateScopedToNumber && template.phoneNumberId !== args.phoneNumberId) {
+            if (template.phoneNumberId !== args.phoneNumberId) {
                 throw new Error(
                     `Template "${args.templateName}" is not available for the selected number. ` +
                     "Please select a template synced for this number, or change the sending number."
                 );
+            }
+            if (template.status !== "APPROVED") {
+                throw new Error(`Template "${args.templateName}" is not approved for sending.`);
             }
         }
 
@@ -108,6 +113,74 @@ export const create = mutation({
     },
 });
 
+export const createQuickScopedCampaign = action({
+    args: {
+        phoneNumberId: v.string(),
+    },
+    handler: async (ctx, args): Promise<{ campaignId: string; templateName: string; language: string }> => {
+        await ctx.runAction(api.templates.syncFromMeta, {
+            phoneNumberId: args.phoneNumberId,
+        });
+
+        const scopedTemplates = await ctx.runQuery(internal.campaigns.listApprovedTemplatesByPhone, {
+            phoneNumberId: args.phoneNumberId,
+        });
+        const selectedTemplate = scopedTemplates[0];
+        if (!selectedTemplate) {
+            throw new Error("لا توجد قوالب معتمدة لهذا الرقم بعد المزامنة.");
+        }
+
+        const campaignId = await ctx.runMutation(internal.campaigns.insertQuickCampaignInternal, {
+            name: `حملة سريعة ${new Date().toISOString().slice(0, 10)}`,
+            templateId: selectedTemplate._id,
+            templateName: selectedTemplate.name,
+            phoneNumberId: args.phoneNumberId,
+            scheduledAt: Date.now(),
+        });
+        await ctx.scheduler.runAfter(0, internal.campaigns.startProcessing, { campaignId });
+
+        return {
+            campaignId: String(campaignId),
+            templateName: selectedTemplate.name,
+            language: selectedTemplate.language,
+        };
+    },
+});
+
+export const listApprovedTemplatesByPhone = internalQuery({
+    args: { phoneNumberId: v.string() },
+    handler: async (ctx, args) => {
+        const templates = await ctx.db
+            .query("templates")
+            .withIndex("by_phone_number_id", (q) => q.eq("phoneNumberId", args.phoneNumberId))
+            .order("desc")
+            .collect();
+        return templates.filter((template) => template.status === "APPROVED");
+    },
+});
+
+export const insertQuickCampaignInternal = internalMutation({
+    args: {
+        name: v.string(),
+        templateId: v.id("templates"),
+        templateName: v.string(),
+        phoneNumberId: v.string(),
+        scheduledAt: v.number(),
+    },
+    handler: async (ctx, args) => {
+        return await ctx.db.insert("campaigns", {
+            name: args.name,
+            templateId: args.templateId,
+            templateName: args.templateName,
+            phoneNumberId: args.phoneNumberId,
+            status: "SCHEDULED",
+            scheduledAt: args.scheduledAt,
+            stats: { total: 0, sent: 0, delivered: 0, read: 0, failed: 0 },
+            createdAt: Date.now(),
+        });
+    },
+});
+
 export const validateTemplateSelection = query({
     args: {
         templateName: v.string(),
@@ -120,6 +193,7 @@ export const validateTemplateSelection = query({
             phoneNumberId: args.phoneNumberId,
             requestedLanguage: args.requestedLanguage,
             allowFallback: true,
+            requireScoped: true,
         });
         if (!resolved.ok) {
             return {
@@ -146,6 +220,7 @@ export const validateTemplateForSend = internalQuery({
         phoneNumberId: v.optional(v.string()),
         languageCode: v.optional(v.string()),
         allowFallback: v.optional(v.boolean()),
+        requireScoped: v.optional(v.boolean()),
     },
     handler: async (ctx, args) => {
         const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
@@ -153,6 +228,7 @@ export const validateTemplateForSend = internalQuery({
             phoneNumberId: args.phoneNumberId,
             requestedLanguage: args.languageCode,
             allowFallback: args.allowFallback ?? true,
+            requireScoped: args.requireScoped ?? true,
         });
         if (!resolved.ok) {
             return {
@@ -208,19 +284,14 @@ export const startProcessing = internalAction({
                 name: campaign.templateName,
                 phoneNumberId: campaign.phoneNumberId ?? undefined,
             });
-        const globalTemplateByName = selectedTemplate || scopedTemplateByName
-            ? null
-            : await ctx.runQuery(internal.templates.getTemplateByName, {
-                name: campaign.templateName,
-                phoneNumberId: undefined,
-            });
         const requestedLanguage =
-            selectedTemplate?.language ?? scopedTemplateByName?.language ?? globalTemplateByName?.language;
+            selectedTemplate?.language ?? scopedTemplateByName?.language;
         const precheck: any = await ctx.runAction(internal.templates.resolveTemplateForSendWithSync, {
             templateName: campaign.templateName,
             phoneNumberId: campaign.phoneNumberId ?? undefined,
             requestedLanguage,
             allowFallback: true,
+            requireScoped: true,
         });
         if (!precheck.ok) {
             console.error("[INVALID_TEMPLATE_PRECHECK][Campaign][Start] Blocking campaign start", {
@@ -454,7 +525,7 @@ export const sendToContact = internalAction({
             const normalizedContactPhone = normalizePhone(contact.phone);
             const isBypassedTestContact = campaignAllowsBypass &&
                 Array.isArray(campaign.testContactPhones) &&
-                campaign.testContactPhones.some((phone) => normalizePhone(phone) === normalizedContactPhone);
+                campaign.testContactPhones.some((phone: string) => normalizePhone(phone) === normalizedContactPhone);
             if (isBypassedTestContact) {
                 console.log("[Campaign] Test bypass applied for recently contacted check", {
                     campaignId: args.campaignId,
@@ -497,19 +568,14 @@ export const sendToContact = internalAction({
                 name: campaign.templateName,
                 phoneNumberId: campaign.phoneNumberId ?? undefined,
             });
-        const globalTemplateByName = selectedTemplate || scopedTemplateByName
-            ? null
-            : await ctx.runQuery(internal.templates.getTemplateByName, {
-                name: campaign.templateName,
-                phoneNumberId: undefined,
-            });
         const requestedLanguage =
-            selectedTemplate?.language ?? scopedTemplateByName?.language ?? globalTemplateByName?.language;
+            selectedTemplate?.language ?? scopedTemplateByName?.language;
         const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
             templateName: campaign.templateName,
             phoneNumberId: campaign.phoneNumberId ?? undefined,
             requestedLanguage,
             allowFallback: true,
+            requireScoped: true,
         });
         if (!resolved.ok) {
             const precheckError = `[INVALID_TEMPLATE_PRECHECK] ${resolved.message} templateName="${campaign.templateName}" requestedLanguage="${requestedLanguage || "unknown"}" resolvedPhoneNumberId="${campaign.phoneNumberId || "none"}" campaignId="${args.campaignId}"`;

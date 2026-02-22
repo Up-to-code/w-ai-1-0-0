@@ -213,6 +213,14 @@ export default defineSchema({
     storeName: v.optional(v.string()),
     storeUrl: v.optional(v.string()),
     connectedAt: v.number(),
+    tokenStatus: v.optional(v.union(
+      v.literal("connected"),
+      v.literal("token_invalid"),
+      v.literal("refresh_failed")
+    )),
+    lastTokenErrorCode: v.optional(v.number()),
+    lastTokenErrorMessage: v.optional(v.string()),
+    lastTokenErrorAt: v.optional(v.number()),
   }).index("by_merchant", ["merchantId"]),
 
   // --- Scalable Campaigns Schema ---

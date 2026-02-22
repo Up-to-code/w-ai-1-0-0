@@ -5,6 +5,7 @@ import { internal } from "./_generated/api";
 // Salla API endpoints
 const SALLA_TOKEN_URL = "https://accounts.salla.sa/oauth2/token";
 const SALLA_API_BASE = "https://api.salla.dev/admin/v2";
+type SallaConnectionStatus = "connected" | "disconnected" | "token_invalid" | "refresh_failed";
 
 // Get connection status
 export const getConnection = query({
@@ -13,25 +14,31 @@ export const getConnection = query({
         // For now, get the first integration (single-tenant)
         const integration = await ctx.db.query("sallaIntegrations").first();
 
-        if (integration) {
+        if (!integration) {
             return {
-                merchantId: integration.merchantId,
-                storeName: integration.storeName,
-                storeUrl: integration.storeUrl,
-                connectedAt: integration.connectedAt,
-                isExpired: integration.expiresAt < Date.now(),
+                connected: false,
+                status: "disconnected" as SallaConnectionStatus,
+                tokenSource: "db" as const,
             };
         }
 
-        const envToken = process.env.SALLA_ACCESS_TOKEN?.trim();
-        if (!envToken) return null;
+        const isExpired = integration.expiresAt < Date.now();
+        const status: SallaConnectionStatus =
+            integration.tokenStatus ??
+            (isExpired ? "token_invalid" : "connected");
 
         return {
-            merchantId: "env-token",
-            storeName: "Salla (Token)",
-            storeUrl: undefined,
-            connectedAt: 0,
-            isExpired: false,
+            connected: status === "connected",
+            status,
+            merchantId: integration.merchantId,
+            storeName: integration.storeName,
+            storeUrl: integration.storeUrl,
+            connectedAt: integration.connectedAt,
+            isExpired,
+            tokenSource: "db" as const,
+            lastTokenErrorCode: integration.lastTokenErrorCode,
+            lastTokenErrorMessage: integration.lastTokenErrorMessage,
+            lastTokenErrorAt: integration.lastTokenErrorAt,
         };
     },
 });
@@ -62,6 +69,10 @@ export const saveTokens = mutation({
                 expiresAt,
                 storeName: args.storeName,
                 storeUrl: args.storeUrl,
+                tokenStatus: "connected",
+                lastTokenErrorCode: undefined,
+                lastTokenErrorMessage: undefined,
+                lastTokenErrorAt: undefined,
             });
             return existing._id;
         }
@@ -74,6 +85,7 @@ export const saveTokens = mutation({
             storeName: args.storeName,
             storeUrl: args.storeUrl,
             connectedAt: Date.now(),
+            tokenStatus: "connected",
         });
     },
 });
@@ -192,6 +204,12 @@ export const refreshToken = action({
         if (!tokenResponse.ok) {
             const body = await tokenResponse.text();
             console.error("[Salla] Refresh token failed:", tokenResponse.status, body);
+            await ctx.runMutation("salla:setTokenHealth" as any, {
+                integrationId: integration._id,
+                status: "refresh_failed",
+                errorCode: tokenResponse.status,
+                errorMessage: body || tokenResponse.statusText,
+            });
             throw new Error(`Failed to refresh token: ${tokenResponse.status} ${body || tokenResponse.statusText}`);
         }
 
@@ -223,7 +241,14 @@ export const fetchProducts = action({
         const integration = await ctx.runQuery("salla:getConnectionWithToken" as any, {});
 
         if (!integration) {
-            return { connected: false, products: [], pagination: emptyPagination };
+            return {
+                connected: false,
+                status: "disconnected" as SallaConnectionStatus,
+                products: [],
+                pagination: emptyPagination,
+                tokenError: true,
+                errorMessage: "لا يوجد ربط نشط مع سلة. أعد الربط من صفحة التكاملات.",
+            };
         }
 
         const page = args.page || 1;
@@ -246,6 +271,7 @@ export const fetchProducts = action({
             console.error("[Salla] Network error in fetchProducts:", networkError);
             return {
                 connected: true,
+                status: "connected" as SallaConnectionStatus,
                 products: [],
                 pagination: emptyPagination,
                 apiError: true,
@@ -262,14 +288,37 @@ export const fetchProducts = action({
                     return ctx.runAction("salla:fetchProducts" as any, { page, perPage, keyword: args.keyword });
                 } catch (refreshErr) {
                     console.error("[Salla] Token refresh failed in fetchProducts:", refreshErr);
+                    await ctx.runMutation("salla:setTokenHealth" as any, {
+                        integrationId: integration._id,
+                        status: "refresh_failed",
+                        errorCode: 401,
+                        errorMessage: "Salla token refresh failed after unauthorized response.",
+                    });
                     return {
                         connected: false,
+                        status: "refresh_failed" as SallaConnectionStatus,
                         products: [],
                         pagination: emptyPagination,
                         tokenError: true,
                         errorMessage: "انتهت صلاحية ربط سلة. أعد الربط من صفحة التكاملات.",
                     };
                 }
+            }
+            if (response.status === 401) {
+                await ctx.runMutation("salla:setTokenHealth" as any, {
+                    integrationId: integration._id,
+                    status: "token_invalid",
+                    errorCode: 401,
+                    errorMessage: "token is not valid",
+                });
+                return {
+                    connected: false,
+                    status: "token_invalid" as SallaConnectionStatus,
+                    products: [],
+                    pagination: emptyPagination,
+                    tokenError: true,
+                    errorMessage: "رمز سلة غير صالح. أعد الربط من صفحة التكاملات.",
+                };
             }
 
             console.error("[Salla] fetchProducts failed:", {
@@ -279,6 +328,7 @@ export const fetchProducts = action({
             });
             return {
                 connected: true,
+                status: "connected" as SallaConnectionStatus,
                 products: [],
                 pagination: emptyPagination,
                 apiError: true,
@@ -293,6 +343,7 @@ export const fetchProducts = action({
             console.error("[Salla] Failed to parse products response:", parseError);
             return {
                 connected: true,
+                status: "connected" as SallaConnectionStatus,
                 products: [],
                 pagination: emptyPagination,
                 apiError: true,
@@ -300,8 +351,14 @@ export const fetchProducts = action({
             };
         }
 
+        await ctx.runMutation("salla:setTokenHealth" as any, {
+            integrationId: integration._id,
+            status: "connected",
+        });
+
         return {
             connected: true,
+            status: "connected" as SallaConnectionStatus,
             products: data.data?.map((p: any) => ({
                 id: p.id,
                 name: p.name,
@@ -388,19 +445,23 @@ export const getConnectionWithToken = query({
     args: {},
     handler: async (ctx) => {
         const integration = await ctx.db.query("sallaIntegrations").first();
-        if (integration) return integration;
+        return integration ?? null;
+    },
+});
 
-        const envToken = process.env.SALLA_ACCESS_TOKEN?.trim();
-        if (!envToken) return null;
-
-        return {
-            merchantId: "env-token",
-            accessToken: envToken,
-            refreshToken: undefined,
-            expiresAt: Number.MAX_SAFE_INTEGER,
-            storeName: "Salla (Token)",
-            storeUrl: undefined,
-            connectedAt: 0,
-        };
+export const setTokenHealth = internalMutation({
+    args: {
+        integrationId: v.id("sallaIntegrations"),
+        status: v.union(v.literal("connected"), v.literal("token_invalid"), v.literal("refresh_failed")),
+        errorCode: v.optional(v.number()),
+        errorMessage: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        await ctx.db.patch(args.integrationId, {
+            tokenStatus: args.status,
+            lastTokenErrorCode: args.errorCode,
+            lastTokenErrorMessage: args.errorMessage,
+            lastTokenErrorAt: args.status === "connected" ? undefined : Date.now(),
+        });
     },
 });

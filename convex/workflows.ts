@@ -94,26 +94,37 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
 
     // Execute Action
     if (workflow.action === "send_template") {
-        const templateName = workflow.actionConfig?.template;
-        if (templateName) {
+        const scopedPhoneNumberId = phoneNumberId ?? workflow.phoneNumberId ?? undefined;
+        const configuredTemplateId = workflow.actionConfig?.templateId;
+        const configuredTemplateName = workflow.actionConfig?.template;
+        const templateNameHint = configuredTemplateName ?? configuredTemplateId ?? "unknown";
+        if (configuredTemplateId || configuredTemplateName) {
             try {
-                const scopedPhoneNumberId = phoneNumberId ?? workflow.phoneNumberId ?? undefined;
+                const templateById = configuredTemplateId
+                    ? await ctx.db.get(configuredTemplateId)
+                    : null;
+                const templateName = templateById?.name ?? configuredTemplateName;
+                if (!templateName) {
+                    throw new Error("Workflow template is missing template name.");
+                }
+                if (templateById && templateById.phoneNumberId !== scopedPhoneNumberId) {
+                    throw new Error("Workflow template is no longer scoped to this sending number.");
+                }
+
                 const scopedTemplateByName = await ctx.runQuery(internal.templates.getTemplateByName, {
                     name: templateName,
                     phoneNumberId: scopedPhoneNumberId,
                 });
-                const globalTemplateByName = scopedTemplateByName
-                    ? null
-                    : await ctx.runQuery(internal.templates.getTemplateByName, {
-                        name: templateName,
-                        phoneNumberId: undefined,
-                    });
-                const requestedLanguage = scopedTemplateByName?.language ?? globalTemplateByName?.language;
+                const requestedLanguage =
+                    workflow.actionConfig?.language ??
+                    templateById?.language ??
+                    scopedTemplateByName?.language;
                 const resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
                     templateName,
                     phoneNumberId: scopedPhoneNumberId,
                     requestedLanguage,
                     allowFallback: true,
+                    requireScoped: true,
                 });
                 if (!resolved.ok) {
                     console.error("[INVALID_TEMPLATE_PRECHECK][Workflows] Blocking template send", {
@@ -136,7 +147,7 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
                 if (resolved.resolutionMode !== "scoped_exact") {
                     console.warn("[Workflows] Template resolved using fallback", {
                         templateName,
-                        requestedLanguage: null,
+                        requestedLanguage: requestedLanguage ?? null,
                         approvedLanguage: resolved.selected?.language ?? null,
                         resolvedPhoneNumberId: scopedPhoneNumberId ?? null,
                         reasonCode: "FALLBACK_USED",
@@ -184,11 +195,11 @@ async function executeWorkflowAction(ctx: any, workflow: any, contactPhone: stri
                 });
                 console.log(`[Workflows] Scheduled Template: ${templateName}`);
             } catch (error: any) {
-                console.error(`[Workflows] send_template failed for "${templateName}"`, error);
+                console.error(`[Workflows] send_template failed for "${templateNameHint}"`, error);
                 await ctx.scheduler.runAfter(0, internal.notifications.create, {
                     type: "error",
                     title: "Workflow Send Failed",
-                    message: error?.message || `Failed to schedule template "${templateName}"`,
+                    message: error?.message || `Failed to schedule template "${templateNameHint}"`,
                     link: "/workflows",
                 });
             }

@@ -1,8 +1,8 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useRouter } from "next/navigation"
-import { useQuery, useMutation, useConvex } from "convex/react"
+import { useQuery, useMutation, useConvex, useAction } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { useAuth } from "@/contexts/AuthContext"
@@ -37,6 +37,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { CronScheduler } from "@/components/CronScheduler"
 import { SchedulePicker } from "@/components/SchedulePicker"
 import { TemplatePreview } from "@/components/TemplatePreview"
+import { getScopedTemplateSyncTtlMs, markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import type { Id } from "../../../../../convex/_generated/dataModel"
 
 export default function NewCampaignPage() {
@@ -83,16 +84,23 @@ export default function NewCampaignPage() {
 
     // Queries
     const templates = useQuery(
-        api.templates.list,
-        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : {}
-    )
+        (api as any).templates.listScopedApproved,
+        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
+    ) as any[] | undefined
+    const templateHealth = useQuery(
+        (api as any).templates.getScopedTemplateHealth,
+        selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
+    ) as any | undefined
     const [templateValidation, setTemplateValidation] = useState<any | null>(null)
-    const [templateValidationUnavailable, setTemplateValidationUnavailable] = useState(false)
+    const [isTemplateValidationLoading, setIsTemplateValidationLoading] = useState(false)
+    const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
+    const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
     const [runtimeInfo, setRuntimeInfo] = useState<any | null>(null)
     const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
-    const contacts = useQuery(api.contacts.list, { limit: 1000 })
+    const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
     const createCampaign = useMutation(api.campaigns.create)
+    const syncScopedTemplates = useAction((api as any).templates.syncScopedFromMeta)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
@@ -118,6 +126,23 @@ export default function NewCampaignPage() {
         isTestCampaign && filteredContacts.length > testContactLimit
             ? `تحذير: جمهور حملة الاختبار أكبر من ${testContactLimit} مستلمين.`
             : null
+    const syncTtlMinutes = Math.floor(getScopedTemplateSyncTtlMs() / 60000)
+
+    const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
+        if (!selectedPhoneNumberId) return
+        if (!force && !shouldSyncScopedTemplates(selectedPhoneNumberId)) return
+        setIsSyncingTemplates(true)
+        setTemplateSyncError(null)
+        try {
+            await syncScopedTemplates({ phoneNumberId: selectedPhoneNumberId })
+            markScopedTemplatesSynced(selectedPhoneNumberId)
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            setTemplateSyncError(message || "تعذر مزامنة القوالب.")
+        } finally {
+            setIsSyncingTemplates(false)
+        }
+    }, [selectedPhoneNumberId, syncScopedTemplates])
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {
@@ -136,6 +161,8 @@ export default function NewCampaignPage() {
             setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
         }
         previousPhoneNumberIdRef.current = selectedPhoneNumberId
+        setTemplateValidation(null)
+        setTemplateSyncError(null)
     }, [selectedPhoneNumberId, selectedTemplate])
 
     useEffect(() => {
@@ -145,6 +172,11 @@ export default function NewCampaignPage() {
         setSelectedTemplate(null)
         setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
     }, [selectedTemplate, templates])
+
+    useEffect(() => {
+        if (currentStep !== 2 || !selectedPhoneNumberId) return
+        void triggerScopedTemplateSync(false)
+    }, [currentStep, selectedPhoneNumberId, triggerScopedTemplateSync])
 
     useEffect(() => {
         if (!isTestCampaign) {
@@ -157,38 +189,36 @@ export default function NewCampaignPage() {
     useEffect(() => {
         let cancelled = false
         const validateTemplate = async () => {
-            if (!selectedTemplate?.name) {
+            if (!selectedTemplate?.name || !selectedPhoneNumberId) {
                 if (!cancelled) {
                     setTemplateValidation(null)
-                    setTemplateValidationUnavailable(false)
+                    setIsTemplateValidationLoading(false)
                 }
                 return
+            }
+            if (!cancelled) {
+                setIsTemplateValidationLoading(true)
             }
             try {
                 const result = await convex.query((api as any).campaigns.validateTemplateSelection, {
                     templateName: selectedTemplate.name,
-                    phoneNumberId: selectedPhoneNumberId ?? undefined,
+                    phoneNumberId: selectedPhoneNumberId,
                     requestedLanguage: selectedTemplate.language ?? undefined,
                 })
                 if (!cancelled) {
                     setTemplateValidation(result)
-                    setTemplateValidationUnavailable(false)
                 }
             } catch (error) {
-                const message = error instanceof Error ? error.message : String(error)
-                const missingFunction = message.includes("Could not find public function for 'campaigns:validateTemplateSelection'")
                 if (!cancelled) {
-                    if (missingFunction) {
-                        setTemplateValidation({ ok: true, resolutionMode: "validation_unavailable" })
-                        setTemplateValidationUnavailable(true)
-                    } else {
-                        setTemplateValidation({
-                            ok: false,
-                            message: "تعذر التحقق من القالب حالياً",
-                            suggestedAction: "حاول مزامنة القوالب أو إعادة المحاولة بعد قليل.",
-                        })
-                        setTemplateValidationUnavailable(false)
-                    }
+                    setTemplateValidation({
+                        ok: false,
+                        message: "تعذر التحقق من القالب حالياً",
+                        suggestedAction: "حاول مزامنة القوالب أو إعادة المحاولة بعد قليل.",
+                    })
+                }
+            } finally {
+                if (!cancelled) {
+                    setIsTemplateValidationLoading(false)
                 }
             }
         }
@@ -235,6 +265,7 @@ export default function NewCampaignPage() {
 
     const handleSubmit = async () => {
         if (testBypassValidationError || testContactOverflowWarning) return
+        if (!selectedPhoneNumberId || !selectedTemplate?._id) return
         setIsSubmitting(true)
         try {
             await createCampaign({
@@ -581,7 +612,7 @@ export default function NewCampaignPage() {
                                                     <div className="space-y-4 border-t pt-4">
                                                         <div className="flex items-center justify-between">
                                                             <div>
-                                                                <p className="font-medium">تجاوز شرط "تم التواصل مؤخراً"</p>
+                                                                <p className="font-medium">تجاوز شرط &quot;تم التواصل مؤخراً&quot;</p>
                                                                 <p className="text-xs text-muted-foreground">يطبق فقط على أرقام الاختبار المحددة</p>
                                                             </div>
                                                             <Switch
@@ -780,15 +811,60 @@ export default function NewCampaignPage() {
                                     <div className="space-y-4">
                                         <div className="flex items-center justify-between">
                                             <Label className="text-base">اختر القالب</Label>
-                                            <Badge variant="outline" className="font-normal">{templates?.filter(t => t.status === 'APPROVED').length || 0} قوالب متاحة</Badge>
+                                            <div className="flex items-center gap-2">
+                                                <Badge variant="outline" className="font-normal">{templates?.length || 0} قوالب متاحة</Badge>
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    disabled={!selectedPhoneNumberId || isSyncingTemplates}
+                                                    onClick={() => void triggerScopedTemplateSync(true)}
+                                                >
+                                                    {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة القوالب"}
+                                                </Button>
+                                            </div>
                                         </div>
-                                        
+
+                                        {isSyncingTemplates && (
+                                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
+                                                جارٍ مزامنة القوالب لهذا الرقم...
+                                            </div>
+                                        )}
+                                        {templateSyncError && (
+                                            <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-xs text-destructive">
+                                                تعذر مزامنة القوالب. حاول مرة أخرى. {templateSyncError}
+                                            </div>
+                                        )}
+
                                         <ScrollArea className="h-[400px] pr-4">
                                             <div className="space-y-3">
-                                                {!templates ? (
+                                                {!selectedPhoneNumberId ? (
+                                                    <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-4 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                                                        اختر رقم إرسال أولاً لعرض القوالب المرتبطة به.
+                                                    </div>
+                                                ) : !templates ? (
                                                     [1,2,3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)
+                                                ) : templates.length === 0 ? (
+                                                    <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground space-y-3">
+                                                        <p>لا توجد قوالب معتمدة مرتبطة بهذا الرقم بعد.</p>
+                                                        <p className="text-xs">
+                                                            تتم المزامنة تلقائياً كل {syncTtlMinutes} دقائق لكل رقم. يمكنك المزامنة الآن أو إدارة القوالب من صفحة القوالب.
+                                                        </p>
+                                                        {templateHealth?.hasAnyGlobalApproved ? (
+                                                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                                                                توجد قوالب عامة لكن الإرسال الآن يتطلب قوالب مرتبطة بالرقم فقط.
+                                                            </p>
+                                                        ) : null}
+                                                        <div className="flex gap-2">
+                                                            <Button size="sm" variant="outline" onClick={() => void triggerScopedTemplateSync(true)} disabled={isSyncingTemplates}>
+                                                                مزامنة القوالب
+                                                            </Button>
+                                                            <Button size="sm" variant="ghost" onClick={() => router.push("/templates")}>
+                                                                الذهاب إلى القوالب
+                                                            </Button>
+                                                        </div>
+                                                    </div>
                                                 ) : (
-                                                    templates.filter(t => t.status === 'APPROVED').map(template => (
+                                                    templates.map(template => (
                                                         <div
                                                             key={template._id}
                                                             className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedTemplate?._id === template._id ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
@@ -807,9 +883,7 @@ export default function NewCampaignPage() {
                                                             <div className="mt-3 flex gap-2">
                                                                 <Badge variant="secondary" className="text-[10px]">{template.category}</Badge>
                                                                 <Badge variant="outline" className="text-[10px]">{template.language}</Badge>
-                                                                <Badge variant="outline" className="text-[10px]">
-                                                                    {template.phoneNumberId ? "Scoped" : "Global"}
-                                                                </Badge>
+                                                                <Badge variant="outline" className="text-[10px]">Scoped</Badge>
                                                             </div>
                                                         </div>
                                                     ))
@@ -827,14 +901,9 @@ export default function NewCampaignPage() {
                                                 </div>
                                             </div>
                                         )}
-                                        {selectedTemplate && templateValidation?.ok && templateValidation?.resolutionMode && templateValidation.resolutionMode !== "scoped_exact" && (
-                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-                                                سيتم استخدام مسار بديل للقالب: <span className="font-medium">{templateValidation.resolutionMode}</span>
-                                            </div>
-                                        )}
-                                        {selectedTemplate && templateValidationUnavailable && (
-                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-                                                تعذر الوصول إلى خدمة التحقق من القالب على الخادم الحالي. يمكنك المتابعة، لكن يُفضل تحديث إعدادات Convex للإنتاج.
+                                        {isTemplateValidationLoading && selectedTemplate && (
+                                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
+                                                جارٍ التحقق من القالب...
                                             </div>
                                         )}
                                         {templateAutoClearedMessage && (
@@ -996,9 +1065,17 @@ export default function NewCampaignPage() {
                                     <Button
                                         onClick={() => setCurrentStep(currentStep + 1)}
                                         disabled={
-                                            (currentStep === 0 && !name) ||
+                                            (currentStep === 0 && (!name || !selectedPhoneNumberId)) ||
                                             (currentStep === 1 && (filteredContacts.length === 0 || (targetAudience === 'selected' && selectedContactIds.length === 0))) ||
-                                            (currentStep === 2 && (!selectedTemplate || (templateValidation ? !templateValidation.ok : false)))
+                                            (currentStep === 2 &&
+                                                (
+                                                    !selectedPhoneNumberId ||
+                                                    isSyncingTemplates ||
+                                                    !selectedTemplate ||
+                                                    !!templateSyncError ||
+                                                    isTemplateValidationLoading ||
+                                                    !templateValidation?.ok
+                                                ))
                                         }
                                         className="px-8 gap-2"
                                     >
