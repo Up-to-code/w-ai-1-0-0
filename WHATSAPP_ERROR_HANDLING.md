@@ -15,7 +15,7 @@ This document outlines the comprehensive fixes applied to the WhatsApp integrati
 
 #### Solutions:
 
-**A. Centralized Error Categorization** (`error-utils.ts`):
+**A. Centralized Error Categorization** (`errorUtils.ts`):
 ```typescript
 - Error code classification system with metadata
 - Retry behavior per error type
@@ -230,7 +230,7 @@ The campaign system now:
    - Safe campaign deletion
    - Better error logging with context
 
-3. **convex/error-utils.ts** (NEW):
+3. **convex/errorUtils.ts** (NEW):
    - Comprehensive error code reference
    - Error categorization utilities
    - Phone number validation functions

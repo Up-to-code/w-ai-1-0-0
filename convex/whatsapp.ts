@@ -430,7 +430,48 @@ export const fetchTemplates = action({
     }
 
     await markNumberAuthHealthySafe(ctx, args.phoneNumberId ?? phoneId);
-    return data.data || [];
+    const templatesList = (data.data || []) as Array<{ name: string; language?: string; components?: any[] }>;
+
+    // Enrich each template with full component structure from single-template fetch.
+    // The list endpoint may return empty or truncated components; fetching by name returns full structure.
+    const uniqueNames = [...new Set(templatesList.map((t) => t.name))];
+    const componentsByKey = new Map<string, any[]>(); // key: "name|language" -> components
+
+    for (const name of uniqueNames) {
+      try {
+        const url = await withAppSecretProof(
+          ctx,
+          `${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${encodeURIComponent(name)}`,
+          accessToken
+        );
+        const detailRes = await fetch(url, {
+          method: "GET",
+          headers: { "Authorization": `Bearer ${accessToken}` },
+        });
+        const detailData = await detailRes.json();
+        const fullTemplates = detailData.data || [];
+        for (const ft of fullTemplates) {
+          if (ft.name && ft.components && Array.isArray(ft.components) && ft.components.length > 0) {
+            const key = `${ft.name}|${ft.language || ""}`;
+            componentsByKey.set(key, ft.components);
+          }
+        }
+      } catch (err) {
+        console.warn(`[WhatsApp] Failed to fetch full components for template "${name}":`, err);
+      }
+    }
+
+    // Merge full components into list items when available
+    const enriched = templatesList.map((t) => {
+      const key = `${t.name}|${t.language || ""}`;
+      const fullComponents = componentsByKey.get(key);
+      if (fullComponents) {
+        return { ...t, components: fullComponents };
+      }
+      return t;
+    });
+
+    return enriched;
   },
 });
 
