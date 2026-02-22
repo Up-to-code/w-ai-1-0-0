@@ -105,8 +105,7 @@ export default function NewCampaignPage() {
     const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
-    const createCampaignAction = useAction(api.campaigns.createWithTestConfig)
-    const createCampaignMutation = useMutation(api.campaigns.create)
+    const createCampaign = useMutation(api.campaigns.create)
     const syncTemplatesForNumber = useAction(
         enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
     )
@@ -334,29 +333,22 @@ export default function NewCampaignPage() {
             sendingConfig
         }
         try {
-            await createCampaignAction(payload)
+            await createCampaign(payload)
             router.push("/campaigns?success=true")
         } catch (error) {
             const msg = error instanceof Error ? error.message : String(error)
             const isValidationError = msg.includes("ArgumentValidationError") || msg.includes("extra field")
-            if (isValidationError && isTestCampaign) {
+            const isFunctionNotFound = msg.includes("Could not find public function")
+            if (isValidationError || isFunctionNotFound) {
                 try {
-                    const { isTestCampaign: _, testBypassRecentContact: __, testContactPhones: ___, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
-                    await createCampaignMutation(fallbackPayload)
-                    router.push("/campaigns?success=true&testFallback=1")
+                    const { isTestCampaign: _i, testBypassRecentContact: _b, testContactPhones: _p, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
+                    await createCampaign(fallbackPayload)
+                    router.push("/campaigns?success=true" + (isTestCampaign ? "&testFallback=1" : ""))
                 } catch (fallbackError) {
                     console.error("Failed to create campaign (fallback):", fallbackError)
                 }
-            } else if (!isValidationError) {
-                console.error("Failed to create campaign:", error)
             } else {
-                try {
-                    const { isTestCampaign: _, testBypassRecentContact: __, testContactPhones: ___, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
-                    await createCampaignMutation(fallbackPayload)
-                    router.push("/campaigns?success=true")
-                } catch (fallbackError) {
-                    console.error("Failed to create campaign:", fallbackError)
-                }
+                console.error("Failed to create campaign:", error)
             }
         } finally {
             setIsSubmitting(false)
