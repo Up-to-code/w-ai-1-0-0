@@ -816,7 +816,7 @@ export const sendToContact = internalAction({
         if (template.status !== "APPROVED") {
             console.warn(`[Campaign] Template ${campaign.templateName} status is ${template.status}, may fail to send`);
         }
-        
+
         const components: any[] = [];
         console.log(`[Campaign] Template structure:`, {
             hasComponents: !!template?.components,
@@ -884,12 +884,12 @@ export const sendToContact = internalAction({
             );
 
             // Check for CATALOG template
-            const catalogComp = template.components.find((c: any) => 
+            const catalogComp = template.components.find((c: any) =>
                 c.type === "CATALOG" || c.type === "catalog"
             );
 
             // Check for CAROUSEL template
-            const carouselComp = template.components.find((c: any) => 
+            const carouselComp = template.components.find((c: any) =>
                 c.type === "CAROUSEL" || c.type === "carousel"
             );
 
@@ -992,7 +992,7 @@ export const sendToContact = internalAction({
                 console.log(`[Campaign] CAROUSEL template detected - headers are in cards, not top-level`);
                 
                 // Check if template body has variables
-                const bodyComp = template.components.find((c: any) => 
+                const bodyComp = template.components.find((c: any) =>
                     c.type === "BODY" || c.type === "body"
                 );
                 const bodyHasVariables = bodyComp?.text?.includes("{{");
@@ -1227,13 +1227,13 @@ export const sendToContact = internalAction({
         // After constructing components array, check if we missed any HEADER components
         if (components.length === 0) {
             // Skip check for CAROUSEL templates (they don't have top-level headers)
-            const isCarousel = template.components?.some((c: any) => 
+            const isCarousel = template.components?.some((c: any) =>
                 c.type === "CAROUSEL" || c.type === "carousel"
             );
             
             if (!isCarousel) {
                 // Only check for headers in non-carousel templates
-                let hasHeader = template.components?.some((c: any) => 
+                let hasHeader = template.components?.some((c: any) =>
                     (c.type === "HEADER" || c.type === "header")
                 );
                 

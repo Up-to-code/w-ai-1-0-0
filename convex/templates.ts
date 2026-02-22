@@ -485,21 +485,26 @@ export const updateStatus = mutation({
     name: v.string(),
     status: v.string(),
     phoneNumberId: v.optional(v.string()),
+    language: v.optional(v.string()), // When set, update only this (name, language); otherwise all variants
   },
   handler: async (ctx, args) => {
-    const template = args.phoneNumberId
+    const templates = args.phoneNumberId
       ? await ctx.db
           .query("templates")
           .withIndex("by_phone_number_id_name", (q) =>
             q.eq("phoneNumberId", args.phoneNumberId!).eq("name", args.name)
           )
-          .first()
+          .collect()
       : await ctx.db
           .query("templates")
           .filter((q: any) => q.eq(q.field("name"), args.name))
-          .first();
+          .collect();
 
-    if (template) {
+    const toUpdate = args.language
+      ? templates.filter((t) => (t.language || "").toLowerCase() === (args.language || "").toLowerCase())
+      : templates;
+
+    for (const template of toUpdate) {
       await ctx.db.patch(template._id, {
         status: args.status as any,
         lastSyncedAt: Date.now(),
