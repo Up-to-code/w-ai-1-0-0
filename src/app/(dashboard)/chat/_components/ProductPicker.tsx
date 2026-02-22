@@ -18,6 +18,18 @@ interface Product {
     sku: string
     url?: string
 }
+interface FetchProductsResult {
+    connected: boolean
+    products: Product[]
+    pagination?: {
+        currentPage?: number
+        totalPages?: number
+        totalItems?: number
+    }
+    tokenError?: boolean
+    apiError?: boolean
+    errorMessage?: string
+}
 
 interface ProductPickerProps {
     onSelect: (product: Product) => void
@@ -30,13 +42,14 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
     const [isLoading, setIsLoading] = useState(false)
     const [isOpen, setIsOpen] = useState(false)
     const [hasLoaded, setHasLoaded] = useState(false)
+    const [loadError, setLoadError] = useState<string | null>(null)
     const [currentPage, setCurrentPage] = useState(1)
     const [totalItems, setTotalItems] = useState(0)
 
     const loadProducts = async (page = 1) => {
         setIsLoading(true)
         try {
-            const result = await fetchProducts({ page })
+            const result = await fetchProducts({ page }) as FetchProductsResult
             if (result.connected) {
                 if (page === 1) {
                     setProducts(result.products)
@@ -45,10 +58,14 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                 }
                 setCurrentPage(page)
                 setTotalItems(result.pagination?.totalItems || 0)
+                setLoadError(result.errorMessage || null)
+            } else {
+                setLoadError(result.errorMessage || "تعذر جلب منتجات سلة حالياً.")
             }
             setHasLoaded(true)
         } catch (error) {
             console.error("Failed to load products", error)
+            setLoadError("حدث خطأ أثناء تحميل المنتجات.")
         } finally {
             setIsLoading(false)
         }
@@ -82,6 +99,11 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
                 </div>
 
                 <ScrollArea className="flex-1 p-2">
+                    {loadError && (
+                        <div className="mb-3 rounded-md border border-amber-300/60 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                            {loadError}
+                        </div>
+                    )}
                     {isLoading ? (
                         <div className="flex h-full items-center justify-center p-8">
                             <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />

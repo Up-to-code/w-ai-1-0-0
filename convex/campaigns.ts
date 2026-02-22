@@ -281,6 +281,14 @@ export const processBatch = internalAction({
 
         // 2. Send Messages via Retrier with anti-spam delay
         for (const contact of contacts) {
+            const latestCampaign = await ctx.runQuery(internal.campaigns.getCampaignById, { id: args.campaignId });
+            if (!latestCampaign || latestCampaign.status !== "PROCESSING") {
+                console.warn("[Campaign] Stopping batch loop because campaign is no longer PROCESSING", {
+                    campaignId: args.campaignId,
+                    status: latestCampaign?.status ?? null,
+                });
+                break;
+            }
             await retrier.run(
                 ctx,
                 internal.campaigns.sendToContact,
@@ -295,7 +303,8 @@ export const processBatch = internalAction({
         }
 
         // 4. Recurse if there's more with increased delay
-        if (nextCursor) {
+        const campaignAfterBatch = await ctx.runQuery(internal.campaigns.getCampaignById, { id: args.campaignId });
+        if (nextCursor && campaignAfterBatch?.status === "PROCESSING") {
             console.log(`[Campaign] Scheduling next batch in ${BATCH_DELAY_MS}ms`);
             await ctx.scheduler.runAfter(BATCH_DELAY_MS, internal.campaigns.processBatch, {
                 campaignId: args.campaignId,
@@ -362,6 +371,9 @@ export const sendToContact = internalAction({
         if (!campaign || !contact) {
             console.error(`[Campaign] Campaign or contact not found: campaign=${args.campaignId}, contact=${args.contactId}`);
             throw new Error("Campaign or contact not found");
+        }
+        if (campaign.status !== "PROCESSING") {
+            return;
         }
 
         // Anti-spam: Check if contact was recently messaged
@@ -435,6 +447,10 @@ export const sendToContact = internalAction({
                     error: precheckError,
                 }],
             });
+            await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: args.campaignId,
+                reason: precheckError,
+            });
             await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, {
                 campaignId: args.campaignId,
             });
@@ -463,6 +479,10 @@ export const sendToContact = internalAction({
                     status: "failed",
                     error: errorMsg,
                 }],
+            });
+            await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: args.campaignId,
+                reason: errorMsg,
             });
             await ctx.runMutation(internal.campaigns.finalizeCampaignIfDone, {
                 campaignId: args.campaignId,
@@ -1038,6 +1058,10 @@ export const sendToContact = internalAction({
             } else if (err.code === 132001 || err.category === "INVALID_TEMPLATE") {
                 // Template translation/name mismatch - non-retryable, log as failed
                 err.retryable = false;
+                const invalidTemplateReason =
+                    `${INVALID_TEMPLATE_PRECHECK_PREFIX} INVALID_TEMPLATE ` +
+                    `templateName="${campaign.templateName}" requestedLanguage="${resolved.selected?.language ?? requestedLanguage ?? "unknown"}" ` +
+                    `resolvedPhoneNumberId="${campaign.phoneNumberId ?? "none"}" campaignId="${args.campaignId}"`;
                 console.error(`[INVALID_TEMPLATE_PRECHECK][Campaign] Invalid template for contact ${args.contactId}:`, {
                     templateName: campaign.templateName,
                     requestedLanguage: resolved.selected?.language ?? requestedLanguage ?? null,
@@ -1047,6 +1071,10 @@ export const sendToContact = internalAction({
                     code: err.code,
                     error: errorMsg,
                     suggestion: "Ensure template name exists and is approved for the exact language in WABA."
+                });
+                await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                    campaignId: args.campaignId,
+                    reason: invalidTemplateReason,
                 });
             } else if (err.code === 80005 || err.code === 200) {
                 // Rate limit error - these are retryable

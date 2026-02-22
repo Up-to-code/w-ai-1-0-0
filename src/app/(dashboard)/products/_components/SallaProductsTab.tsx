@@ -9,7 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Search, Package, RefreshCw, Link2, ShoppingBag, Info } from "lucide-react";
+import { Search, Package, RefreshCw, Link2, ShoppingBag, Info, AlertCircle } from "lucide-react";
 
 export function SallaProductsTab() {
   const connection = useQuery(api.salla.getConnection);
@@ -31,10 +31,23 @@ export function SallaProductsTab() {
     options?: unknown[];
     images?: unknown[];
   };
+  type FetchResult = {
+    connected: boolean;
+    products: Product[];
+    pagination?: {
+      currentPage?: number;
+      totalPages?: number;
+      totalItems?: number;
+    };
+    tokenError?: boolean;
+    apiError?: boolean;
+    errorMessage?: string;
+  };
 
   const [products, setProducts] = useState<Product[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [hasFetched, setHasFetched] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [page, setPage] = useState(1);
@@ -46,11 +59,14 @@ export function SallaProductsTab() {
     if (initial) {
       setIsLoading(true);
       try {
-        const result = await fetchProducts({ page: 1, perPage: 50 });
+        const result = await fetchProducts({ page: 1, perPage: 50 }) as FetchResult;
         if (result.connected) {
           setProducts(result.products);
           setPage(result.pagination?.currentPage || 1);
           setTotalPages(result.pagination?.totalPages || 1);
+          setLoadError(result.errorMessage || null);
+        } else {
+          setLoadError(result.errorMessage || "تعذر جلب المنتجات من سلة.");
         }
         setHasFetched(true);
       } finally {
@@ -62,11 +78,14 @@ export function SallaProductsTab() {
     setIsLoadingMore(true);
     try {
       const nextPage = page + 1;
-      const result = await fetchProducts({ page: nextPage, perPage: 50 });
+      const result = await fetchProducts({ page: nextPage, perPage: 50 }) as FetchResult;
       if (result.connected) {
         setProducts((prev) => [...prev, ...result.products]);
         setPage(result.pagination?.currentPage || nextPage);
         setTotalPages(result.pagination?.totalPages || totalPages);
+        if (result.errorMessage) setLoadError(result.errorMessage);
+      } else if (result.errorMessage) {
+        setLoadError(result.errorMessage);
       }
     } finally {
       setIsLoadingMore(false);
@@ -129,6 +148,15 @@ export function SallaProductsTab() {
         <Search className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
         <Input placeholder="بحث بالاسم أو SKU..." className="pr-10 h-11" value={search} onChange={(e) => setSearch(e.target.value)} />
       </div>
+
+      {loadError && (
+        <Card className="border-amber-300/60 bg-amber-50 dark:bg-amber-900/20">
+          <CardContent className="py-3 px-4 flex items-start gap-2 text-amber-900 dark:text-amber-300">
+            <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+            <p className="text-sm">{loadError}</p>
+          </CardContent>
+        </Card>
+      )}
 
       {filteredProducts.length === 0 ? (
         <Card className="border-dashed shadow-none">

@@ -106,10 +106,7 @@ export const verifyOTP = mutation({
 export const getUser = query({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => {
-    console.log("[Auth] getUser called", { userId: args.userId });
-    const user = await ctx.db.get(args.userId);
-    console.log("[Auth] getUser result:", user ? { _id: user._id, email: user.email ?? "(none)", phone: user.phone ?? "(none)" } : "null");
-    return user;
+    return await ctx.db.get(args.userId);
   },
 });
 

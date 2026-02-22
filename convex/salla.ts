@@ -217,11 +217,13 @@ export const fetchProducts = action({
         keyword: v.optional(v.string()),
     },
     handler: async (ctx, args) => {
+        const emptyPagination = { currentPage: 1, totalPages: 0, totalItems: 0 };
+
         // Get access token from DB
         const integration = await ctx.runQuery("salla:getConnectionWithToken" as any, {});
 
         if (!integration) {
-            return { connected: false, products: [] };
+            return { connected: false, products: [], pagination: emptyPagination };
         }
 
         const page = args.page || 1;
@@ -232,14 +234,28 @@ export const fetchProducts = action({
             url += `&keyword=${encodeURIComponent(args.keyword)}`;
         }
 
-        const response = await fetch(url, {
+        let response: Response;
+        try {
+            response = await fetch(url, {
                 headers: {
                     Authorization: `Bearer ${integration.accessToken}`,
                 },
             }
-        );
+            );
+        } catch (networkError) {
+            console.error("[Salla] Network error in fetchProducts:", networkError);
+            return {
+                connected: true,
+                products: [],
+                pagination: emptyPagination,
+                apiError: true,
+                errorMessage: "تعذر الاتصال بسلة حالياً. تحقق من الشبكة ثم أعد المحاولة.",
+            };
+        }
 
         if (!response.ok) {
+            const errorBody = await response.text().catch(() => "");
+
             if (response.status === 401 && integration.refreshToken) {
                 try {
                     await ctx.runAction("salla:refreshToken" as any, {});
@@ -249,15 +265,40 @@ export const fetchProducts = action({
                     return {
                         connected: false,
                         products: [],
-                        pagination: { currentPage: 1, totalPages: 0, totalItems: 0 },
+                        pagination: emptyPagination,
                         tokenError: true,
+                        errorMessage: "انتهت صلاحية ربط سلة. أعد الربط من صفحة التكاملات.",
                     };
                 }
             }
-            throw new Error("Failed to fetch products");
+
+            console.error("[Salla] fetchProducts failed:", {
+                status: response.status,
+                statusText: response.statusText,
+                body: errorBody.slice(0, 400),
+            });
+            return {
+                connected: true,
+                products: [],
+                pagination: emptyPagination,
+                apiError: true,
+                errorMessage: `فشل جلب المنتجات من سلة (${response.status}).`,
+            };
         }
 
-        const data = await response.json();
+        let data: any;
+        try {
+            data = await response.json();
+        } catch (parseError) {
+            console.error("[Salla] Failed to parse products response:", parseError);
+            return {
+                connected: true,
+                products: [],
+                pagination: emptyPagination,
+                apiError: true,
+                errorMessage: "تعذر قراءة رد سلة. أعد المحاولة لاحقاً.",
+            };
+        }
 
         return {
             connected: true,
