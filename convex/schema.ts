@@ -244,6 +244,9 @@ export default defineSchema({
     templateId: v.id("templates"),
     templateName: v.string(),
     phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
+    isTestCampaign: v.optional(v.boolean()),
+    testBypassRecentContact: v.optional(v.boolean()),
+    testContactPhones: v.optional(v.array(v.string())),
     segmentId: v.optional(v.id("segments")), // Optional if sending to specific tags/list
     targetTags: v.optional(v.array(v.string())), // Alternative to segment
     targetContactIds: v.optional(v.array(v.id("contacts"))), // Specific list of contacts

@@ -6,6 +6,11 @@ import { categorizeWhatsAppError } from "./errorUtils";
 
 const INVALID_TEMPLATE_PRECHECK_PREFIX = "[INVALID_TEMPLATE_PRECHECK]";
 const DEFAULT_INVALID_TEMPLATE_NAMES = ["tasees_day2"];
+const MAX_TEST_CONTACT_PHONES = 5;
+
+function normalizePhone(raw: string | null | undefined): string {
+    return String(raw ?? "").replace(/[^\d+]/g, "");
+}
 
 // 1. Create a Campaign
 export const create = mutation({
@@ -14,6 +19,9 @@ export const create = mutation({
         templateId: v.id("templates"),
         templateName: v.string(), // Cached for recursion
         phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
+        isTestCampaign: v.optional(v.boolean()),
+        testBypassRecentContact: v.optional(v.boolean()),
+        testContactPhones: v.optional(v.array(v.string())),
         segmentId: v.optional(v.id("segments")),
         targetTags: v.optional(v.array(v.string())),
         targetContactIds: v.optional(v.array(v.id("contacts"))),
@@ -28,6 +36,22 @@ export const create = mutation({
         })),
     },
     handler: async (ctx, args) => {
+        const isTestCampaign = args.isTestCampaign ?? false;
+        const testBypassRecentContact = args.testBypassRecentContact ?? false;
+        const testContactPhones = (args.testContactPhones ?? [])
+            .map((phone) => normalizePhone(phone))
+            .filter((phone) => phone.length > 0);
+
+        if (!isTestCampaign && (testBypassRecentContact || testContactPhones.length > 0)) {
+            throw new Error("Test bypass settings are only allowed when test campaign mode is enabled.");
+        }
+        if (testBypassRecentContact && testContactPhones.length === 0) {
+            throw new Error("At least one test contact phone is required when bypass is enabled.");
+        }
+        if (testContactPhones.length > MAX_TEST_CONTACT_PHONES) {
+            throw new Error(`Test contact phones cannot exceed ${MAX_TEST_CONTACT_PHONES}.`);
+        }
+
         // Validate template exists for the selected phone number when phoneNumberId is provided
         if (args.phoneNumberId) {
             const template = await ctx.db.get(args.templateId);
@@ -48,6 +72,9 @@ export const create = mutation({
             templateId: args.templateId,
             templateName: args.templateName,
             phoneNumberId: args.phoneNumberId,
+            isTestCampaign,
+            testBypassRecentContact,
+            testContactPhones: testContactPhones.length > 0 ? testContactPhones : undefined,
             segmentId: args.segmentId,
             targetTags: args.targetTags,
             targetContactIds: args.targetContactIds,
@@ -383,6 +410,21 @@ export const sendToContact = internalAction({
         };
         
         if (config.skipRecentlyContacted && contact.lastMessagedAt) {
+            const campaignAllowsBypass = campaign.isTestCampaign && campaign.testBypassRecentContact;
+            const normalizedContactPhone = normalizePhone(contact.phone);
+            const isBypassedTestContact = campaignAllowsBypass &&
+                Array.isArray(campaign.testContactPhones) &&
+                campaign.testContactPhones.some((phone) => normalizePhone(phone) === normalizedContactPhone);
+            if (isBypassedTestContact) {
+                console.log("[Campaign] Test bypass applied for recently contacted check", {
+                    campaignId: args.campaignId,
+                    contactId: args.contactId,
+                    phone: normalizedContactPhone,
+                });
+            }
+            if (isBypassedTestContact) {
+                // Proceed with send for explicitly allowed test contacts.
+            } else {
             const recentThreshold = Date.now() - (config.recentContactHours * 60 * 60 * 1000);
             
             if (contact.lastMessagedAt > recentThreshold) {
@@ -403,6 +445,7 @@ export const sendToContact = internalAction({
                 });
                 
                 return; // Skip this contact
+            }
             }
         }
 
@@ -1515,6 +1558,69 @@ export const cleanupInvalidTemplateCampaigns = internalAction({
     },
 });
 
+export const reconcileInvalidTemplateCampaigns = internalAction({
+    args: {
+        dryRun: v.optional(v.boolean()),
+        templateNames: v.optional(v.array(v.string())),
+        include132001Logs: v.optional(v.boolean()),
+    },
+    handler: async (ctx, args) => {
+        const dryRun = args.dryRun ?? true;
+        const include132001Logs = args.include132001Logs ?? true;
+        const names = (args.templateNames ?? DEFAULT_INVALID_TEMPLATE_NAMES)
+            .map((name) => name.trim().toLowerCase())
+            .filter((name) => name.length > 0);
+        const nameSet = new Set(names);
+        const campaigns: any[] = await ctx.runQuery(internal.campaigns.listAllCampaigns, {});
+
+        let scanned = 0;
+        let candidateCampaigns = 0;
+        let failedUpdated = 0;
+        let recurringDisabled = 0;
+        const affectedCampaignIds: string[] = [];
+
+        for (const campaign of campaigns) {
+            scanned++;
+            if (campaign.status !== "SCHEDULED" && campaign.status !== "PROCESSING") continue;
+
+            let shouldFail = nameSet.has(String(campaign.templateName || "").toLowerCase());
+            if (!shouldFail && include132001Logs) {
+                const logs: any[] = await ctx.runQuery(internal.campaigns.listLogsForCampaign, { campaignId: campaign._id });
+                shouldFail = logs.some((log) => {
+                    const error = String(log.error || "").toLowerCase();
+                    return error.includes("132001") || error.includes(INVALID_TEMPLATE_PRECHECK_PREFIX.toLowerCase());
+                });
+            }
+            if (!shouldFail) continue;
+
+            candidateCampaigns++;
+            affectedCampaignIds.push(String(campaign._id));
+            if (dryRun) continue;
+
+            const reason =
+                `${INVALID_TEMPLATE_PRECHECK_PREFIX} RECONCILE_INVALID_TEMPLATE ` +
+                `templateName="${campaign.templateName}" campaignId="${campaign._id}"`;
+            const result: any = await ctx.runMutation(internal.campaigns.failCampaignForInvalidTemplate, {
+                campaignId: campaign._id,
+                reason,
+            });
+            if (result?.updated) failedUpdated++;
+            if (result?.recurringDisabled) recurringDisabled++;
+        }
+
+        return {
+            scanned,
+            candidateCampaigns,
+            failedUpdated,
+            recurringDisabled,
+            dryRun,
+            include132001Logs,
+            templateNames: names,
+            affectedCampaignIds: affectedCampaignIds.slice(0, 200),
+        };
+    },
+});
+
 export const listRecentInvalidTemplateBlocks = query({
     args: { limit: v.optional(v.number()) },
     handler: async (ctx, args) => {
@@ -1711,5 +1817,57 @@ export const getCampaignLogs = query({
         );
 
         return enrichedLogs;
+    },
+});
+
+export const getContactSendHistory = query({
+    args: {
+        phone: v.string(),
+        limit: v.optional(v.number()),
+    },
+    handler: async (ctx, args) => {
+        const normalizedPhone = normalizePhone(args.phone);
+        const maxRows = Math.min(Math.max(args.limit ?? 20, 1), 100);
+        const contact = await ctx.db
+            .query("contacts")
+            .withIndex("by_phone", (q) => q.eq("phone", normalizedPhone))
+            .first();
+        if (!contact) return [];
+
+        const logs = await ctx.db
+            .query("campaign_logs")
+            .order("desc")
+            .take(300);
+        const filtered = logs.filter((log) => String(log.contactId) === String(contact._id)).slice(0, maxRows);
+
+        const history = await Promise.all(filtered.map(async (log) => {
+            const campaign = await ctx.db.get(log.campaignId);
+            const skipReason = log.skipReason ?? null;
+            const error = log.error ?? null;
+            let resolutionMode: string | null = null;
+            if (skipReason && skipReason.startsWith("fallback:")) {
+                resolutionMode = skipReason.replace("fallback:", "");
+            } else if (error && error.includes("resolutionMode=\"")) {
+                const match = error.match(/resolutionMode=\"([^\"]+)\"/);
+                if (match) resolutionMode = match[1];
+            }
+            return {
+                campaignId: String(log.campaignId),
+                campaignName: campaign?.name ?? null,
+                campaignStatus: campaign?.status ?? null,
+                templateName: campaign?.templateName ?? null,
+                templateId: campaign?.templateId ? String(campaign.templateId) : null,
+                phoneNumberId: campaign?.phoneNumberId ?? null,
+                status: log.status,
+                skipReason,
+                error,
+                resolutionMode,
+                createdAt: log._creationTime,
+                contactPhone: contact.phone,
+                contactName: contact.name,
+            };
+        }));
+
+        return history;
     },
 });

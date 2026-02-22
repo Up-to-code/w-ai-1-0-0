@@ -39,6 +39,7 @@ import type * as salla from "../salla.js";
 import type * as sallaWebhookUtils from "../sallaWebhookUtils.js";
 import type * as seed from "../seed.js";
 import type * as stats from "../stats.js";
+import type * as system from "../system.js";
 import type * as templateStore from "../templateStore.js";
 import type * as templates from "../templates.js";
 import type * as users from "../users.js";
@@ -87,6 +88,7 @@ declare const fullApi: ApiFromModules<{
   sallaWebhookUtils: typeof sallaWebhookUtils;
   seed: typeof seed;
   stats: typeof stats;
+  system: typeof system;
   templateStore: typeof templateStore;
   templates: typeof templates;
   users: typeof users;

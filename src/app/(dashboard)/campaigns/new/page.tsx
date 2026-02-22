@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation"
 import { useQuery, useMutation, useConvex } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { useAuth } from "@/contexts/AuthContext"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
@@ -40,6 +41,7 @@ import type { Id } from "../../../../../convex/_generated/dataModel"
 export default function NewCampaignPage() {
     const router = useRouter()
     const convex = useConvex()
+    const { isAdmin } = useAuth()
     const { numbers, activePhoneNumberId } = useWorkspace()
     const [currentStep, setCurrentStep] = useState(0)
 
@@ -72,6 +74,11 @@ export default function NewCampaignPage() {
         recentContactHours: 24,
     })
     const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
+    const [isTestCampaign, setIsTestCampaign] = useState(false)
+    const [testBypassRecentContact, setTestBypassRecentContact] = useState(false)
+    const [testContactPhones, setTestContactPhones] = useState<string[]>([])
+    const [testPhoneInput, setTestPhoneInput] = useState("")
+    const testContactLimit = 5
 
     // Queries
     const templates = useQuery(
@@ -93,6 +100,21 @@ export default function NewCampaignPage() {
     }) || []
 
     const uniqueTags = Array.from(new Set(contacts?.flatMap(c => c.tags || []) || []))
+    const normalizedTestPhones = testContactPhones
+        .map((phone) => phone.replace(/[^\d+]/g, ""))
+        .filter((phone) => phone.length > 0)
+    const testBypassValidationError =
+        isTestCampaign && testBypassRecentContact && normalizedTestPhones.length === 0
+            ? "أضف رقم اختبار واحد على الأقل لتفعيل التجاوز."
+            : null
+    const testContactOverflowWarning =
+        isTestCampaign && normalizedTestPhones.length > testContactLimit
+            ? `حد أرقام الاختبار هو ${testContactLimit}.`
+            : null
+    const testAudienceWarning =
+        isTestCampaign && filteredContacts.length > testContactLimit
+            ? `تحذير: جمهور حملة الاختبار أكبر من ${testContactLimit} مستلمين.`
+            : null
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {
@@ -120,6 +142,14 @@ export default function NewCampaignPage() {
         setSelectedTemplate(null)
         setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
     }, [selectedTemplate, templates])
+
+    useEffect(() => {
+        if (!isTestCampaign) {
+            setTestBypassRecentContact(false)
+            setTestContactPhones([])
+            setTestPhoneInput("")
+        }
+    }, [isTestCampaign])
 
     useEffect(() => {
         let cancelled = false
@@ -166,6 +196,7 @@ export default function NewCampaignPage() {
     }, [convex, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
 
     const handleSubmit = async () => {
+        if (testBypassValidationError || testContactOverflowWarning) return
         setIsSubmitting(true)
         try {
             await createCampaign({
@@ -173,6 +204,9 @@ export default function NewCampaignPage() {
                 templateId: selectedTemplate?._id as Id<"templates">,
                 templateName: selectedTemplate?.name || "",
                 phoneNumberId: selectedPhoneNumberId ?? undefined,
+                isTestCampaign: isTestCampaign || undefined,
+                testBypassRecentContact: isTestCampaign ? testBypassRecentContact : undefined,
+                testContactPhones: isTestCampaign && normalizedTestPhones.length > 0 ? normalizedTestPhones : undefined,
                 targetTags: targetAudience === 'tags' ? selectedTags : undefined,
                 targetContactIds: targetAudience === 'selected' && selectedContactIds.length > 0 ? selectedContactIds : undefined,
                 scheduledAt: scheduledAt ? new Date(scheduledAt).getTime() : Date.now(),
@@ -193,6 +227,17 @@ export default function NewCampaignPage() {
         { id: 2, title: "المحتوى", icon: <MessageSquare className="h-4 w-4" /> },
         { id: 3, title: "المراجعة", icon: <CheckCircle2 className="h-4 w-4" /> },
     ]
+
+    const addTestPhone = () => {
+        const normalized = testPhoneInput.replace(/[^\d+]/g, "")
+        if (!normalized) return
+        if (testContactPhones.includes(normalized)) {
+            setTestPhoneInput("")
+            return
+        }
+        setTestContactPhones((prev) => [...prev, normalized])
+        setTestPhoneInput("")
+    }
 
     return (
         <div className="max-w-6xl mx-auto p-6 sm:p-8 animate-in fade-in duration-500">
@@ -444,6 +489,90 @@ export default function NewCampaignPage() {
                                             </div>
                                         )}
                                     </div>
+
+                                    {isAdmin && (
+                                        <div className="space-y-4 pt-6 border-t">
+                                            <div className="flex items-center gap-2">
+                                                <Label className="text-base font-semibold">وضع حملة اختبار</Label>
+                                                <Badge variant="outline" className="text-xs">Admin</Badge>
+                                            </div>
+
+                                            <div className="rounded-lg border p-4 space-y-4 bg-muted/20">
+                                                <div className="flex items-center justify-between">
+                                                    <div>
+                                                        <p className="font-medium">تفعيل حملة اختبار</p>
+                                                        <p className="text-xs text-muted-foreground">لاستخدام إعدادات اختبار خاصة فقط</p>
+                                                    </div>
+                                                    <Switch
+                                                        checked={isTestCampaign}
+                                                        onCheckedChange={setIsTestCampaign}
+                                                    />
+                                                </div>
+
+                                                {isTestCampaign && (
+                                                    <div className="space-y-4 border-t pt-4">
+                                                        <div className="flex items-center justify-between">
+                                                            <div>
+                                                                <p className="font-medium">تجاوز شرط "تم التواصل مؤخراً"</p>
+                                                                <p className="text-xs text-muted-foreground">يطبق فقط على أرقام الاختبار المحددة</p>
+                                                            </div>
+                                                            <Switch
+                                                                checked={testBypassRecentContact}
+                                                                onCheckedChange={(checked) => {
+                                                                    setTestBypassRecentContact(checked)
+                                                                    if (checked && testContactPhones.length === 0) {
+                                                                        setTestContactPhones(["201015638178"])
+                                                                    }
+                                                                }}
+                                                            />
+                                                        </div>
+
+                                                        <div className="space-y-2">
+                                                            <Label className="text-sm">أرقام الاختبار المسموح لها بالتجاوز</Label>
+                                                            <div className="flex gap-2">
+                                                                <Input
+                                                                    value={testPhoneInput}
+                                                                    onChange={(e) => setTestPhoneInput(e.target.value)}
+                                                                    placeholder="مثال: 201015638178"
+                                                                    onKeyDown={(e) => {
+                                                                        if (e.key === "Enter") {
+                                                                            e.preventDefault()
+                                                                            addTestPhone()
+                                                                        }
+                                                                    }}
+                                                                />
+                                                                <Button type="button" variant="outline" onClick={addTestPhone}>
+                                                                    إضافة
+                                                                </Button>
+                                                            </div>
+                                                            {testContactPhones.length > 0 && (
+                                                                <div className="flex flex-wrap gap-2">
+                                                                    {testContactPhones.map((phone) => (
+                                                                        <Badge key={phone} variant="secondary" className="gap-1">
+                                                                            {phone}
+                                                                            <button
+                                                                                type="button"
+                                                                                onClick={() => setTestContactPhones((prev) => prev.filter((p) => p !== phone))}
+                                                                                className="text-xs"
+                                                                            >
+                                                                                ✕
+                                                                            </button>
+                                                                        </Badge>
+                                                                    ))}
+                                                                </div>
+                                                            )}
+                                                            {testBypassValidationError && (
+                                                                <p className="text-xs text-destructive">{testBypassValidationError}</p>
+                                                            )}
+                                                            {testContactOverflowWarning && (
+                                                                <p className="text-xs text-amber-700 dark:text-amber-400">{testContactOverflowWarning}</p>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -569,6 +698,11 @@ export default function NewCampaignPage() {
                                         </span>
                                         <span className="text-xl font-bold">{filteredContacts.length}</span>
                                     </div>
+                                    {testAudienceWarning && (
+                                        <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+                                            {testAudienceWarning}
+                                        </div>
+                                    )}
                                 </div>
                             )}
 
@@ -717,6 +851,19 @@ export default function NewCampaignPage() {
                                                     </div>
                                                 </div>
                                             )}
+                                            {isAdmin && isTestCampaign && (
+                                                <div>
+                                                    <Label className="text-muted-foreground text-xs uppercase tracking-wider">وضع الاختبار</Label>
+                                                    <div className="text-sm mt-1">
+                                                        <p className="font-medium text-foreground">مفعل</p>
+                                                        {testBypassRecentContact && normalizedTestPhones.length > 0 && (
+                                                            <p className="text-muted-foreground">
+                                                                Anti-spam bypass enabled for: {normalizedTestPhones.join(", ")}
+                                                            </p>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="border rounded-lg p-4">
@@ -793,7 +940,7 @@ export default function NewCampaignPage() {
                                     <Button
                                         onClick={handleSubmit}
                                         className="px-10 gap-2 bg-[#004D3D] hover:bg-[#003D2D]"
-                                        disabled={isSubmitting}
+                                        disabled={isSubmitting || !!testBypassValidationError || !!testContactOverflowWarning}
                                     >
                                         {isSubmitting ? "جاري الإنشاء..." : scheduledAt ? "تأكيد الجدولة" : "إرسال الحملة"}
                                         {!isSubmitting && <CheckCircle2 className="h-4 w-4" />}
