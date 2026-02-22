@@ -220,6 +220,20 @@ export default function NewCampaignPage() {
                 }
                 return
             }
+            if (!enableExtendedCampaignApis) {
+                if (!cancelled) {
+                    setTemplateValidation({
+                        ok: true,
+                        status: "APPROVED",
+                        name: selectedTemplate.name,
+                        language: selectedTemplate.language ?? null,
+                        phoneNumberId: selectedPhoneNumberId,
+                        resolutionMode: "local_selected_template",
+                    })
+                    setIsTemplateValidationLoading(false)
+                }
+                return
+            }
             if (!cancelled) {
                 setIsTemplateValidationLoading(true)
             }
@@ -233,12 +247,25 @@ export default function NewCampaignPage() {
                     setTemplateValidation(result)
                 }
             } catch (error) {
+                const message = error instanceof Error ? error.message : String(error)
+                const missingFunction = message.includes("Could not find public function for 'campaigns:validateTemplateSelection'")
                 if (!cancelled) {
-                    setTemplateValidation({
-                        ok: false,
-                        message: "تعذر التحقق من القالب حالياً",
-                        suggestedAction: "حاول مزامنة القوالب أو إعادة المحاولة بعد قليل.",
-                    })
+                    if (missingFunction) {
+                        setTemplateValidation({
+                            ok: true,
+                            status: "APPROVED",
+                            name: selectedTemplate.name,
+                            language: selectedTemplate.language ?? null,
+                            phoneNumberId: selectedPhoneNumberId,
+                            resolutionMode: "fallback_missing_validator",
+                        })
+                    } else {
+                        setTemplateValidation({
+                            ok: false,
+                            message: "تعذر التحقق من القالب حالياً",
+                            suggestedAction: "حاول مزامنة القوالب أو إعادة المحاولة بعد قليل.",
+                        })
+                    }
                 }
             } finally {
                 if (!cancelled) {
@@ -250,12 +277,12 @@ export default function NewCampaignPage() {
         return () => {
             cancelled = true
         }
-    }, [convex, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
+    }, [convex, enableExtendedCampaignApis, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
 
     useEffect(() => {
         let cancelled = false
         const loadRuntimeInfo = async () => {
-            if (!isAdmin) return
+            if (!isAdmin || !enableExtendedCampaignApis) return
             try {
                 const result = await convex.query((api as any).system.getRuntimeDeploymentInfo, {
                     includeEnvKeys: true,
@@ -285,7 +312,7 @@ export default function NewCampaignPage() {
         return () => {
             cancelled = true
         }
-    }, [convex, isAdmin])
+    }, [convex, enableExtendedCampaignApis, isAdmin])
 
     const handleSubmit = async () => {
         if (testBypassValidationError || testContactOverflowWarning) return
@@ -344,7 +371,7 @@ export default function NewCampaignPage() {
                     <p className="text-muted-foreground">قم بإعداد حملتك في 4 خطوات بسيطة</p>
                 </div>
             </div>
-            {isAdmin && (
+            {isAdmin && enableExtendedCampaignApis && (
                 <Card className="mb-6 border-dashed">
                     <CardContent className="py-4 space-y-2 text-sm">
                         <div className="flex items-center gap-2 font-medium">
