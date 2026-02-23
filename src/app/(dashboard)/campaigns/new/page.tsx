@@ -40,6 +40,8 @@ import { TemplatePreview } from "@/components/TemplatePreview"
 import { getScopedTemplateSyncTtlMs, markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import type { Id } from "../../../../../convex/_generated/dataModel"
 import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
+import { toast } from "sonner"
+import { toUserSafeConvexMessage } from "@/lib/convexErrors"
 
 export default function NewCampaignPage() {
     const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
@@ -120,7 +122,6 @@ export default function NewCampaignPage() {
 
     const createCampaign = useMutation(api.campaigns.create) as any
     const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
-    const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
@@ -163,10 +164,14 @@ export default function NewCampaignPage() {
         scopedTemplatesQuery.unavailable ||
         templateHealthQuery.unavailable ||
         sendReadinessQuery.unavailable
-    const strictTemplateChecksEnabled = enableExtendedCampaignApis && !optionalExtendedApisUnavailable
+    const templateCriticalApisUnavailable = !enableExtendedCampaignApis || optionalExtendedApisUnavailable
+    const strictTemplateChecksEnabled = !templateCriticalApisUnavailable
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
-        if (!enableExtendedCampaignApis) return
+        if (!enableExtendedCampaignApis) {
+            setTemplateSyncError("مزامنة القوالب المخصصة غير مفعلة حالياً. فعّل NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS=1 بعد نشر دوال Convex على hardy-gopher-480.")
+            return
+        }
         if (!selectedPhoneNumberId) return
         if (isTemplateReadinessHardBlocked) {
             setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
@@ -176,22 +181,16 @@ export default function NewCampaignPage() {
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
         try {
-            if (enableExtendedCampaignApis) {
-                try {
-                    await syncScopedTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
-                    if (!missingScopedSync) throw error
-                    await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
-                }
-            } else {
-                await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
-            }
+            await syncScopedTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
             markScopedTemplatesSynced(selectedPhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            setTemplateSyncError(message || "تعذر مزامنة القوالب.")
+            const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
+            if (missingScopedSync) {
+                setTemplateSyncError("دالة مزامنة القوالب غير متاحة على نسخة Convex الحالية. لا يمكن متابعة إنشاء الحملة حتى نشر الدالة المطلوبة.")
+            } else {
+                setTemplateSyncError(message || "تعذر مزامنة القوالب.")
+            }
         } finally {
             setIsSyncingTemplates(false)
         }
@@ -201,7 +200,6 @@ export default function NewCampaignPage() {
         isTemplateReadinessHardBlocked,
         readinessBlockingMessage,
         syncScopedTemplatesForNumber,
-        syncTemplatesForNumber,
     ])
 
     useEffect(() => {
@@ -259,12 +257,10 @@ export default function NewCampaignPage() {
             if (!strictTemplateChecksEnabled) {
                 if (!cancelled) {
                     setTemplateValidation({
-                        ok: true,
-                        status: "APPROVED",
-                        name: selectedTemplate.name,
-                        language: selectedTemplate.language ?? null,
-                        phoneNumberId: selectedPhoneNumberId,
-                        resolutionMode: "local_selected_template",
+                        ok: false,
+                        reasonCode: "MISSING_REQUIRED_APIS",
+                        message: "لا يمكن التحقق من القالب لأن واجهات Convex المطلوبة غير متاحة حالياً على هذه النسخة.",
+                        suggestedAction: "انشر دوال الحملات/القوالب على hardy-gopher-480 ثم أعد المحاولة.",
                     })
                     setIsTemplateValidationLoading(false)
                 }
@@ -288,12 +284,10 @@ export default function NewCampaignPage() {
                 if (!cancelled) {
                     if (missingFunction) {
                         setTemplateValidation({
-                            ok: true,
-                            status: "APPROVED",
-                            name: selectedTemplate.name,
-                            language: selectedTemplate.language ?? null,
-                            phoneNumberId: selectedPhoneNumberId,
-                            resolutionMode: "fallback_missing_validator",
+                            ok: false,
+                            reasonCode: "VALIDATOR_UNAVAILABLE",
+                            message: "دالة التحقق من القالب غير متاحة على نسخة Convex الحالية.",
+                            suggestedAction: "قم بنشر backend (campaigns:validateTemplateSelection) ثم أعد المحاولة.",
                         })
                     } else {
                         setTemplateValidation({
@@ -353,6 +347,18 @@ export default function NewCampaignPage() {
     const handleSubmit = async () => {
         if (testBypassValidationError || testContactOverflowWarning) return
         if (!selectedPhoneNumberId || !selectedTemplate?._id) return
+        if (templateCriticalApisUnavailable) {
+            toast.error("لا يمكن إنشاء الحملة الآن لأن واجهات التحقق الأساسية غير متاحة على نسخة الخادم الحالية.")
+            return
+        }
+        if (isTemplateReadinessHardBlocked || isTemplateAuthFailed || !!templateSyncError) {
+            toast.error("لا يمكن إنشاء الحملة قبل إصلاح حالة الرقم/القوالب لهذا الرقم.")
+            return
+        }
+        if (isTemplateValidationLoading || !templateValidation?.ok) {
+            toast.error("التحقق من القالب لم يكتمل أو فشل. أصلح المشكلة ثم أعد المحاولة.")
+            return
+        }
         setIsSubmitting(true)
         const payload = {
             name,
@@ -373,31 +379,14 @@ export default function NewCampaignPage() {
             await createCampaign(payload)
             router.push("/campaigns?success=true")
         } catch (error) {
-            const msg = error instanceof Error ? error.message : String(error)
-            const isValidationError = msg.includes("ArgumentValidationError") || msg.includes("extra field")
-            const isFunctionNotFound = msg.includes("Could not find public function")
-            if (isValidationError || isFunctionNotFound) {
-                try {
-                    const {
-                        isTestCampaign: _i,
-                        testBypassRecentContact: _b,
-                        testContactPhones: _p,
-                        templateLanguage: _l,
-                        ...fallbackPayload
-                    } = payload as typeof payload & {
-                        isTestCampaign?: boolean;
-                        testBypassRecentContact?: boolean;
-                        testContactPhones?: string[];
-                        templateLanguage?: string;
-                    }
-                    await createCampaign(fallbackPayload)
-                    router.push("/campaigns?success=true" + (isTestCampaign ? "&testFallback=1" : ""))
-                } catch (fallbackError) {
-                    console.error("Failed to create campaign (fallback):", fallbackError)
-                }
-            } else {
-                console.error("Failed to create campaign:", error)
-            }
+            console.error("Failed to create campaign:", error)
+            toast.error(
+                toUserSafeConvexMessage(
+                    error,
+                    "تعذر إنشاء الحملة.",
+                    "ميزة إنشاء الحملات المتقدمة غير متاحة حالياً على نسخة الخادم الحالية."
+                )
+            )
         } finally {
             setIsSubmitting(false)
         }
@@ -954,7 +943,7 @@ export default function NewCampaignPage() {
                                         )}
                                         {optionalExtendedApisUnavailable && (
                                             <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
-                                                بعض واجهات التحقق المتقدمة غير متاحة في نسخة Convex الحالية. سيتم استخدام التدفق الأساسي بدون كسر الصفحة.
+                                                بعض واجهات التحقق الأساسية غير متاحة في نسخة Convex الحالية. تم إيقاف إنشاء الحملة لحين نشر الدوال المطلوبة.
                                             </div>
                                         )}
 
@@ -1032,7 +1021,7 @@ export default function NewCampaignPage() {
                                                 )}
                                             </div>
                                         </ScrollArea>
-                                        {strictTemplateChecksEnabled && selectedTemplate && templateValidation && !templateValidation.ok && (
+                                        {selectedTemplate && templateValidation && !templateValidation.ok && (
                                             <div className="rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                                                 <p className="font-medium">{templateValidation.message}</p>
                                                 <p className="text-xs mt-1">{templateValidation.suggestedAction}</p>
@@ -1219,13 +1208,14 @@ export default function NewCampaignPage() {
                                             (currentStep === 2 &&
                                                 (
                                                     !selectedPhoneNumberId ||
+                                                    templateCriticalApisUnavailable ||
                                                     isSyncingTemplates ||
                                                     !selectedTemplate ||
-                                                    (strictTemplateChecksEnabled && !!templateSyncError) ||
+                                                    !!templateSyncError ||
                                                     isTemplateReadinessHardBlocked ||
                                                     isTemplateAuthFailed ||
-                                                    (strictTemplateChecksEnabled && isTemplateValidationLoading) ||
-                                                    (strictTemplateChecksEnabled && !templateValidation?.ok)
+                                                    isTemplateValidationLoading ||
+                                                    !templateValidation?.ok
                                                 ))
                                         }
                                         className="px-8 gap-2"
@@ -1236,7 +1226,17 @@ export default function NewCampaignPage() {
                                     <Button
                                         onClick={handleSubmit}
                                         className="px-10 gap-2 bg-[#004D3D] hover:bg-[#003D2D]"
-                                        disabled={isSubmitting || !!testBypassValidationError || !!testContactOverflowWarning}
+                                        disabled={
+                                            isSubmitting ||
+                                            !!testBypassValidationError ||
+                                            !!testContactOverflowWarning ||
+                                            templateCriticalApisUnavailable ||
+                                            isTemplateReadinessHardBlocked ||
+                                            isTemplateAuthFailed ||
+                                            !!templateSyncError ||
+                                            isTemplateValidationLoading ||
+                                            !templateValidation?.ok
+                                        }
                                     >
                                         {isSubmitting ? "جاري الإنشاء..." : scheduledAt ? "تأكيد الجدولة" : "إرسال الحملة"}
                                         {!isSubmitting && <CheckCircle2 className="h-4 w-4" />}

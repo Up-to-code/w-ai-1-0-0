@@ -72,10 +72,9 @@ export function CameraScreen({ visible, onClose, onCapture }: CameraScreenProps)
         onClose();
       }
     } catch (err: any) {
-      console.error("Camera error:", err);
-      
-      // Handle simulator error specifically
-      if (err.message?.includes("simulator") || err.message?.includes("Camera not available")) {
+      const isSimulator = err.message?.includes("simulator") || err.message?.includes("Camera not available");
+      if (!isSimulator && __DEV__) console.error("Camera error:", err);
+      if (isSimulator) {
         setError("Camera not available on simulator. Please use a physical device.");
       } else {
         setError(err.message || "Failed to take photo. Please try again.");

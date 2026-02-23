@@ -310,24 +310,20 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         I18nManager.allowRTL(true);
         I18nManager.forceRTL(newDirection === "rtl");
 
-        // Reload app to apply RTL changes
-        // Note: In development, app restart may be required manually
+        // Reload app to apply RTL changes (expo-updates may fail on simulator/dev)
         try {
-          // Try to dynamically import expo-updates if available
           const Updates = await import("expo-updates").catch(() => null);
           if (Updates?.reloadAsync) {
             await Updates.reloadAsync();
           } else {
-            const { Alert } = await import("react-native");
-            Alert.alert(
-              newDirection === "rtl" ? "إعادة تشغيل مطلوبة" : "Restart required",
-              newDirection === "rtl"
-                ? "يرجى إعادة تشغيل التطبيق لتطبيق تغييرات الاتجاه."
-                : "Please restart the app to apply direction changes."
-            );
+            showRestartAlert();
           }
         } catch {
-          const { Alert } = await import("react-native");
+          showRestartAlert();
+        }
+
+        function showRestartAlert() {
+          const { Alert } = require("react-native");
           Alert.alert(
             newDirection === "rtl" ? "إعادة تشغيل مطلوبة" : "Restart required",
             newDirection === "rtl"
@@ -337,7 +333,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch (error) {
-      console.error("Error setting direction:", error);
+      if (__DEV__) console.error("Error setting direction:", error);
     }
   }, []);
 

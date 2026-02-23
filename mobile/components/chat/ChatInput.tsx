@@ -95,9 +95,13 @@ export function ChatInput({ chatId, replyTo, onReplyCancel }: ChatInputProps) {
           components: [] 
         },
       });
-    } catch (error) {
-      console.error("Failed to send template:", error);
-      Alert.alert("Error", "Failed to send template");
+    } catch (error: any) {
+      const msg = error?.message ?? String(error);
+      const isTemplateError = /template.*not found|not available|not approved|TEMPLATE_NOT_FOUND|INVALID_TEMPLATE/i.test(msg);
+      const friendly = isTemplateError
+        ? "This template is not found or not approved. Please select a valid template from the list."
+        : "Failed to send template";
+      Alert.alert("Error", friendly);
     } finally {
       setIsSending(false);
     }

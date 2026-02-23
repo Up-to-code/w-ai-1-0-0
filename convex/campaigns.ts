@@ -137,23 +137,15 @@ export const createQuickScopedCampaign = action({
         phoneNumberId: v.string(),
     },
     handler: async (ctx, args): Promise<{ campaignId: string; templateName: string; language: string }> => {
-        let syncWarning: string | null = null;
         try {
             await ctx.runAction((api as any).templates.syncScopedFromMeta, {
                 phoneNumberId: args.phoneNumberId,
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
-            const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'");
-            if (missingScopedSync) {
-                try {
-                    await ctx.runAction(api.templates.syncFromMeta, { phoneNumberId: args.phoneNumberId });
-                } catch (fallbackError) {
-                    syncWarning = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
-                }
-            } else {
-                syncWarning = message;
-            }
+            throw new Error(
+                `Cannot create quick campaign because scoped template sync is required and failed for this number. ${message}`
+            );
         }
 
         const scopedTemplates = await ctx.runQuery(internal.campaigns.listApprovedTemplatesByPhone, {
@@ -161,19 +153,7 @@ export const createQuickScopedCampaign = action({
         });
         const selectedTemplate = scopedTemplates[0];
         if (!selectedTemplate) {
-            if (syncWarning) {
-                throw new Error(
-                    `Cannot create quick campaign because template sync failed for this number and there are no cached scoped templates. ${syncWarning}`
-                );
-            }
             throw new Error("لا توجد قوالب معتمدة لهذا الرقم بعد المزامنة.");
-        }
-        if (syncWarning) {
-            console.warn("[Campaign] Quick campaign using cached scoped template because sync failed", {
-                phoneNumberId: args.phoneNumberId,
-                templateName: selectedTemplate.name,
-                warning: syncWarning,
-            });
         }
 
         const campaignId = await ctx.runMutation(internal.campaigns.insertQuickCampaignInternal, {

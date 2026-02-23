@@ -79,6 +79,7 @@ export default function CampaignsPage() {
     quickCampaignBlockingReason === "AUTH_FAILED" ||
     quickCampaignBlockingReason === "TOKEN_MISSING" ||
     quickCampaignBlockingReason === "NUMBER_NOT_FOUND"
+  const quickCampaignApisUnavailable = !enableExtendedCampaignApis || sendReadinessQuery.unavailable
 
   const calendarDays = useMemo(() => {
     const startMonth = startOfMonth(currentMonth)
@@ -122,6 +123,12 @@ export default function CampaignsPage() {
     const phoneNumberId = quickCampaignPhoneNumberId ?? undefined
     if (!phoneNumberId || phoneNumberId === "__all__") {
       setQuickCampaignError("اختر رقم إرسال محدد قبل إنشاء حملة سريعة.")
+      return
+    }
+    if (quickCampaignApisUnavailable) {
+      setQuickCampaignError(
+        "لا يمكن إنشاء حملة سريعة لأن واجهات التحقق المطلوبة غير متاحة على نسخة Convex الحالية. قم بنشر دوال الحملات على hardy-gopher-480."
+      )
       return
     }
     if (isQuickCampaignHardBlocked) {
@@ -177,7 +184,7 @@ export default function CampaignsPage() {
           <Button 
             variant="outline" 
             onClick={handleQuickCampaign}
-            disabled={isQuickCampaignLoading || isQuickCampaignHardBlocked}
+            disabled={isQuickCampaignLoading || isQuickCampaignHardBlocked || quickCampaignApisUnavailable}
             className="hidden sm:flex"
           >
             <Play className="h-4 w-4 ml-2 text-primary" />
@@ -198,9 +205,9 @@ export default function CampaignsPage() {
           {quickCampaignError}
         </div>
       ) : null}
-      {enableExtendedCampaignApis && (sendReadinessQuery.unavailable || recentAuthBlocksQuery.unavailable) ? (
+      {(quickCampaignApisUnavailable || (enableExtendedCampaignApis && recentAuthBlocksQuery.unavailable)) ? (
         <div className="rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
-          بعض وظائف الحملات غير متاحة في نسخة Convex الحالية. قم بتشغيل `npx convex deploy` على `hardy-gopher-480`.
+          بعض وظائف الحملات غير متاحة في نسخة Convex الحالية. تم تعطيل الإجراءات الحساسة حتى نشر الدوال المطلوبة على `hardy-gopher-480`.
         </div>
       ) : null}
       {isQuickCampaignHardBlocked && !quickCampaignError ? (

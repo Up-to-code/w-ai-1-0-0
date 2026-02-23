@@ -625,7 +625,9 @@ export const sendMessage = mutation({
     }
 
     // Send via WhatsApp API Action
-    console.log(`[Chat] Scheduling WhatsApp send for msg ${messageId} to ${chat.contactPhone}`);
+    if (process.env.CHAT_DEBUG_LOGS === "1") {
+      console.log(`[Chat] Scheduling WhatsApp send for msg ${messageId} to ${chat.contactPhone}`);
+    }
     const patchChatPromise = ctx.db.patch(args.chatId, {
       lastMessageTime: now,
       status: "active",
