@@ -21,6 +21,9 @@ import {
   Bell,
 } from "lucide-react";
 import { toast } from "sonner";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
+import { FeatureUnavailableBanner } from "@/components/FeatureUnavailableBanner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 function getWebhookUrl(): string {
   const base = typeof process.env.NEXT_PUBLIC_CONVEX_URL === "string"
@@ -37,14 +40,14 @@ export default function SettingsPage() {
   const { activeWorkspace, numbers } = useWorkspace();
   const currentUser = useQuery(api.users.getCurrentUserRole);
   const sallaConnection = useQuery(api.salla.getConnection);
-  const notificationPreferences = useQuery(
-    (api as any).notificationPreferences.get
-  ) as
-    | {
-        humanHandoffPushEnabled: boolean;
-        suppressPushWhenChatActive: boolean;
-      }
-    | undefined;
+  const notificationPreferencesQuery = useOptionalConvexQuery<{
+    humanHandoffPushEnabled: boolean;
+    suppressPushWhenChatActive: boolean;
+  }>(
+    (api as any).notificationPreferences.get,
+    {}
+  );
+  const notificationPreferences = notificationPreferencesQuery.data;
   const updateNotificationPreferences = useMutation((api as any).notificationPreferences.set);
   const [notificationSaving, setNotificationSaving] = useState(false);
 
@@ -81,8 +84,13 @@ export default function SettingsPage() {
       await updateNotificationPreferences(patch);
       toast.success("تم تحديث إعدادات إشعارات الجوال");
     } catch (error) {
-      const message = error instanceof Error ? error.message : "تعذر حفظ الإعدادات";
-      toast.error(message);
+      toast.error(
+        toUserSafeConvexMessage(
+          error,
+          "تعذر حفظ الإعدادات",
+          "ميزة إعدادات الإشعارات غير متاحة حالياً على نسخة الخادم الحالية."
+        )
+      );
     } finally {
       setNotificationSaving(false);
     }
@@ -238,6 +246,9 @@ export default function SettingsPage() {
           </div>
         </CardHeader>
         <CardContent className="space-y-4">
+          {notificationPreferencesQuery.unavailable && (
+            <FeatureUnavailableBanner message="إعدادات إشعارات الجوال غير متاحة في نسخة Convex الحالية. سيتم استخدام القيم الافتراضية." />
+          )}
           <div className="flex items-start justify-between gap-4 rounded-lg border p-4">
             <div className="space-y-1">
               <Label htmlFor="human-handoff-push" className="text-sm font-medium">
@@ -250,7 +261,7 @@ export default function SettingsPage() {
             <Switch
               id="human-handoff-push"
               checked={prefs.humanHandoffPushEnabled}
-              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined}
+              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined || notificationPreferencesQuery.unavailable}
               onCheckedChange={(checked) => updatePushPreferences({ humanHandoffPushEnabled: checked })}
             />
           </div>
@@ -267,7 +278,7 @@ export default function SettingsPage() {
             <Switch
               id="suppress-active-chat-push"
               checked={prefs.suppressPushWhenChatActive}
-              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined}
+              disabled={!canManageNotificationSettings || notificationSaving || notificationPreferences === undefined || notificationPreferencesQuery.unavailable}
               onCheckedChange={(checked) => updatePushPreferences({ suppressPushWhenChatActive: checked })}
             />
           </div>

@@ -1,24 +1,27 @@
- "use client"
- 
- import { useMemo, useState } from "react"
- import { useParams, useRouter } from "next/navigation"
- import { useQuery, useMutation } from "convex/react"
- import { api } from "../../../../../convex/_generated/api"
- import type { Id } from "../../../../../convex/_generated/dataModel"
- import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
- import { Badge } from "@/components/ui/badge"
- import { Avatar, AvatarFallback } from "@/components/ui/avatar"
- import { Button } from "@/components/ui/button"
- import Link from "next/link"
- import { Users, Phone, Mail, MessageSquare, Trash2 } from "lucide-react"
- import { avatarColorFromString, initialsFromName } from "@/lib/utils"
- import { useWorkspace } from "@/contexts/WorkspaceContext"
- import { toast } from "sonner"
+"use client"
+
+import { useMemo, useState } from "react"
+import { useParams, useRouter } from "next/navigation"
+import { useQuery, useMutation } from "convex/react"
+import { api } from "../../../../../convex/_generated/api"
+import type { Id } from "../../../../../convex/_generated/dataModel"
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Badge } from "@/components/ui/badge"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
+import Link from "next/link"
+import { Users, Phone, Mail, MessageSquare, Trash2 } from "lucide-react"
+import { avatarColorFromString, initialsFromName } from "@/lib/utils"
+import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { toast } from "sonner"
+import { isLikelyConvexId } from "@/lib/convexId"
  
  export default function CustomerDetailPage() {
    const params = useParams()
    const router = useRouter()
-   const id = params?.id as string
+   const rawId = params?.id
+   const id = typeof rawId === "string" ? rawId : ""
+   const hasValidContactId = isLikelyConvexId(id)
    const { activePhoneNumberId } = useWorkspace()
    const [isDeleting, setIsDeleting] = useState(false)
    const effectivePhoneNumberId =
@@ -27,7 +30,7 @@
 
    const contact = useQuery(
      api.contacts.getById,
-     id ? { id: id as Id<"contacts"> } : "skip"
+     hasValidContactId ? { id: id as Id<"contacts"> } : "skip"
    )
    const chats = useQuery(api.chat.listChats, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {})
  
@@ -37,9 +40,17 @@
      return found ? String(found._id) : null
    }, [contact, chats])
  
-   if (!id) return null
-   if (!contact) {
+   if (!id) {
+     return <div className="p-8 text-center text-muted-foreground">رابط العميل غير صالح</div>
+   }
+   if (!hasValidContactId) {
+     return <div className="p-8 text-center text-muted-foreground">معرف العميل غير صالح</div>
+   }
+   if (contact === undefined) {
      return <div className="p-8 text-center text-muted-foreground">جاري التحميل...</div>
+   }
+   if (contact === null) {
+     return <div className="p-8 text-center text-muted-foreground">العميل غير موجود</div>
    }
  
    const seed = `${contact.phone}:${contact.name}`

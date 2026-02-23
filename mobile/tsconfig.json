@@ -12,7 +12,8 @@
     "baseUrl": ".",
     "paths": {
       "@shopify/flash-list": ["./types/flash-list-stub.d.ts"],
-      "expo-notifications": ["./types/expo-notifications-stub.d.ts"]
+      "expo-notifications": ["./types/expo-notifications-stub.d.ts"],
+      "expo-asset": ["./types/expo-asset-stub.d.ts"]
     }
   },
   "include": [

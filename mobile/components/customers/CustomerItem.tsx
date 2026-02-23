@@ -36,6 +36,8 @@ function CustomerItemComponent({ contact, chatId }: CustomerItemProps) {
       style={styles.container}
       onPress={handlePress}
       disabled={!chatId}
+      accessibilityRole="button"
+      accessibilityLabel={`${contact.name}, ${contact.phone}${chatId ? ", opens chat" : ""}`}
     >
       <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
         <Text style={styles.avatarText}>{initials}</Text>
@@ -48,8 +50,8 @@ function CustomerItemComponent({ contact, chatId }: CustomerItemProps) {
           </Text>
           {contact.tags && contact.tags.length > 0 && (
             <View style={styles.tags}>
-              {contact.tags.slice(0, 2).map((tag, index) => (
-                <View key={index} style={styles.tag}>
+              {contact.tags.slice(0, 2).map((tag, i) => (
+                <View key={`${tag}-${i}`} style={styles.tag}>
                   <Text style={styles.tagText}>{tag}</Text>
                 </View>
               ))}

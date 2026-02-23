@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
@@ -10,6 +10,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
 import { ProductImageUploader, type ProductImageInput } from "./ProductImageUploader";
 import type { ManualProductDoc } from "./ManualProductCard";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
+import { FeatureUnavailableBanner } from "@/components/FeatureUnavailableBanner";
+import { toast } from "sonner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 type Props = {
   phoneNumberId: string;
@@ -23,10 +27,15 @@ type Props = {
 export function ManualProductFormDialog({ phoneNumberId, product, trigger, onSaved, open: controlledOpen, onOpenChange }: Props) {
   const createProduct = useAction((api as any).manualCatalog.createManualProduct);
   const updateProduct = useAction((api as any).manualCatalog.updateManualProduct);
-  const categories = useQuery((api as any).manualCatalog.listCategories, {
-    phoneNumberId,
-    includeInactive: false,
-  });
+  const categoriesQuery = useOptionalConvexQuery<any[]>(
+    (api as any).manualCatalog.listCategories,
+    {
+      phoneNumberId,
+      includeInactive: false,
+    },
+    true
+  );
+  const categories = categoriesQuery.data;
 
   const [internalOpen, setInternalOpen] = useState(false);
   const open = controlledOpen ?? internalOpen;
@@ -74,6 +83,15 @@ export function ManualProductFormDialog({ phoneNumberId, product, trigger, onSav
       }
       setOpen(false);
       onSaved?.();
+      toast.success(product ? "تم تحديث المنتج" : "تم إنشاء المنتج");
+    } catch (error) {
+      toast.error(
+        toUserSafeConvexMessage(
+          error,
+          "تعذر حفظ المنتج.",
+          "ميزة حفظ المنتجات اليدوية غير متاحة حالياً على نسخة الخادم الحالية."
+        )
+      );
     } finally {
       setSaving(false);
     }
@@ -99,6 +117,9 @@ export function ManualProductFormDialog({ phoneNumberId, product, trigger, onSav
         </DialogHeader>
 
         <div className="space-y-4">
+          {categoriesQuery.unavailable && (
+            <FeatureUnavailableBanner message="تحميل التصنيفات غير متاح حالياً. يمكنك المتابعة بدون اختيار تصنيف." />
+          )}
           <Input placeholder="عنوان المنتج" value={title} onChange={(e) => setTitle(e.target.value)} />
           <Textarea
             placeholder="وصف المنتج"

@@ -14,15 +14,27 @@ import { SallaProductsTab } from "./_components/SallaProductsTab";
 import { ManualProductList } from "./_components/ManualProductList";
 import { CategoryList } from "./_components/CategoryList";
 import { ProductsTabErrorBoundary } from "./_components/ProductsTabErrorBoundary";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
+import { FeatureUnavailableBanner } from "@/components/FeatureUnavailableBanner";
+import { toast } from "sonner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 export default function ProductsPage() {
   const { activePhoneNumberId, activeWorkspace } = useWorkspace();
   const manualCatalogReady = process.env.NEXT_PUBLIC_MANUAL_CATALOG_ENABLED === "1";
+  const effectivePhoneNumberId =
+    activePhoneNumberId && activePhoneNumberId !== "__all__" ? activePhoneNumberId : undefined;
 
-  const config = useQuery(
-    (api as any).ai_config.getConfig,
-    activePhoneNumberId ? { phoneNumberId: activePhoneNumberId } : {}
+  const legacyConfig = useQuery(
+    api.ai_config.getConfig,
+    effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}
   );
+  const configQuery = useOptionalConvexQuery<any>(
+    (api as any).ai_config.getConfig,
+    effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
+    true
+  );
+  const config = configQuery.data ?? legacyConfig;
   const setManualCatalogEnabled = useMutation((api as any).ai_config.setManualCatalogEnabled);
 
   const manualCatalogEnabled = useMemo(() => {
@@ -48,21 +60,34 @@ export default function ProductsPage() {
               <Switch
                 id="manual-catalog-toggle"
                 checked={manualCatalogEnabled}
-                disabled={!activePhoneNumberId}
-                onCheckedChange={(checked) => {
-                  if (!activePhoneNumberId) return;
-                  setManualCatalogEnabled({
-                    phoneNumberId: activePhoneNumberId,
-                    enabled: checked,
-                  });
+                disabled={!effectivePhoneNumberId || configQuery.unavailable}
+                onCheckedChange={async (checked) => {
+                  if (!effectivePhoneNumberId) return;
+                  try {
+                    await setManualCatalogEnabled({
+                      phoneNumberId: effectivePhoneNumberId,
+                      enabled: checked,
+                    });
+                  } catch (error) {
+                    toast.error(
+                      toUserSafeConvexMessage(
+                        error,
+                        "تعذر تحديث إعداد الكتالوج اليدوي.",
+                        "ميزة تفعيل الكتالوج اليدوي غير متاحة على نسخة الخادم الحالية."
+                      )
+                    );
+                  }
                 }}
               />
             </div>
           )}
         </CardContent>
       </Card>
+      {configQuery.unavailable && (
+        <FeatureUnavailableBanner message="إعدادات الكتالوج اليدوي غير متاحة حالياً على نسخة Convex الحالية. بقية الصفحة تعمل بشكل طبيعي." />
+      )}
 
-      {!activePhoneNumberId ? (
+      {!effectivePhoneNumberId ? (
         <Card>
           <CardContent className="p-8 text-center space-y-3">
             <Badge variant="outline">اختر رقمًا</Badge>
@@ -91,14 +116,16 @@ export default function ProductsPage() {
 
           {manualCatalogReady ? (
             <TabsContent value="manual">
-              <Card>
-                <CardContent className="p-4 pb-0">
-                  <p className="text-sm text-muted-foreground mb-4">
-                    الرقم الحالي: <span className="font-medium text-foreground" dir="ltr">{activeWorkspace?.phone || activePhoneNumberId}</span>
-                  </p>
-                  <ManualProductList phoneNumberId={activePhoneNumberId} />
-                </CardContent>
-              </Card>
+              <ProductsTabErrorBoundary>
+                <Card>
+                  <CardContent className="p-4 pb-0">
+                    <p className="text-sm text-muted-foreground mb-4">
+                      الرقم الحالي: <span className="font-medium text-foreground" dir="ltr">{activeWorkspace?.phone || effectivePhoneNumberId}</span>
+                    </p>
+                    <ManualProductList phoneNumberId={effectivePhoneNumberId} />
+                  </CardContent>
+                </Card>
+              </ProductsTabErrorBoundary>
             </TabsContent>
           ) : (
             <Card>
@@ -113,11 +140,13 @@ export default function ProductsPage() {
 
           {manualCatalogReady && (
             <TabsContent value="categories">
-              <Card>
-                <CardContent className="p-4">
-                  <CategoryList phoneNumberId={activePhoneNumberId} />
-                </CardContent>
-              </Card>
+              <ProductsTabErrorBoundary>
+                <Card>
+                  <CardContent className="p-4">
+                    <CategoryList phoneNumberId={effectivePhoneNumberId} />
+                  </CardContent>
+                </Card>
+              </ProductsTabErrorBoundary>
             </TabsContent>
           )}
         </Tabs>

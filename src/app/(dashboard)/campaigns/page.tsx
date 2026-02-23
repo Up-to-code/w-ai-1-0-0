@@ -90,25 +90,18 @@ export default function CampaignsPage() {
     while (day <= endDate) {
       days.push(day)
       day = addDays(day, 1)
-      days.push(day) // Double push bug in loop? No, day updated before push? Wait.
-      // Correct loop:
-      // day = startDate
-      // while day <= endDate
-      //   push day
-      //   day = addDays(day, 1)
-      // My previous code:
-      // days.push(day)
-      // day = addDays(day, 1)
     }
-    // Let's rewrite the loop properly
-    const d = []
-    let curr = startDate
-    while (curr <= endDate) {
-      d.push(curr)
-      curr = addDays(curr, 1)
-    }
-    return d
+    return days
   }, [currentMonth])
+
+  const sortedCampaigns = useMemo(() => {
+    if (!campaigns) return []
+    return [...campaigns].sort((a, b) => {
+      const aTime = a.scheduledAt ?? a.createdAt ?? 0
+      const bTime = b.scheduledAt ?? b.createdAt ?? 0
+      return bTime - aTime
+    })
+  }, [campaigns])
 
   const stats = useMemo(() => {
     if (!campaigns) return { total: 0, sent: 0, readRate: 0, deliveredRate: 0 }
@@ -292,7 +285,7 @@ export default function CampaignsPage() {
                     <div key={i} className="h-24 rounded-2xl bg-muted/20 animate-pulse" />
                   ))}
                 </div>
-              ) : campaigns.length === 0 ? (
+              ) : sortedCampaigns.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-20 text-center bg-muted/5 rounded-3xl border border-dashed border-muted-foreground/20">
                   <div className="w-20 h-20 bg-primary/10 rounded-full flex items-center justify-center mb-6">
                     <MessageSquare className="h-10 w-10 text-primary" />
@@ -307,7 +300,7 @@ export default function CampaignsPage() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 gap-4">
-                  {campaigns
+                  {sortedCampaigns
                     .filter(c => c.name.toLowerCase().includes(searchQuery.toLowerCase()))
                     .map((campaign) => (
                       <Card key={campaign._id} className="p-0 overflow-hidden border-none ring-1 ring-border/50 shadow-none hover:bg-muted/30 transition-colors">
@@ -441,8 +434,8 @@ export default function CampaignsPage() {
                {["الأحد","الإثنين","الثلاثاء","الأربعاء","الخميس","الجمعة","السبت"].map((d) => (
                   <div key={d} className="bg-muted/5 p-4 text-center text-sm font-bold text-muted-foreground">{d}</div>
                ))}
-               {calendarDays.map((day, i) => {
-                  const dayCampaigns = (campaigns || []).filter(c => isSameDay(new Date(c.scheduledAt), day))
+               {calendarDays.map((day) => {
+                  const dayCampaigns = sortedCampaigns.filter(c => isSameDay(new Date(c.scheduledAt), day))
                   const isCurrentMonth = isSameMonth(day, currentMonth)
                   const isToday = isSameDay(day, new Date())
                   

@@ -25,6 +25,7 @@ type ContactRow = {
   name: string;
   phone: string;
   email?: string;
+  tags?: string[];
 };
 
 export default function CustomersScreen() {
@@ -51,6 +52,8 @@ export default function CustomersScreen() {
 
   const filteredContacts = useMemo(() => {
     if (!contacts) return [];
+    // When workspace is selected, wait for chats before filtering (avoids empty list during load)
+    if (activePhoneNumberId != null && chats === undefined) return [];
 
     const query = searchQuery.toLowerCase();
     const scopeFiltered =
@@ -66,7 +69,7 @@ export default function CustomersScreen() {
     );
 
     return filtered;
-  }, [contacts, searchQuery, activePhoneNumberId, chatByPhone]);
+  }, [contacts, searchQuery, activePhoneNumberId, chatByPhone, chats]);
 
   const onRefresh = async () => {
     setRefreshing(true);
@@ -90,9 +93,12 @@ export default function CustomersScreen() {
     </TouchableOpacity>
   );
 
+  const isLoading =
+    !contacts || (activePhoneNumberId != null && chats === undefined);
+
   return (
     <ScreenErrorBoundary screenName="customers">
-      {!contacts ? (
+      {isLoading ? (
         <ScreenWrapper edges={["top"]}>
           <Header title="Customers" rightAction={addButton} />
           <View style={styles.centerContainer}>

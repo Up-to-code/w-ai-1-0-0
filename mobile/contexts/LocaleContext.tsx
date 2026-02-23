@@ -315,14 +315,25 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
         try {
           // Try to dynamically import expo-updates if available
           const Updates = await import("expo-updates").catch(() => null);
-          if (Updates) {
+          if (Updates?.reloadAsync) {
             await Updates.reloadAsync();
           } else {
-            console.log("Please restart the app to apply direction changes");
+            const { Alert } = await import("react-native");
+            Alert.alert(
+              newDirection === "rtl" ? "إعادة تشغيل مطلوبة" : "Restart required",
+              newDirection === "rtl"
+                ? "يرجى إعادة تشغيل التطبيق لتطبيق تغييرات الاتجاه."
+                : "Please restart the app to apply direction changes."
+            );
           }
         } catch {
-          // In development, Updates.reloadAsync() may not work
-          console.log("Please restart the app to apply direction changes");
+          const { Alert } = await import("react-native");
+          Alert.alert(
+            newDirection === "rtl" ? "إعادة تشغيل مطلوبة" : "Restart required",
+            newDirection === "rtl"
+              ? "يرجى إعادة تشغيل التطبيق لتطبيق تغييرات الاتجاه."
+              : "Please restart the app to apply direction changes."
+          );
         }
       }
     } catch (error) {

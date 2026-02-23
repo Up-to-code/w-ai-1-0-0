@@ -44,7 +44,8 @@ type StatusFilter = "all" | "sent" | "delivered" | "read" | "failed" | "skipped"
 export default function CampaignDetailPage() {
   const params = useParams()
   const router = useRouter()
-  const id = params?.campaignId as string | undefined
+  const rawCampaignId = params?.campaignId
+  const id = typeof rawCampaignId === "string" ? rawCampaignId : undefined
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all")
 
   const campaigns = useQuery(api.campaigns.list, {})
@@ -56,7 +57,20 @@ export default function CampaignDetailPage() {
     campaign ? { campaignId: campaign._id as Id<"campaigns"> } : "skip"
   )
 
-  if (!id) return null
+  if (!id) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[50vh] p-6">
+        <div className="bg-muted/30 p-8 rounded-full mb-4">
+          <SearchX className="h-10 w-10 text-muted-foreground" />
+        </div>
+        <h2 className="text-xl font-bold mb-2">رابط الحملة غير صالح</h2>
+        <p className="text-muted-foreground mb-6">تأكد من الرابط ثم حاول مرة أخرى</p>
+        <Link href="/campaigns">
+          <Button variant="outline">العودة إلى الحملات</Button>
+        </Link>
+      </div>
+    )
+  }
 
   if (campaigns === undefined) {
       return <div className="p-8 text-center animate-pulse">جاري التحميل...</div>

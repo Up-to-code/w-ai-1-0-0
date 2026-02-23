@@ -51,7 +51,7 @@ export default function LoginScreen() {
               token: pushToken,
               userId: userId as Id<"users">,
             });
-            console.log("Push token registered successfully");
+            if (__DEV__) console.log("[login] Push token registered");
           }
         } catch (error) {
           console.error("Failed to register push token:", error);
@@ -80,7 +80,7 @@ export default function LoginScreen() {
             token: pushToken,
             userId: userId as Id<"users">,
           });
-          console.log("Push token registered successfully");
+          if (__DEV__) console.log("[login] Push token registered successfully");
         }
       } catch (error) {
         console.error("Failed to register push token:", error);

@@ -24,26 +24,37 @@ export default function ProductDetailsPage() {
     const params = useParams()
     const router = useRouter()
     const getProduct = useAction(api.salla.getProduct)
+    const rawId = params?.id
+    const productId = typeof rawId === "string" ? rawId : ""
 
     const [product, setProduct] = useState<any | null>(null)
     const [isLoading, setIsLoading] = useState(true)
     const [selectedImage, setSelectedImage] = useState<string | null>(null)
 
     useEffect(() => {
+        if (!productId) {
+            setIsLoading(false)
+            return
+        }
+        let cancelled = false
         const fetchProduct = async () => {
-            if (!params.id) return
             try {
-                const data = await getProduct({ id: params.id as string })
+                const data = await getProduct({ id: productId })
+                if (cancelled) return
                 setProduct(data)
                 setSelectedImage(data.image)
             } catch (error) {
                 console.error("Failed to fetch product:", error)
             } finally {
+                if (cancelled) return
                 setIsLoading(false)
             }
         }
-        fetchProduct()
-    }, [params.id, getProduct])
+        void fetchProduct()
+        return () => {
+            cancelled = true
+        }
+    }, [productId, getProduct])
 
     if (isLoading) {
         return (

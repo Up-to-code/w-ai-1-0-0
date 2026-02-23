@@ -1,13 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { useAction, useQuery } from "convex/react";
+import { useAction } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ManualProductCard, type ManualProductDoc } from "./ManualProductCard";
 import { ManualProductFormDialog } from "./ManualProductFormDialog";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
+import { FeatureUnavailableBanner } from "@/components/FeatureUnavailableBanner";
+import { toast } from "sonner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 type Props = {
   phoneNumberId: string;
@@ -19,20 +23,48 @@ export function ManualProductList({ phoneNumberId }: Props) {
   const [page, setPage] = useState(1);
   const [editing, setEditing] = useState<ManualProductDoc | null>(null);
 
-  const categories = useQuery((api as any).manualCatalog.listCategories, {
-    phoneNumberId,
-    includeInactive: false,
-  });
+  const categoriesQuery = useOptionalConvexQuery<any[]>(
+    (api as any).manualCatalog.listCategories,
+    {
+      phoneNumberId,
+      includeInactive: false,
+    },
+    true
+  );
+  const categories = categoriesQuery.data;
 
-  const result = useQuery((api as any).manualCatalog.listManualProducts, {
-    phoneNumberId,
-    search: search.trim() || undefined,
-    categoryId: (categoryId || undefined) as any,
-    page,
-    pageSize: 12,
-  });
+  const resultQuery = useOptionalConvexQuery<any>(
+    (api as any).manualCatalog.listManualProducts,
+    {
+      phoneNumberId,
+      search: search.trim() || undefined,
+      categoryId: (categoryId || undefined) as any,
+      page,
+      pageSize: 12,
+    },
+    true
+  );
 
+  const result = resultQuery.data;
   const deleteProduct = useAction((api as any).manualCatalog.deleteManualProduct);
+  const items = (result?.items || [])
+    .slice()
+    .sort((a: any, b: any) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+
+  const onDelete = async (id: string) => {
+    try {
+      await deleteProduct({ id: id as any });
+      toast.success("تم حذف المنتج");
+    } catch (error) {
+      toast.error(
+        toUserSafeConvexMessage(
+          error,
+          "تعذر حذف المنتج.",
+          "ميزة المنتجات اليدوية غير متاحة حالياً على نسخة الخادم الحالية."
+        )
+      );
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -58,14 +90,17 @@ export function ManualProductList({ phoneNumberId }: Props) {
 
         <ManualProductFormDialog phoneNumberId={phoneNumberId} />
       </div>
+      {(categoriesQuery.unavailable || resultQuery.unavailable) && (
+        <FeatureUnavailableBanner message="قائمة المنتجات اليدوية غير متاحة حالياً على نسخة Convex الحالية. يمكنك متابعة بقية الصفحة." />
+      )}
 
       <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
-        {(result?.items || []).map((product: any) => (
+        {items.map((product: any) => (
           <ManualProductCard
             key={product._id}
             product={product}
             onEdit={() => setEditing(product)}
-            onDelete={() => deleteProduct({ id: product._id })}
+            onDelete={() => void onDelete(product._id)}
           />
         ))}
       </div>

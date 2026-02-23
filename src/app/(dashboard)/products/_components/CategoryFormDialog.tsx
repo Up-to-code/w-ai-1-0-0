@@ -8,6 +8,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
+import { toast } from "sonner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 export type CategoryDoc = {
   _id: string;
@@ -51,6 +53,15 @@ export function CategoryFormDialog({ phoneNumberId, category, trigger, onSaved }
       }
       setOpen(false);
       onSaved?.();
+      toast.success(category ? "تم تحديث التصنيف" : "تم إنشاء التصنيف");
+    } catch (error) {
+      toast.error(
+        toUserSafeConvexMessage(
+          error,
+          "تعذر حفظ التصنيف.",
+          "ميزة التصنيفات اليدوية غير متاحة حالياً على نسخة الخادم الحالية."
+        )
+      );
     } finally {
       setSaving(false);
     }

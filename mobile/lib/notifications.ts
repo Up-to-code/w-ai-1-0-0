@@ -55,7 +55,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     }
 
     if (finalStatus !== "granted") {
-      console.log("Notification permissions not granted");
+      if (__DEV__) console.log("[notifications] Permission not granted");
       return null;
     }
 
@@ -71,7 +71,7 @@ export async function registerForPushNotificationsAsync(): Promise<string | null
     );
 
     token = tokenData.data;
-    console.log("Expo push token:", token);
+    if (__DEV__) console.log("[notifications] Push token registered");
 
     // Configure Android channel
     if (Platform.OS === "android") {
@@ -113,13 +113,12 @@ export function setupNotificationHandlers(
   try {
   // Handle notification received while app is in foreground
     receivedSubscription = Notifications.addNotificationReceivedListener((notification) => {
-      console.log("Notification received:", notification);
-      // You can show a custom in-app notification here if needed
+      if (__DEV__) console.log("[notifications] Received:", notification.request.content?.title);
     });
 
     // Handle notification tapped
     responseSubscription = Notifications.addNotificationResponseReceivedListener((response) => {
-      console.log("Notification tapped:", response);
+      if (__DEV__) console.log("[notifications] Tapped:", response.notification.request.content?.data);
 
       const data = response.notification.request.content.data as {
         chatId?: string;

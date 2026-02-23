@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -9,6 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Pencil, Trash2 } from "lucide-react";
 import { CategoryFormDialog } from "./CategoryFormDialog";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
+import { FeatureUnavailableBanner } from "@/components/FeatureUnavailableBanner";
+import { toast } from "sonner";
+import { toUserSafeConvexMessage } from "@/lib/convexErrors";
 
 type Props = {
   phoneNumberId: string;
@@ -16,12 +20,31 @@ type Props = {
 
 export function CategoryList({ phoneNumberId }: Props) {
   const [search, setSearch] = useState("");
-  const categories = useQuery((api as any).manualCatalog.listCategories, {
-    phoneNumberId,
-    search: search.trim() || undefined,
-    includeInactive: true,
-  });
+  const categoriesQuery = useOptionalConvexQuery<any[]>(
+    (api as any).manualCatalog.listCategories,
+    {
+      phoneNumberId,
+      search: search.trim() || undefined,
+      includeInactive: true,
+    },
+    true
+  );
+  const categories = categoriesQuery.data;
   const deleteCategory = useMutation((api as any).manualCatalog.deleteCategory);
+  const onDelete = async (categoryId: string) => {
+    try {
+      await deleteCategory({ categoryId: categoryId as any });
+      toast.success("تم حذف التصنيف");
+    } catch (error) {
+      toast.error(
+        toUserSafeConvexMessage(
+          error,
+          "تعذر حذف التصنيف.",
+          "ميزة التصنيفات اليدوية غير متاحة حالياً على نسخة الخادم الحالية."
+        )
+      );
+    }
+  };
 
   return (
     <div className="space-y-4">
@@ -29,6 +52,9 @@ export function CategoryList({ phoneNumberId }: Props) {
         <Input placeholder="ابحث عن تصنيف" value={search} onChange={(e) => setSearch(e.target.value)} className="max-w-sm" />
         <CategoryFormDialog phoneNumberId={phoneNumberId} />
       </div>
+      {categoriesQuery.unavailable && (
+        <FeatureUnavailableBanner message="قائمة التصنيفات غير متاحة حالياً على نسخة Convex الحالية." />
+      )}
 
       <div className="grid md:grid-cols-2 gap-3">
         {(categories || []).map((category: any) => (
@@ -57,7 +83,7 @@ export function CategoryList({ phoneNumberId }: Props) {
                   size="sm"
                   variant="outline"
                   className="text-destructive"
-                  onClick={() => deleteCategory({ categoryId: category._id })}
+                  onClick={() => void onDelete(category._id)}
                 >
                   <Trash2 className="h-3.5 w-3.5 ml-1" />
                   حذف

@@ -7,13 +7,47 @@ import { api } from "../../../../../convex/_generated/api"
 import { CircleDashed, MessageSquare } from "lucide-react"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
+import { isLikelyConvexId } from "@/lib/convexId"
 
 export default function ChatConversationPage() {
   const params = useParams()
-  const chatId = params?.chatId as string
+  const rawChatId = params?.chatId
+  const chatId = typeof rawChatId === "string" ? rawChatId : ""
+  const hasValidChatId = chatId === "new" || isLikelyConvexId(chatId)
   const chats = useQuery(api.chat.listChats, {})
 
-  if (!chatId) return null
+  if (!chatId) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[#efeae2] dark:bg-[#0b141a] h-full">
+        <div className="text-center max-w-md px-6">
+          <MessageSquare className="h-24 w-24 text-[#e9edef] dark:text-[#384147] mx-auto mb-8" />
+          <h3 className="text-xl font-light text-[#41525d] dark:text-[#d1d7db] mb-2">Invalid chat link</h3>
+          <p className="text-[#667781] dark:text-[#8696a0] text-sm mb-6">
+            This chat link is missing an id.
+          </p>
+          <Button asChild variant="outline">
+            <Link href="/chat">Back to chats</Link>
+          </Button>
+        </div>
+      </div>
+    )
+  }
+  if (!hasValidChatId) {
+    return (
+      <div className="flex-1 flex items-center justify-center bg-[#efeae2] dark:bg-[#0b141a] h-full">
+        <div className="text-center max-w-md px-6">
+          <MessageSquare className="h-24 w-24 text-[#e9edef] dark:text-[#384147] mx-auto mb-8" />
+          <h3 className="text-xl font-light text-[#41525d] dark:text-[#d1d7db] mb-2">Invalid chat link</h3>
+          <p className="text-[#667781] dark:text-[#8696a0] text-sm mb-6">
+            This link is malformed. Please open the conversation from the chat list.
+          </p>
+          <Button asChild variant="outline">
+            <Link href="/chat">Back to chats</Link>
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   // Never mount ChatWindow with "new" — Convex expects v.id("chats"), not the literal "new"
   if (chatId === "new") {
