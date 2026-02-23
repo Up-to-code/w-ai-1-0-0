@@ -141,7 +141,6 @@ export default function CustomersScreen() {
         <FlashList
           data={filteredContacts}
           renderItem={renderItem}
-          estimatedItemSize={70}
           keyExtractor={(item) => item._id}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />

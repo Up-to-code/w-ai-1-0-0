@@ -31,8 +31,8 @@ export function ChatWindow({ chatId }: ChatWindowProps) {
   const setActiveChat = useMutation(api.chat.setActiveChat);
   const clearActiveChat = useMutation(api.chat.clearActiveChat);
   
-  // Check if this is a new contact (no messages yet)
-  const isNewContact = chat && chat.messageCount === 0;
+  // Check if this is a new contact (no messages yet - chat doc doesn't have messageCount, use lastMessageTime as proxy)
+  const isNewContact = !!(chat && chat.lastMessageTime === 0);
 
   // Keep active-chat presence alive while this screen is visible.
   useEffect(() => {

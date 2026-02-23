@@ -106,7 +106,6 @@ export default function ChatListScreen() {
         <FlashList
           data={filteredChats}
           renderItem={renderItem}
-          estimatedItemSize={74}
           keyExtractor={(item) => item._id}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />

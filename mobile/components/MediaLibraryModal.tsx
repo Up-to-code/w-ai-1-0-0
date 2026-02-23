@@ -244,8 +244,10 @@ export function MediaLibraryModal({
                 renderItem={renderFileItem}
                 keyExtractor={(item) => item._id}
                 numColumns={2}
-                contentContainerStyle={styles.listContent}
-                showsVerticalScrollIndicator={false}
+                {...({
+                  contentContainerStyle: styles.listContent,
+                  showsVerticalScrollIndicator: false,
+                } as object)}
               />
             )
           ) : (

@@ -13,7 +13,7 @@ import {
 } from "react-native";
 import { Ionicons } from "@expo/vector-icons";
 import { VideoView, useVideoPlayer } from "expo-video";
-import * as FileSystem from "expo-file-system";
+import { documentDirectory, cacheDirectory, downloadAsync } from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
 
 const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get("window");
@@ -37,7 +37,7 @@ export function MediaViewerModal({
   const [imageError, setImageError] = useState(false);
   const [downloading, setDownloading] = useState(false);
 
-  const player = useVideoPlayer(mediaType === "video" ? mediaUrl : undefined, (player) => {
+  const player = useVideoPlayer(mediaType === "video" ? mediaUrl : "", (player) => {
     if (player) {
       player.loop = false;
       player.muted = false;
@@ -66,14 +66,14 @@ export function MediaViewerModal({
       // Download file
       const fileExtension = mediaType === "image" ? "jpg" : "mp4";
       const fileName = `download_${Date.now()}.${fileExtension}`;
-      const baseDir = FileSystem.documentDirectory || FileSystem.cacheDirectory;
+      const baseDir = documentDirectory || cacheDirectory;
       
       if (!baseDir) {
         throw new Error("File system directory not available");
       }
 
       const fileUri = baseDir + fileName;
-      const downloadResult = await FileSystem.downloadAsync(mediaUrl, fileUri);
+      const downloadResult = await downloadAsync(mediaUrl, fileUri);
 
       if (mediaType === "image" || mediaType === "video") {
         // Save to gallery

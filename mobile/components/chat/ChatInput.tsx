@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { useMutation, useAction } from "convex/react";
 import { api } from "../../../convex/_generated/api";
+import type { Id } from "../../../convex/_generated/dataModel";
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { TemplatePicker } from "../TemplatePicker";
@@ -68,7 +69,7 @@ export function ChatInput({ chatId, replyTo, onReplyCancel }: ChatInputProps) {
         chatId: chatId as any,
         content,
         type: "text",
-        replyTo: replyTo?._id,
+        replyTo: replyTo?._id as Id<"messages"> | undefined,
       });
       if (onReplyCancel) {
         onReplyCancel();
@@ -625,7 +626,7 @@ export function ChatInput({ chatId, replyTo, onReplyCancel }: ChatInputProps) {
             editable={!isSending}
             onFocus={() => setShowAttachMenu(false)}
             accessibilityLabel="Message input"
-            accessibilityRole="textbox"
+            accessibilityRole="none"
             accessibilityHint="Type your message here"
           />
         </View>

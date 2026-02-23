@@ -8,7 +8,23 @@
     "allowSyntheticDefaultImports": true,
     "resolveJsonModule": true,
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@shopify/flash-list": ["./types/flash-list-stub.d.ts"],
+      "expo-notifications": ["./types/expo-notifications-stub.d.ts"]
+    }
   },
+  "include": [
+    "app/**/*",
+    "components/**/*",
+    "hooks/**/*",
+    "contexts/**/*",
+    "lib/**/*",
+    "types/**/*",
+    "*.ts",
+    "*.tsx",
+    "App.tsx"
+  ],
   "exclude": ["node_modules", "babel.config.js", "metro.config.js"]
 }

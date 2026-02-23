@@ -9,11 +9,13 @@ import type {
   TextInputProps,
   ActivityIndicatorProps,
   TouchableOpacityProps,
+  TouchableWithoutFeedbackProps,
   ModalProps,
   KeyboardAvoidingViewProps,
   SafeAreaViewProps,
-  FlatListProps,
   ImageProps,
+  RefreshControlProps,
+  SwitchProps,
 } from 'react-native';
 
 declare module 'react-native' {
@@ -44,10 +46,16 @@ declare module 'react-native' {
   interface SafeAreaView {
     props: SafeAreaViewProps;
   }
-  interface FlatList<ItemT = any> {
-    props: FlatListProps<ItemT>;
-  }
   interface Image {
     props: ImageProps;
+  }
+  interface RefreshControl {
+    props: RefreshControlProps;
+  }
+  interface Switch {
+    props: SwitchProps;
+  }
+  interface TouchableWithoutFeedback {
+    props: TouchableWithoutFeedbackProps;
   }
 }

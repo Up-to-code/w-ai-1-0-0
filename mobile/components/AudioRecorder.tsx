@@ -179,12 +179,7 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
       <View style={styles.recordingContainer}>
         <View style={styles.timerContainer}>
           <Animated.View
-            style={[
-              styles.redDot,
-              {
-                transform: [{ scale: dotScale }],
-              },
-            ]}
+            {...({ style: [styles.redDot, { transform: [{ scale: dotScale }] }] } as object)}
           />
           <Text style={styles.timer}>{formatTime(duration)}</Text>
         </View>
@@ -193,15 +188,17 @@ export function AudioRecorder({ onRecordingComplete, onCancel }: AudioRecorderPr
           {barAnimations.map((anim, i) => (
             <Animated.View
               key={i}
-              style={[
-                styles.waveformBar,
-                {
-                  height: anim.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: ['4%', '80%'],
-                  }),
-                },
-              ]}
+              {...({
+                style: [
+                  styles.waveformBar,
+                  {
+                    height: anim.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: ['4%', '80%'],
+                    }),
+                  },
+                ],
+              } as object)}
             />
           ))}
         </View>

@@ -156,5 +156,6 @@ export function setupNotificationHandlers(
  * Get the current notification permissions status
  */
 export async function getNotificationPermissionsStatus(): Promise<Notifications.NotificationPermissionsStatus> {
-  return await Notifications.getPermissionsAsync();
+  const { status } = await Notifications.getPermissionsAsync();
+  return status;
 }

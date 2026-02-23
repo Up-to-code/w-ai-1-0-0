@@ -180,7 +180,6 @@ export function ProductPicker({ visible, onClose, onSelect }: ProductPickerProps
           <FlashList
             data={filteredProducts}
             renderItem={renderProduct}
-            estimatedItemSize={100}
             keyExtractor={(item) => item.id}
             numColumns={2}
             contentContainerStyle={styles.listContent}

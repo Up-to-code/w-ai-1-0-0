@@ -2,12 +2,12 @@ import { useMemo, useRef, useEffect, useState, useCallback } from "react";
 import { View, StyleSheet, ActivityIndicator, Alert, Share } from "react-native";
 import { usePaginatedQuery, useMutation, useQuery } from "convex/react";
 import { api } from "../../../convex/_generated/api";
-import { FlashList, ListRenderItem } from "@shopify/flash-list";
+import { FlashList, FlashListRef, ListRenderItem } from "@shopify/flash-list";
 import { MessageBubble } from "./MessageBubble";
 import { MessageActionsModal } from "./MessageActionsModal";
 import { MediaViewerModal } from "./MediaViewerModal";
 import { ForwardMessageModal } from "./ForwardMessageModal";
-import * as FileSystem from "expo-file-system";
+import { documentDirectory, cacheDirectory, downloadAsync } from "expo-file-system/legacy";
 import * as MediaLibrary from "expo-media-library";
 
 interface MessageListProps {
@@ -18,7 +18,7 @@ interface MessageListProps {
 interface Message {
   _id: string;
   direction: "inbound" | "outbound";
-  type: string;
+  type: "text" | "image" | "video" | "audio" | "document" | "template" | "interactive";
   content?: string;
   mediaUrl?: string;
   timestamp: number;
@@ -28,7 +28,7 @@ interface Message {
 }
 
 export function MessageList({ chatId, onReply }: MessageListProps) {
-  const listRef = useRef<FlashList<Message>>(null);
+  const listRef = useRef<FlashListRef<Message>>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const prevScrollHeightRef = useRef(0);
   const viewedMessageIds = useRef<Set<string>>(new Set());
@@ -191,13 +191,13 @@ export function MessageList({ chatId, onReply }: MessageListProps) {
         : message.type === "audio" ? "mp4"
         : "pdf";
       const fileName = `${message.type}_${Date.now()}.${fileExtension}`;
-      const fileUri = (FileSystem.documentDirectory || FileSystem.cacheDirectory) + fileName;
+      const fileUri = (documentDirectory || cacheDirectory) + fileName;
 
       if (!fileUri) {
         throw new Error("File system directory not available");
       }
 
-      const downloadResult = await FileSystem.downloadAsync(message.mediaUrl, fileUri);
+      const downloadResult = await downloadAsync(message.mediaUrl, fileUri);
 
       if (message.type === "image" || message.type === "video") {
         // Save to gallery
@@ -286,7 +286,6 @@ export function MessageList({ chatId, onReply }: MessageListProps) {
           ref={listRef}
           data={messages}
           renderItem={renderItem}
-          estimatedItemSize={70}
           keyExtractor={keyExtractor}
           onScroll={handleScroll}
           scrollEventThrottle={16}
@@ -300,26 +299,13 @@ export function MessageList({ chatId, onReply }: MessageListProps) {
           // Read receipt tracking
           viewabilityConfig={viewabilityConfig}
           onViewableItemsChanged={onViewableItemsChanged}
-          overrideItemLayout={(layout, item) => {
-            // Estimate different sizes for different message types
-            const type = (item as Message).type;
-            if (type === "image") {
-              layout.size = 250;
-            } else if (type === "audio") {
-              layout.size = 80;
-            } else if (type === "document") {
-              layout.size = 100;
-            } else {
-              layout.size = 70;
-            }
-          }}
         />
       </View>
 
       {/* Message Actions Modal */}
       <MessageActionsModal
         visible={actionsModalVisible}
-        message={selectedMessage}
+        message={selectedMessage as React.ComponentProps<typeof MessageActionsModal>["message"]}
         onClose={() => {
           setActionsModalVisible(false);
           setSelectedMessage(null);
@@ -349,7 +335,7 @@ export function MessageList({ chatId, onReply }: MessageListProps) {
       {/* Forward Message Modal */}
       <ForwardMessageModal
         visible={forwardModalVisible}
-        message={selectedMessage}
+        message={selectedMessage as React.ComponentProps<typeof ForwardMessageModal>["message"]}
         currentChatId={chatId}
         onClose={() => {
           setForwardModalVisible(false);

@@ -31,7 +31,7 @@ interface TemplatePickerProps {
 }
 
 export function TemplatePicker({ visible, onClose, onSelect }: TemplatePickerProps) {
-  const templates = useQuery(api.templates.list);
+  const templates = useQuery(api.templates.list, {});
   const [searchQuery, setSearchQuery] = useState("");
   const [activeTab, setActiveTab] = useState<"approved" | "all">("approved");
 
@@ -175,7 +175,6 @@ export function TemplatePicker({ visible, onClose, onSelect }: TemplatePickerPro
           <FlashList
             data={filteredTemplates as Template[]}
             renderItem={renderTemplate}
-            estimatedItemSize={80}
             keyExtractor={(item) => item._id}
             contentContainerStyle={styles.listContent}
           />

@@ -173,7 +173,7 @@ export function ForwardMessageModal({
             data={filteredChats}
             renderItem={renderChatItem}
             keyExtractor={(item) => item._id}
-            style={styles.list}
+            {...({ style: styles.list } as object)}
           />
         )}
       </View>

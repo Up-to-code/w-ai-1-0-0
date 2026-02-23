@@ -80,6 +80,13 @@ export default function CampaignDetailPage() {
   const progress = campaign.stats.total > 0 
     ? (campaign.stats.sent / campaign.stats.total) * 100 
     : 0
+  const effectiveSendingConfig = {
+    messagesPerSecond: campaign.sendingConfig?.messagesPerSecond ?? 10,
+    delayBetweenMessages: campaign.sendingConfig?.delayBetweenMessages ?? 100,
+    maxRetries: campaign.sendingConfig?.maxRetries ?? 3,
+    skipRecentlyContacted: campaign.sendingConfig?.skipRecentlyContacted ?? true,
+    recentContactHours: campaign.sendingConfig?.recentContactHours ?? 24,
+  }
 
   return (
     <div className="space-y-8 p-6 sm:p-8 animate-in fade-in duration-500 max-w-[1600px] mx-auto">
@@ -191,19 +198,21 @@ export default function CampaignDetailPage() {
                     <CardContent className="text-sm text-muted-foreground space-y-2">
                         <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
                             <span>معدل الإرسال:</span>
-                            <span className="font-medium text-green-700 dark:text-green-300">10 رسائل/ثانية</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">{effectiveSendingConfig.messagesPerSecond} رسائل/ثانية</span>
                         </div>
                         <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
                             <span>التأخير بين الرسائل:</span>
-                            <span className="font-medium text-green-700 dark:text-green-300">100ms</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">{effectiveSendingConfig.delayBetweenMessages}ms</span>
                         </div>
                         <div className="flex justify-between py-1 border-b border-green-100 dark:border-green-800">
-                            <span>التأخير بين الدفعات:</span>
-                            <span className="font-medium text-green-700 dark:text-green-300">5 ثوان</span>
+                            <span>إعادة المحاولة:</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">{effectiveSendingConfig.maxRetries}</span>
                         </div>
                         <div className="flex justify-between py-1">
                             <span>تخطي المتصل مؤخراً:</span>
-                            <span className="font-medium text-green-700 dark:text-green-300">24 ساعة</span>
+                            <span className="font-medium text-green-700 dark:text-green-300">
+                              {effectiveSendingConfig.skipRecentlyContacted ? `${effectiveSendingConfig.recentContactHours} ساعة` : "معطل"}
+                            </span>
                         </div>
                     </CardContent>
                 </Card>
@@ -226,7 +235,10 @@ export default function CampaignDetailPage() {
                     <div className="bg-muted/30 rounded-xl p-6 border">
                         <div className="flex items-center justify-between mb-4">
                             <span className="font-semibold">{campaign.templateName}</span>
-                            <Badge variant="outline">WhatsApp Template</Badge>
+                            <div className="flex items-center gap-2">
+                              <Badge variant="outline">{campaign.templateLanguage || "unknown"}</Badge>
+                              <Badge variant="outline">WhatsApp Template</Badge>
+                            </div>
                         </div>
                         <Separator className="mb-4" />
                         <p className="text-sm leading-relaxed whitespace-pre-wrap text-muted-foreground">

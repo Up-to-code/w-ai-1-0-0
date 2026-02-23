@@ -221,7 +221,7 @@ function MessageBubbleComponent({
   const handleLongPress = (event: any) => {
     if (onLongPress && bubbleRef.current) {
       // Use measure to get accurate position relative to screen
-      bubbleRef.current.measure((x, y, width, height, pageX, pageY) => {
+      (bubbleRef.current as unknown as { measure: (cb: (x: number, y: number, width: number, height: number, pageX: number, pageY: number) => void) => void }).measure((x, y, width, height, pageX, pageY) => {
         onLongPress(message, { x: pageX + width / 2, y: pageY });
       });
     } else if (onLongPress) {
