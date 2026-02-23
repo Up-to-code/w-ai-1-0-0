@@ -6,6 +6,7 @@ import { ProductPicker } from "./ProductPicker"
 import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Send, Paperclip, Mic, Image as ImageIcon, FileText, Smile, Search } from "lucide-react"
@@ -25,27 +26,38 @@ export function ChatInput({ chatId }: ChatInputProps) {
   const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
   const isRealChatId = chatId && chatId !== "new"
   const chat = useQuery(api.chat.getChat, isRealChatId ? { chatId: chatId as any } : "skip") as any
-  const templatesSource = useQuery(
-    enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
+  const legacyTemplates = useQuery(
+    api.templates.list,
     chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
   ) as any[] | undefined
+  const scopedTemplatesQuery = useOptionalConvexQuery<any[]>(
+    (api as any).templates.listScopedApproved,
+    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip",
+    enableExtendedCampaignApis
+  )
+  const templatesSource = (enableExtendedCampaignApis && scopedTemplatesQuery.data
+    ? scopedTemplatesQuery.data
+    : legacyTemplates) as any[] | undefined
   const templates = (templatesSource || []).filter((template: any) => template.status === "APPROVED")
-  const templateHealth = useQuery(
+  const templateHealthQuery = useOptionalConvexQuery<any>(
     (api as any).templates.getScopedTemplateHealth,
-    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
-  ) as any | undefined
-  const sendReadiness = useQuery(
+    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip",
+    enableExtendedCampaignApis
+  )
+  const templateHealth = templateHealthQuery.data
+  const sendReadinessQuery = useOptionalConvexQuery<any>(
     (api as any).campaigns.getSendReadiness,
-    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip"
-  ) as any | undefined
+    enableExtendedCampaignApis && chat?.phoneNumberId ? { phoneNumberId: chat.phoneNumberId } : "skip",
+    enableExtendedCampaignApis
+  )
+  const sendReadiness = sendReadinessQuery.data
   const sendMessage = useMutation(api.chat.sendMessage)
   const generateUploadUrl = useMutation(api.files.generateUploadUrl)
   const saveFile = useMutation(api.files.saveFile)
   const uploadMediaToMeta = useAction(api.whatsapp.uploadMedia)
   const saveExternalImage = useAction(api.files.saveExternalImage)
-  const syncTemplatesForNumber = useAction(
-    enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
-  )
+  const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
+  const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
 
   const [inputValue, setInputValue] = useState("")
   const [isRecording, setIsRecording] = useState(false)
@@ -67,6 +79,10 @@ export function ChatInput({ chatId }: ChatInputProps) {
       ? (sendReadiness?.recommendedAction as string | undefined) ||
         "Cannot sync/send templates for this number until sending readiness issues are resolved."
       : null
+  const optionalExtendedApisUnavailable =
+    scopedTemplatesQuery.unavailable ||
+    templateHealthQuery.unavailable ||
+    sendReadinessQuery.unavailable
 
   const isAiActive = chat?.aiMode
 
@@ -269,7 +285,18 @@ export function ChatInput({ chatId }: ChatInputProps) {
     setIsSyncingTemplates(true)
     setTemplateSyncError(null)
     try {
-      await syncTemplatesForNumber({ phoneNumberId: chat.phoneNumberId })
+      if (enableExtendedCampaignApis) {
+        try {
+          await syncScopedTemplatesForNumber({ phoneNumberId: chat.phoneNumberId })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
+          if (!missingScopedSync) throw error
+          await syncTemplatesForNumber({ phoneNumberId: chat.phoneNumberId })
+        }
+      } else {
+        await syncTemplatesForNumber({ phoneNumberId: chat.phoneNumberId })
+      }
       markScopedTemplatesSynced(chat.phoneNumberId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -277,7 +304,15 @@ export function ChatInput({ chatId }: ChatInputProps) {
     } finally {
       setIsSyncingTemplates(false)
     }
-  }, [chat?.phoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
+  }, [
+    chat?.phoneNumberId,
+    enableExtendedCampaignApis,
+    isTemplateAuthFailed,
+    isTemplateReadinessHardBlocked,
+    readinessBlockingMessage,
+    syncScopedTemplatesForNumber,
+    syncTemplatesForNumber,
+  ])
 
   useEffect(() => {
     if (!isTemplateOpen || !chat?.phoneNumberId) return
@@ -366,7 +401,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={!chat?.phoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked}
+                  disabled={!chat?.phoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked || optionalExtendedApisUnavailable}
                   onClick={() => void triggerScopedTemplateSync(true)}
                 >
                   {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
@@ -386,6 +421,11 @@ export function ChatInput({ chatId }: ChatInputProps) {
               {templateSyncError ? (
                 <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
                   تعذر مزامنة القوالب: {templateSyncError}
+                </div>
+              ) : null}
+              {optionalExtendedApisUnavailable ? (
+                <div className="rounded-md border border-amber-300/50 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                  بعض واجهات القوالب غير متاحة في نسخة Convex الحالية. سيتم عرض القوالب المتاحة فقط.
                 </div>
               ) : null}
 

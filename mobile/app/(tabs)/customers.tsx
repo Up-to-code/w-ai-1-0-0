@@ -15,6 +15,7 @@ import { CustomerItem } from "../../components/customers/CustomerItem";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
+import { ScreenErrorBoundary } from "../../components/ScreenErrorBoundary";
 import { Header } from "../../components/Header";
 import { WorkspaceSwitcher } from "../../components/WorkspaceSwitcher";
 import { useWorkspace } from "../../contexts/WorkspaceContext";
@@ -89,19 +90,17 @@ export default function CustomersScreen() {
     </TouchableOpacity>
   );
 
-  if (!contacts) {
-    return (
-      <ScreenWrapper edges={["top"]}>
-        <Header title="Customers" rightAction={addButton} />
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={styles.loadingText}>Loading customers...</Text>
-        </View>
-      </ScreenWrapper>
-    );
-  }
-
   return (
+    <ScreenErrorBoundary screenName="customers">
+      {!contacts ? (
+        <ScreenWrapper edges={["top"]}>
+          <Header title="Customers" rightAction={addButton} />
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={styles.loadingText}>Loading customers...</Text>
+          </View>
+        </ScreenWrapper>
+      ) : (
     <ScreenWrapper edges={["top"]}>
       <Header title="Customers" rightAction={addButton} />
       <WorkspaceSwitcher />
@@ -151,6 +150,8 @@ export default function CustomersScreen() {
         />
       )}
     </ScreenWrapper>
+      )}
+    </ScreenErrorBoundary>
   );
 }
 

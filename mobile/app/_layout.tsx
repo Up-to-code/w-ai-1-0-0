@@ -266,6 +266,10 @@ class RootFatalBoundary extends React.Component<
     });
   }
 
+  reset = () => {
+    this.setState({ hasError: false, message: "" });
+  };
+
   render() {
     if (!this.state.hasError) return this.props.children;
     return (
@@ -275,6 +279,12 @@ class RootFatalBoundary extends React.Component<
           حدث خطأ أثناء تحميل التطبيق.
         </Text>
         <Text style={styles.errorDetail}>{this.state.message}</Text>
+        <TouchableOpacity
+          onPress={this.reset}
+          style={[styles.retryButton, { marginTop: 18 }]}
+        >
+          <Text style={styles.retryButtonText}>إعادة المحاولة</Text>
+        </TouchableOpacity>
       </View>
     );
   }

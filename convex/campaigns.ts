@@ -18,6 +18,7 @@ const createCampaignArgs = {
     name: v.string(),
     templateId: v.id("templates"),
     templateName: v.string(),
+    templateLanguage: v.optional(v.string()),
     phoneNumberId: v.optional(v.string()),
     isTestCampaign: v.optional(v.boolean()),
     testBypassRecentContact: v.optional(v.boolean()),
@@ -94,6 +95,7 @@ export const createCampaignInternal = internalMutation({
             name: args.name,
             templateId: args.templateId,
             templateName: args.templateName,
+            templateLanguage: args.templateLanguage,
             phoneNumberId: args.phoneNumberId,
             isTestCampaign,
             testBypassRecentContact,
@@ -141,7 +143,17 @@ export const createQuickScopedCampaign = action({
                 phoneNumberId: args.phoneNumberId,
             });
         } catch (error) {
-            syncWarning = error instanceof Error ? error.message : String(error);
+            const message = error instanceof Error ? error.message : String(error);
+            const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'");
+            if (missingScopedSync) {
+                try {
+                    await ctx.runAction(api.templates.syncFromMeta, { phoneNumberId: args.phoneNumberId });
+                } catch (fallbackError) {
+                    syncWarning = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
+                }
+            } else {
+                syncWarning = message;
+            }
         }
 
         const scopedTemplates = await ctx.runQuery(internal.campaigns.listApprovedTemplatesByPhone, {
@@ -168,6 +180,7 @@ export const createQuickScopedCampaign = action({
             name: `حملة سريعة ${new Date().toISOString().slice(0, 10)}`,
             templateId: selectedTemplate._id,
             templateName: selectedTemplate.name,
+            templateLanguage: selectedTemplate.language,
             phoneNumberId: args.phoneNumberId,
             scheduledAt: Date.now(),
         });
@@ -198,6 +211,7 @@ export const insertQuickCampaignInternal = internalMutation({
         name: v.string(),
         templateId: v.id("templates"),
         templateName: v.string(),
+        templateLanguage: v.optional(v.string()),
         phoneNumberId: v.string(),
         scheduledAt: v.number(),
     },
@@ -206,6 +220,7 @@ export const insertQuickCampaignInternal = internalMutation({
             name: args.name,
             templateId: args.templateId,
             templateName: args.templateName,
+            templateLanguage: args.templateLanguage,
             phoneNumberId: args.phoneNumberId,
             status: "SCHEDULED",
             scheduledAt: args.scheduledAt,
@@ -226,7 +241,7 @@ export const validateTemplateSelection = query({
             templateName: args.templateName,
             phoneNumberId: args.phoneNumberId,
             requestedLanguage: args.requestedLanguage,
-            allowFallback: true,
+            allowFallback: false,
             requireScoped: true,
         });
         if (!resolved.ok) {
@@ -455,12 +470,14 @@ export const startProcessing = internalAction({
                 phoneNumberId: campaign.phoneNumberId ?? undefined,
             });
         const requestedLanguage =
-            selectedTemplate?.language ?? scopedTemplateByName?.language;
+            campaign.templateLanguage ??
+            selectedTemplate?.language ??
+            scopedTemplateByName?.language;
         const precheck: any = await ctx.runAction(internal.templates.resolveTemplateForSendWithSync, {
             templateName: campaign.templateName,
             phoneNumberId: campaign.phoneNumberId ?? undefined,
             requestedLanguage,
-            allowFallback: true,
+            allowFallback: false,
             requireScoped: true,
             failOnSyncError: true,
         });
@@ -589,7 +606,7 @@ export const processBatch = internalAction({
                     templateName: campaign.templateName,
                     phoneNumberId: campaign.phoneNumberId ?? undefined,
                     requestedLanguage: undefined,
-                    allowFallback: true,
+                    allowFallback: false,
                     requireScoped: true,
                 });
                 if (!fallbackResolution?.ok) {
@@ -787,12 +804,14 @@ export const sendToContact = internalAction({
                 phoneNumberId: campaign.phoneNumberId ?? undefined,
             });
         const requestedLanguage =
-            selectedTemplate?.language ?? scopedTemplateByName?.language;
+            campaign.templateLanguage ??
+            selectedTemplate?.language ??
+            scopedTemplateByName?.language;
         let resolved: any = await ctx.runQuery(internal.templates.resolveTemplateForSend, {
             templateName: campaign.templateName,
             phoneNumberId: campaign.phoneNumberId ?? undefined,
             requestedLanguage,
-            allowFallback: true,
+            allowFallback: false,
             requireScoped: true,
         });
         if (!resolved.ok) {
@@ -882,7 +901,7 @@ export const sendToContact = internalAction({
                     templateName: campaign.templateName,
                     phoneNumberId: campaign.phoneNumberId ?? undefined,
                     requestedLanguage: retryRequestedLanguage,
-                    allowFallback: true,
+                    allowFallback: false,
                     requireScoped: true,
                 });
                 if (!newResolved.ok || (newResolved.selected.templateId === resolved.selected.templateId && newResolved.selected.language === resolved.selected.language)) {

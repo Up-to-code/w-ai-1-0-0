@@ -5,6 +5,7 @@ import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -95,27 +96,38 @@ export default function WorkflowsPage() {
     const effectivePhoneNumberId =
         !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
     const workflows = (useQuery(api.workflows.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined) || []
-    const templatesSource = useQuery(
-        enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
+    const legacyTemplates = useQuery(
+        api.templates.list,
         effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
     ) as any[] | undefined
+    const scopedTemplatesQuery = useOptionalConvexQuery<any[]>(
+        (api as any).templates.listScopedApproved,
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const templatesSource = (enableExtendedCampaignApis && scopedTemplatesQuery.data
+        ? scopedTemplatesQuery.data
+        : legacyTemplates) as any[] | undefined
     const templates = (templatesSource || []).filter((template: any) => template.status === "APPROVED")
-    const templateHealth = useQuery(
+    const templateHealthQuery = useOptionalConvexQuery<any>(
         (api as any).templates.getScopedTemplateHealth,
-        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
-    ) as any | undefined
-    const sendReadiness = useQuery(
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const templateHealth = templateHealthQuery.data
+    const sendReadinessQuery = useOptionalConvexQuery<any>(
         (api as any).campaigns.getSendReadiness,
-        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
-    ) as any | undefined
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const sendReadiness = sendReadinessQuery.data
     const users = (useQuery(api.users.list) as any[] | undefined) || [] // Add this query
     const createWorkflow = useMutation(api.workflows.create)
     const updateWorkflow = useMutation(api.workflows.update)
     const toggleWorkflowMutation = useMutation(api.workflows.toggle)
     const deleteWorkflow = useMutation(api.workflows.remove)
-    const syncTemplatesForNumber = useAction(
-        enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
-    )
+    const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
+    const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
     const [editingId, setEditingId] = useState<string | null>(null)
@@ -138,11 +150,15 @@ export default function WorkflowsPage() {
             ? (sendReadiness?.recommendedAction as string | undefined) ||
               "Cannot sync/send templates for this number until sending readiness issues are resolved."
             : null
+    const optionalExtendedApisUnavailable =
+        scopedTemplatesQuery.unavailable ||
+        templateHealthQuery.unavailable ||
+        sendReadinessQuery.unavailable
     const selectedTemplateDoc = (templates || []).find((t: any) => t._id === actionConfig.templateId)
         || (templates || []).find((t: any) => t.name === actionConfig.template)
     const isTemplateActionInvalid =
         selectedAction === "send_template" &&
-        (!effectivePhoneNumberId || !actionConfig.templateId || !selectedTemplateDoc || isTemplateAuthFailed || isTemplateReadinessHardBlocked)
+        (!effectivePhoneNumberId || !actionConfig.templateId || !selectedTemplateDoc || isTemplateAuthFailed || isTemplateReadinessHardBlocked || optionalExtendedApisUnavailable)
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
         if (!effectivePhoneNumberId) return
@@ -158,7 +174,18 @@ export default function WorkflowsPage() {
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
         try {
-            await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
+            if (enableExtendedCampaignApis) {
+                try {
+                    await syncScopedTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error)
+                    const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
+                    if (!missingScopedSync) throw error
+                    await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
+                }
+            } else {
+                await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
+            }
             markScopedTemplatesSynced(effectivePhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -166,7 +193,15 @@ export default function WorkflowsPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [effectivePhoneNumberId, isTemplateAuthFailed, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
+    }, [
+        effectivePhoneNumberId,
+        enableExtendedCampaignApis,
+        isTemplateAuthFailed,
+        isTemplateReadinessHardBlocked,
+        readinessBlockingMessage,
+        syncScopedTemplatesForNumber,
+        syncTemplatesForNumber,
+    ])
 
     useEffect(() => {
         if (!isCreateOpen || !effectivePhoneNumberId) return
@@ -372,7 +407,7 @@ export default function WorkflowsPage() {
                                                 type="button"
                                                 size="sm"
                                                 variant="outline"
-                                                disabled={!effectivePhoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked}
+                                                disabled={!effectivePhoneNumberId || isSyncingTemplates || isTemplateAuthFailed || isTemplateReadinessHardBlocked || optionalExtendedApisUnavailable}
                                                 onClick={() => void triggerScopedTemplateSync(true)}
                                             >
                                                 {isSyncingTemplates ? "جارٍ المزامنة..." : "مزامنة"}
@@ -430,6 +465,11 @@ export default function WorkflowsPage() {
                                                 <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
                                                     افتح صفحة القوالب
                                                 </a>
+                                            </div>
+                                        )}
+                                        {optionalExtendedApisUnavailable && (
+                                            <div className="text-xs text-amber-700 dark:text-amber-300">
+                                                بعض واجهات القوالب غير متاحة في نسخة Convex الحالية. سيتم استخدام القوالب المتاحة فقط.
                                             </div>
                                         )}
                                         {templates.length === 0 && effectivePhoneNumberId && !isSyncingTemplates && !templateSyncError && (

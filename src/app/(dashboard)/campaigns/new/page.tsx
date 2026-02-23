@@ -39,6 +39,7 @@ import { SchedulePicker } from "@/components/SchedulePicker"
 import { TemplatePreview } from "@/components/TemplatePreview"
 import { getScopedTemplateSyncTtlMs, markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import type { Id } from "../../../../../convex/_generated/dataModel"
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 
 export default function NewCampaignPage() {
     const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
@@ -84,19 +85,31 @@ export default function NewCampaignPage() {
     const testContactLimit = 5
 
     // Queries
-    const templatesSource = useQuery(
-        enableExtendedCampaignApis ? (api as any).templates.listScopedApproved : api.templates.list,
+    const legacyTemplates = useQuery(
+        api.templates.list,
         selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
     ) as any[] | undefined
+    const scopedTemplatesQuery = useOptionalConvexQuery<any[]>(
+        (api as any).templates.listScopedApproved,
+        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const templatesSource = (enableExtendedCampaignApis && scopedTemplatesQuery.data
+        ? scopedTemplatesQuery.data
+        : legacyTemplates) as any[] | undefined
     const templates = templatesSource?.filter((template: any) => template.status === "APPROVED")
-    const templateHealth = useQuery(
+    const templateHealthQuery = useOptionalConvexQuery<any>(
         (api as any).templates.getScopedTemplateHealth,
-        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
-    ) as any | undefined
-    const sendReadiness = useQuery(
+        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const templateHealth = templateHealthQuery.data
+    const sendReadinessQuery = useOptionalConvexQuery<any>(
         (api as any).campaigns.getSendReadiness,
-        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip"
-    ) as any | undefined
+        enableExtendedCampaignApis && selectedPhoneNumberId ? { phoneNumberId: selectedPhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const sendReadiness = sendReadinessQuery.data
     const [templateValidation, setTemplateValidation] = useState<any | null>(null)
     const [isTemplateValidationLoading, setIsTemplateValidationLoading] = useState(false)
     const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
@@ -105,10 +118,9 @@ export default function NewCampaignPage() {
     const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
-    const createCampaign = useMutation(api.campaigns.create)
-    const syncTemplatesForNumber = useAction(
-        enableExtendedCampaignApis ? (api as any).templates.syncScopedFromMeta : api.templates.syncFromMeta
-    )
+    const createCampaign = useMutation(api.campaigns.create) as any
+    const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
+    const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
@@ -147,7 +159,11 @@ export default function NewCampaignPage() {
             ? (sendReadiness?.recommendedAction as string | undefined) ||
               "Cannot sync/send templates for this number until sending readiness issues are resolved."
             : null
-    const strictTemplateChecksEnabled = enableExtendedCampaignApis
+    const optionalExtendedApisUnavailable =
+        scopedTemplatesQuery.unavailable ||
+        templateHealthQuery.unavailable ||
+        sendReadinessQuery.unavailable
+    const strictTemplateChecksEnabled = enableExtendedCampaignApis && !optionalExtendedApisUnavailable
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
         if (!enableExtendedCampaignApis) return
@@ -160,7 +176,18 @@ export default function NewCampaignPage() {
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
         try {
-            await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
+            if (enableExtendedCampaignApis) {
+                try {
+                    await syncScopedTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
+                } catch (error) {
+                    const message = error instanceof Error ? error.message : String(error)
+                    const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
+                    if (!missingScopedSync) throw error
+                    await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
+                }
+            } else {
+                await syncTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
+            }
             markScopedTemplatesSynced(selectedPhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
@@ -168,7 +195,14 @@ export default function NewCampaignPage() {
         } finally {
             setIsSyncingTemplates(false)
         }
-    }, [enableExtendedCampaignApis, selectedPhoneNumberId, isTemplateReadinessHardBlocked, readinessBlockingMessage, syncTemplatesForNumber])
+    }, [
+        enableExtendedCampaignApis,
+        selectedPhoneNumberId,
+        isTemplateReadinessHardBlocked,
+        readinessBlockingMessage,
+        syncScopedTemplatesForNumber,
+        syncTemplatesForNumber,
+    ])
 
     useEffect(() => {
         if (numbers.length > 0 && selectedPhoneNumberId === null) {
@@ -222,7 +256,7 @@ export default function NewCampaignPage() {
                 }
                 return
             }
-            if (!enableExtendedCampaignApis) {
+            if (!strictTemplateChecksEnabled) {
                 if (!cancelled) {
                     setTemplateValidation({
                         ok: true,
@@ -279,7 +313,7 @@ export default function NewCampaignPage() {
         return () => {
             cancelled = true
         }
-    }, [convex, enableExtendedCampaignApis, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
+    }, [convex, strictTemplateChecksEnabled, selectedTemplate?.name, selectedTemplate?.language, selectedPhoneNumberId])
 
     useEffect(() => {
         let cancelled = false
@@ -324,6 +358,7 @@ export default function NewCampaignPage() {
             name,
             templateId: selectedTemplate?._id as Id<"templates">,
             templateName: selectedTemplate?.name || "",
+            templateLanguage: selectedTemplate?.language || undefined,
             phoneNumberId: selectedPhoneNumberId ?? undefined,
             isTestCampaign: isTestCampaign || undefined,
             testBypassRecentContact: isTestCampaign ? testBypassRecentContact : undefined,
@@ -343,7 +378,18 @@ export default function NewCampaignPage() {
             const isFunctionNotFound = msg.includes("Could not find public function")
             if (isValidationError || isFunctionNotFound) {
                 try {
-                    const { isTestCampaign: _i, testBypassRecentContact: _b, testContactPhones: _p, ...fallbackPayload } = payload as typeof payload & { isTestCampaign?: boolean; testBypassRecentContact?: boolean; testContactPhones?: string[] }
+                    const {
+                        isTestCampaign: _i,
+                        testBypassRecentContact: _b,
+                        testContactPhones: _p,
+                        templateLanguage: _l,
+                        ...fallbackPayload
+                    } = payload as typeof payload & {
+                        isTestCampaign?: boolean;
+                        testBypassRecentContact?: boolean;
+                        testContactPhones?: string[];
+                        templateLanguage?: string;
+                    }
                     await createCampaign(fallbackPayload)
                     router.push("/campaigns?success=true" + (isTestCampaign ? "&testFallback=1" : ""))
                 } catch (fallbackError) {
@@ -906,6 +952,11 @@ export default function NewCampaignPage() {
                                                 {templateAuthFailedMessage ? ` (${templateAuthFailedMessage})` : ""}
                                             </div>
                                         )}
+                                        {optionalExtendedApisUnavailable && (
+                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                                                بعض واجهات التحقق المتقدمة غير متاحة في نسخة Convex الحالية. سيتم استخدام التدفق الأساسي بدون كسر الصفحة.
+                                            </div>
+                                        )}
 
                                         {isSyncingTemplates && (
                                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
@@ -1096,6 +1147,13 @@ export default function NewCampaignPage() {
 
                                         <div className="border rounded-lg p-4">
                                             <Label className="text-muted-foreground text-xs mb-3 block">محتوى الرسالة</Label>
+                                            {selectedTemplate ? (
+                                                <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+                                                    <Badge variant="secondary">{selectedTemplate.name}</Badge>
+                                                    <Badge variant="outline">{selectedTemplate.language || "unknown"}</Badge>
+                                                    <Badge variant="outline">Scoped</Badge>
+                                                </div>
+                                            ) : null}
                                             <TemplatePreview template={selectedTemplate} />
                                         </div>
                                     </div>

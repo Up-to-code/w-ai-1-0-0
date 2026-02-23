@@ -260,6 +260,7 @@ export default defineSchema({
     name: v.string(),
     templateId: v.id("templates"),
     templateName: v.string(),
+    templateLanguage: v.optional(v.string()),
     phoneNumberId: v.optional(v.string()), // Meta phone_number_id; which number sends campaign messages
     isTestCampaign: v.optional(v.boolean()),
     testBypassRecentContact: v.optional(v.boolean()),

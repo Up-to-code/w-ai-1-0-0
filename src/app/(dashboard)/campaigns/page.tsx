@@ -39,6 +39,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { useAuth } from "@/contexts/AuthContext"
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 
 export default function CampaignsPage() {
   const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
@@ -52,16 +53,20 @@ export default function CampaignsPage() {
   const campaigns = useQuery(api.campaigns.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) as any[] | undefined
   const quickCampaignPhoneNumberId =
     effectivePhoneNumberId ?? (activePhoneNumberId && activePhoneNumberId !== "__all__" ? activePhoneNumberId : numbers[0]?.businessNumberId)
-  const sendReadiness = useQuery(
+  const sendReadinessQuery = useOptionalConvexQuery<any>(
     (api as any).campaigns.getSendReadiness,
     enableExtendedCampaignApis && quickCampaignPhoneNumberId
       ? { phoneNumberId: quickCampaignPhoneNumberId }
-      : "skip"
-  ) as any | undefined
-  const recentAuthBlocks = useQuery(
+      : "skip",
+    enableExtendedCampaignApis
+  )
+  const sendReadiness = sendReadinessQuery.data
+  const recentAuthBlocksQuery = useOptionalConvexQuery<any[]>(
     (api as any).campaigns.listRecentAuthBlocks,
-    enableExtendedCampaignApis && isAdmin ? { limit: 8 } : "skip"
-  ) as any[] | undefined
+    enableExtendedCampaignApis && isAdmin ? { limit: 8 } : "skip",
+    enableExtendedCampaignApis && isAdmin
+  )
+  const recentAuthBlocks = recentAuthBlocksQuery.data
   const removeCampaign = useMutation(api.campaigns.remove)
   const createQuickScopedCampaign = useAction((api as any).campaigns.createQuickScopedCampaign)
   const [searchQuery, setSearchQuery] = useState("")
@@ -198,6 +203,11 @@ export default function CampaignsPage() {
       {quickCampaignError ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
           {quickCampaignError}
+        </div>
+      ) : null}
+      {enableExtendedCampaignApis && (sendReadinessQuery.unavailable || recentAuthBlocksQuery.unavailable) ? (
+        <div className="rounded-xl border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:bg-amber-900/20 dark:text-amber-300">
+          بعض وظائف الحملات غير متاحة في نسخة Convex الحالية. قم بتشغيل `npx convex deploy` على `hardy-gopher-480`.
         </div>
       ) : null}
       {isQuickCampaignHardBlocked && !quickCampaignError ? (

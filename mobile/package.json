@@ -4,7 +4,9 @@
   "main": "index.ts",
   "scripts": {
     "check:env": "node ./scripts/validate-env.mjs",
+    "typecheck": "tsc --noEmit",
     "eas-build-pre-install": "node ./scripts/validate-env.mjs",
+    "postinstall": "patch-package",
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
@@ -49,6 +51,7 @@
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
+    "patch-package": "^8.0.1",
     "typescript": "~5.9.2"
   },
   "private": true,

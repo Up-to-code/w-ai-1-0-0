@@ -14,6 +14,7 @@ import { FlashList } from "@shopify/flash-list";
 import { ChatItem } from "../../components/chat/ChatItem";
 import { Ionicons } from "@expo/vector-icons";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
+import { ScreenErrorBoundary } from "../../components/ScreenErrorBoundary";
 import { Header } from "../../components/Header";
 import { WorkspaceSwitcher } from "../../components/WorkspaceSwitcher";
 import { useLocale } from "../../contexts/LocaleContext";
@@ -54,19 +55,17 @@ export default function ChatListScreen() {
   const rtlRow = isRTL ? styles.rowReverse : styles.row;
   const rtlText = isRTL ? styles.textRight : styles.textLeft;
 
-  if (!chats) {
-    return (
-      <ScreenWrapper edges={["top"]}>
-        <Header title={t("chats")} />
-        <View style={styles.centerContainer}>
-          <ActivityIndicator size="large" color="#007AFF" />
-          <Text style={[styles.loadingText, styles.cairoFont]}>{t("loading")}</Text>
-        </View>
-      </ScreenWrapper>
-    );
-  }
-
   return (
+    <ScreenErrorBoundary screenName="chats">
+      {!chats ? (
+        <ScreenWrapper edges={["top"]}>
+          <Header title={t("chats")} />
+          <View style={styles.centerContainer}>
+            <ActivityIndicator size="large" color="#007AFF" />
+            <Text style={[styles.loadingText, styles.cairoFont]}>{t("loading")}</Text>
+          </View>
+        </ScreenWrapper>
+      ) : (
     <ScreenWrapper edges={["top"]}>
       <Header title={t("chats")} />
       <WorkspaceSwitcher />
@@ -116,6 +115,8 @@ export default function ChatListScreen() {
         />
       )}
     </ScreenWrapper>
+      )}
+    </ScreenErrorBoundary>
   );
 }
 

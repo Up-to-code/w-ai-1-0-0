@@ -37,6 +37,7 @@ import {
 } from "@/components/ui/dropdown-menu"
 
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 
 export default function TemplatesPage() {
     const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
@@ -47,10 +48,12 @@ export default function TemplatesPage() {
     // "__all__" or null = default number. Convex expects undefined, not null.
     const effectivePhoneNumberId =
       !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
-    const templateHealth = useQuery(
+    const templateHealthQuery = useOptionalConvexQuery<any>(
         (api as any).templates.getScopedTemplateHealth,
-        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip"
-    ) as any | undefined
+        enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
+        enableExtendedCampaignApis
+    )
+    const templateHealth = templateHealthQuery.data
     const templates =
         useQuery(api.templates.list, effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : {}) || []
     const isTokenAuthFailed = templateHealth?.tokenStatus === "auth_failed"
@@ -213,6 +216,11 @@ export default function TemplatesPage() {
                             فتح الإعدادات والربط
                         </Link>
                     </div>
+                </div>
+            )}
+            {enableExtendedCampaignApis && templateHealthQuery.unavailable && (
+                <div className="rounded-lg border border-amber-300/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                    معلومات صحة القوالب غير متاحة في نسخة Convex الحالية. يمكنك المتابعة بالمزامنة والإدارة من هذه الصفحة.
                 </div>
             )}
             <div className="flex flex-col sm:flex-row gap-4 items-center justify-between">

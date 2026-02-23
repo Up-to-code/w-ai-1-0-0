@@ -1,0 +1,15 @@
+diff --git a/node_modules/@types/react/index.d.ts b/node_modules/@types/react/index.d.ts
+index 788ad15..2c0e752 100644
+--- a/node_modules/@types/react/index.d.ts
++++ b/node_modules/@types/react/index.d.ts
+@@ -134,8 +134,8 @@ declare namespace React {
+         | ((
+             props: P,
+         ) => ReactNode | Promise<ReactNode>)
+-        // constructor signature must match React.Component
+-        | (new(props: P, context: any) => Component<any, any>);
++        // constructor signature - use 'any' for RN class components compat (View, Text, etc.)
++        | (new(props: P, context?: any) => any);
+ 
+     /**
+      * Created by {@link createRef}, or {@link useRef} when passed `null`.

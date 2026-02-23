@@ -17,6 +17,7 @@ import { api } from "../../../convex/_generated/api";
 import { useAuth } from "../../contexts/AuthContext";
 import { useLocale } from "../../contexts/LocaleContext";
 import { ScreenWrapper } from "../../components/ScreenWrapper";
+import { ScreenErrorBoundary } from "../../components/ScreenErrorBoundary";
 import { Header } from "../../components/Header";
 import { Id } from "../../../convex/_generated/dataModel";
 
@@ -136,6 +137,7 @@ export default function SettingsScreen() {
   const rtlText = isRTL ? styles.textRight : styles.textLeft;
 
   return (
+    <ScreenErrorBoundary screenName="settings">
     <ScreenWrapper edges={["top"]}>
       <Header title={t("settings")} />
       
@@ -419,6 +421,7 @@ export default function SettingsScreen() {
         <View style={styles.spacer} />
       </ScrollView>
     </ScreenWrapper>
+    </ScreenErrorBoundary>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useLocalSearchParams } from "expo-router";
 import { ChatWindow } from "../../components/chat/ChatWindow";
+import { ScreenErrorBoundary } from "../../components/ScreenErrorBoundary";
 
 export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -8,5 +9,9 @@ export default function ChatScreen() {
     return null;
   }
 
-  return <ChatWindow chatId={id} />;
+  return (
+    <ScreenErrorBoundary screenName="chat">
+      <ChatWindow chatId={id} />
+    </ScreenErrorBoundary>
+  );
 }
