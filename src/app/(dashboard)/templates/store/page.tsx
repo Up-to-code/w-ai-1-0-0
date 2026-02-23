@@ -10,7 +10,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import {
   FileText,
   LayoutTemplate,
@@ -504,6 +504,10 @@ export default function TemplateStorePage() {
       {/* Preview Modal – WhatsApp-style */}
       <Dialog open={!!previewStoreTemplate} onOpenChange={(open) => !open && setPreviewStoreTemplate(null)}>
         <DialogContent className="max-w-[360px] p-4 sm:p-6 overflow-y-auto bg-background border border-border shadow-lg">
+          <DialogHeader className="sr-only">
+            <DialogTitle>معاينة قالب المتجر</DialogTitle>
+            <DialogDescription>عرض شكل القالب قبل استخدامه أو إرساله للمراجعة.</DialogDescription>
+          </DialogHeader>
           {previewStoreTemplate && (
             <>
               <p className="text-sm font-medium text-center text-muted-foreground mb-3">معاينة القالب</p>

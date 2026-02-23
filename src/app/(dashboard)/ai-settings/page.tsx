@@ -12,6 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
@@ -402,6 +403,7 @@ export default function AiSettingsPage() {
                 <DialogContent dir="rtl">
                   <DialogHeader>
                     <DialogTitle>إضافة مقطع للمعرفة</DialogTitle>
+                    <DialogDescription>أدخل عنواناً ومحتوى ليتم استخدامهما في إجابات المساعد.</DialogDescription>
                   </DialogHeader>
                   <div className="space-y-4 pt-2">
                     <Input

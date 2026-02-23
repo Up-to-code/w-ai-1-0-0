@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
@@ -80,6 +80,7 @@ export function CategoryFormDialog({ phoneNumberId, category, trigger, onSaved }
       <DialogContent>
         <DialogHeader>
           <DialogTitle>{category ? "تعديل التصنيف" : "إنشاء تصنيف"}</DialogTitle>
+          <DialogDescription>أدخل اسم ووصف التصنيف ليظهر في الكتالوج اليدوي لهذا الرقم.</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           <Input placeholder="اسم التصنيف" value={name} onChange={(e) => setName(e.target.value)} />

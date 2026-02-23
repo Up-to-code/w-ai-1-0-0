@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Input } from "@/components/ui/input"
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { StatCard } from "@/components/ui/stat-card"
 import {
@@ -327,6 +327,10 @@ export default function TemplatesPage() {
             {/* Preview Modal */}
             <Dialog open={!!previewTemplate} onOpenChange={(open) => !open && setPreviewTemplate(null)}>
                 <DialogContent className="max-w-sm p-0 overflow-hidden bg-transparent border-none shadow-none">
+                    <DialogHeader className="sr-only">
+                        <DialogTitle>معاينة القالب</DialogTitle>
+                        <DialogDescription>عرض شكل القالب في واجهة محاكاة واتساب.</DialogDescription>
+                    </DialogHeader>
                     {previewTemplate && (
                         <div className="relative mx-auto border-gray-800 dark:border-gray-800 bg-gray-900 border-[14px] rounded-[2.5rem] h-[600px] w-[320px] shadow-xl flex flex-col">
                             <div className="w-[148px] h-[18px] bg-gray-800 top-0 rounded-b-[1rem] left-1/2 -translate-x-1/2 absolute z-20"></div>
@@ -449,6 +453,7 @@ export default function TemplatesPage() {
                 <DialogContent className="max-w-sm rounded-2xl">
                     <DialogHeader>
                         <DialogTitle>حذف القالب</DialogTitle>
+                        <DialogDescription>تأكيد حذف القالب من النظام ومن Meta عند توفر الصلاحية.</DialogDescription>
                     </DialogHeader>
                     {deleteTemplateData && (
                         <div className="space-y-4">

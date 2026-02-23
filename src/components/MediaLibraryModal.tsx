@@ -3,7 +3,7 @@
 import { useState, useRef } from "react"
 import { useQuery, useMutation } from "convex/react"
 import { api } from "../../convex/_generated/api"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -85,6 +85,7 @@ export function MediaLibraryModal({ children, onSelect, allowedTypes }: MediaLib
             <DialogContent className="max-w-3xl h-[600px] flex flex-col p-0 gap-0">
                 <DialogHeader className="p-4 border-b">
                     <DialogTitle>Média Library</DialogTitle>
+                    <DialogDescription>اختر ملفاً من المكتبة أو ارفع ملفاً جديداً للاستخدام في الرسائل.</DialogDescription>
                 </DialogHeader>
 
                 <Tabs defaultValue="library" className="flex-1 flex flex-col overflow-hidden">

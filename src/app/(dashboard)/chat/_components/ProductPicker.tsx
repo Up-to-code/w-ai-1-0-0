@@ -4,7 +4,7 @@ import { useEffect, useState } from "react"
 import Link from "next/link"
 import { useAction, useQuery } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -113,6 +113,7 @@ export function ProductPicker({ onSelect, trigger }: ProductPickerProps) {
             <DialogContent className="sm:max-w-[425px] h-[80vh] flex flex-col p-0 gap-0 bg-[#efeae2] dark:bg-[#0b141a]">
                 <DialogHeader className="p-4 bg-[#f0f2f5] dark:bg-[#202c33] shrink-0">
                     <DialogTitle>اختر منتج من سلة</DialogTitle>
+                    <DialogDescription>اختر منتجاً لإرساله مباشرة داخل المحادثة.</DialogDescription>
                 </DialogHeader>
 
                 {/* Search Bar Placeholder */}

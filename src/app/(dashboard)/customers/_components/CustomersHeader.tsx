@@ -5,7 +5,7 @@ import { useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Search, Plus, ArrowRight } from "lucide-react"
 import { ExportButton } from "./ExportButton"
 import { ImportButton } from "./ImportButton"
@@ -76,6 +76,7 @@ export function CustomersHeader({ searchQuery, onSearchChange, contacts }: Props
         <DialogContent className="sm:max-w-[480px]">
           <DialogHeader>
             <DialogTitle>إضافة عميل جديد</DialogTitle>
+            <DialogDescription>أدخل بيانات العميل الأساسية لإضافته إلى قائمة العملاء.</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

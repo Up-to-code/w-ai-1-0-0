@@ -5,7 +5,7 @@ import { useMutation } from "convex/react"
 import { api } from "../../../../../convex/_generated/api"
 import { Button } from "@/components/ui/button"
 import { Upload, Loader2, FileSpreadsheet } from "lucide-react"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Progress } from "@/components/ui/progress"
@@ -333,6 +333,7 @@ export function ImportButton() {
             <DialogContent className="sm:max-w-[480px]">
                 <DialogHeader>
                     <DialogTitle>استيراد عملاء من Excel</DialogTitle>
+                    <DialogDescription>حمّل ملف العملاء وحدد الوسوم لإدخالهم دفعة واحدة.</DialogDescription>
                 </DialogHeader>
 
                 <div className="space-y-6 pt-4">

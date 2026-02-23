@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useAction } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Plus } from "lucide-react";
@@ -114,6 +114,7 @@ export function ManualProductFormDialog({ phoneNumberId, product, trigger, onSav
       <DialogContent className="max-w-2xl">
         <DialogHeader>
           <DialogTitle>{product ? "تعديل المنتج" : "إضافة منتج"}</DialogTitle>
+          <DialogDescription>أضف صور المنتج والعنوان والوصف وربطه بتصنيف عند الحاجة.</DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input"
 import { Send, Paperclip, Mic, Image as ImageIcon, FileText, Smile, Search } from "lucide-react"
 import { MediaLibraryModal } from "@/components/MediaLibraryModal"
 import { AudioRecorder } from "@/components/AudioRecorder"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Card, CardContent } from "@/components/ui/card"
 import EmojiPicker, { EmojiClickData, Theme } from "emoji-picker-react"
@@ -392,6 +392,7 @@ export function ChatInput({ chatId }: ChatInputProps) {
             <DialogContent className="max-w-2xl h-[80vh] flex flex-col">
               <DialogHeader>
                 <DialogTitle>قوالب الرسائل</DialogTitle>
+                <DialogDescription>اختر قالباً معتمداً لإرساله من الرقم المرتبط بهذه المحادثة.</DialogDescription>
               </DialogHeader>
 
               <div className="flex items-center justify-between gap-2">

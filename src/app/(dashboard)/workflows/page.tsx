@@ -9,7 +9,7 @@ import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger, DialogFooter } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -316,6 +316,7 @@ export default function WorkflowsPage() {
                     <DialogContent className="max-w-2xl">
                         <DialogHeader>
                             <DialogTitle>{editingId ? "تعديل القاعدة" : "إنشاء قاعدة أتمتة"}</DialogTitle>
+                            <DialogDescription>حدد المشغّل والإجراء لإنشاء قاعدة أتمتة تعمل على هذا الرقم.</DialogDescription>
                         </DialogHeader>
                         <div className="space-y-6 py-4">
                             {/* Workflow Name */}
