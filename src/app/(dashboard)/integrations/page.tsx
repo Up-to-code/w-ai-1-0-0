@@ -423,8 +423,8 @@ export default function IntegrationsPage() {
             detail: healthLoading
                 ? "Checking health..."
                 : allNumbersWebhookReady
-                  ? "Webhook app/profile checks pass for all numbers"
-                  : "Fix webhook issues shown in number health",
+                    ? "Webhook app/profile checks pass for all numbers"
+                    : "Fix webhook issues shown in number health",
         },
         {
             label: "Fallback Number",
@@ -454,10 +454,10 @@ export default function IntegrationsPage() {
         sallaStatus === "connected"
             ? "متصل"
             : sallaStatus === "token_invalid"
-              ? "الرمز غير صالح"
-              : sallaStatus === "refresh_failed"
-                ? "فشل تجديد الرمز"
-                : "غير متصل"
+                ? "الرمز غير صالح"
+                : sallaStatus === "refresh_failed"
+                    ? "فشل تجديد الرمز"
+                    : "غير متصل"
 
     return (
         <div className="space-y-8 p-6 sm:p-8 max-w-5xl mx-auto animate-in fade-in duration-500">
@@ -657,19 +657,18 @@ export default function IntegrationsPage() {
                                                 Active
                                             </div>
                                             <div
-                                                className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${
-                                                    n.tokenStatus === "auth_failed"
+                                                className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest ${n.tokenStatus === "auth_failed"
                                                         ? "bg-destructive/10 text-destructive"
                                                         : n.accessToken
-                                                          ? "bg-blue-500/10 text-blue-600"
-                                                          : "bg-amber-500/10 text-amber-700"
-                                                }`}
+                                                            ? "bg-blue-500/10 text-blue-600"
+                                                            : "bg-amber-500/10 text-amber-700"
+                                                    }`}
                                             >
                                                 {n.tokenStatus === "auth_failed"
                                                     ? "Auth Failed"
                                                     : n.accessToken
-                                                      ? "Token Ready"
-                                                      : "Token Missing"}
+                                                        ? "Token Ready"
+                                                        : "Token Missing"}
                                             </div>
                                             {defaultPhoneNumberId === n.businessNumberId && (
                                                 <div className="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-widest bg-primary/10 text-primary">
@@ -911,11 +910,10 @@ export default function IntegrationsPage() {
 
                         {tokenTestResult && (
                             <div
-                                className={`p-4 rounded-xl border text-sm ${
-                                    tokenTestResult.success
+                                className={`p-4 rounded-xl border text-sm ${tokenTestResult.success
                                         ? "bg-success/10 border-success/20 text-success-foreground"
                                         : "bg-destructive/10 border-destructive/20 text-destructive"
-                                }`}
+                                    }`}
                             >
                                 {tokenTestResult.success ? (
                                     <p className="font-medium flex items-center gap-2">

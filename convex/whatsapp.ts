@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { internal, api } from "./_generated/api";
 import { categorizeWhatsAppError, validateAndCleanPhoneNumber, createErrorReport } from "./errorUtils";
 import { extractWebhookChanges, resolvePhoneNumberCandidate } from "./webhookUtils";
+import { logDebug, logInfoSampled, logWarn, logError } from "./logging";
 
 const WHATSAPP_API_URL = "https://graph.facebook.com/v21.0";
 
@@ -11,6 +12,7 @@ export type WhatsAppConfig = {
   phoneId: string;
   wabaId?: string;
   source: "db_number" | "db_first_with_token" | "env_fallback" | "webhook_fallback";
+  disableAppSecretProof?: boolean;
 };
 
 type TypedWhatsAppError = Error & {
@@ -19,17 +21,18 @@ type TypedWhatsAppError = Error & {
   retryable?: boolean;
 };
 
-const INFO_LOG_SAMPLE_RATE = 0.03;
-
-function sampledInfo(...args: any[]): void {
-  if (process.env.NODE_ENV !== "production" || Math.random() < INFO_LOG_SAMPLE_RATE) {
-    console.log(...args);
+async function withAppSecretProof(ctx: any, url: string, configOrToken: { accessToken: string; disableAppSecretProof?: boolean } | string): Promise<string> {
+  const accessToken = typeof configOrToken === 'string' ? configOrToken : configOrToken.accessToken;
+  const disableDb = typeof configOrToken === 'string' ? false : !!configOrToken.disableAppSecretProof;
+  
+  const disableAppSecretProof = disableDb || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
+  if (disableAppSecretProof) {
+    return url;
   }
-}
 
-async function withAppSecretProof(ctx: any, url: string, accessToken: string): Promise<string> {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret?.trim()) return url;
+
   const appsecret_proof = await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
     accessToken,
     appSecret,
@@ -42,6 +45,28 @@ async function withAppSecretProof(ctx: any, url: string, accessToken: string): P
 function normalizeToken(token: string | null | undefined): string | null {
   const t = token?.trim();
   return t && t.length > 0 ? t : null;
+}
+
+function normalizeTemplateLanguageKey(value: unknown): string {
+  if (typeof value === "string") {
+    return value.trim().toLowerCase().replace("-", "_");
+  }
+  if (value && typeof value === "object" && typeof (value as { code?: unknown }).code === "string") {
+    return ((value as { code: string }).code || "").trim().toLowerCase().replace("-", "_");
+  }
+  return "";
+}
+
+function extractTemplateBodyContent(components: unknown): string | undefined {
+  if (!Array.isArray(components)) return undefined;
+  const body = components.find((component) => (component as { type?: string })?.type === "BODY") as
+    | { text?: string }
+    | undefined;
+  if (typeof body?.text === "string") {
+    const text = body.text.trim();
+    return text.length > 0 ? text : undefined;
+  }
+  return undefined;
 }
 
 function makeTypedWhatsAppError(
@@ -86,7 +111,7 @@ async function markNumberAuthFailureSafe(
       message: message.slice(0, 1000),
     });
   } catch (error) {
-    console.warn("[WhatsApp] Failed to persist auth failure status", {
+    logWarn("[WhatsApp] Failed to persist auth failure status", {
       businessNumberId,
       code,
       error: error instanceof Error ? error.message : String(error),
@@ -101,7 +126,7 @@ async function markNumberAuthHealthySafe(ctx: any, businessNumberId: string | un
       businessNumberId,
     });
   } catch (error) {
-    console.warn("[WhatsApp] Failed to clear auth failure status", {
+    logWarn("[WhatsApp] Failed to clear auth failure status", {
       businessNumberId,
       error: error instanceof Error ? error.message : String(error),
     });
@@ -125,7 +150,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
           `Number "${config.name ?? phoneNumberId}" authentication is blocked (Meta OAuth error ${config.lastAuthErrorCode ?? 190}). Reconnect this number in Integrations before syncing or sending templates.`
         );
       }
-      return { accessToken, phoneId, wabaId: config.businessAccountId, source: "db_number" };
+      return { accessToken, phoneId, wabaId: config.businessAccountId, source: "db_number", disableAppSecretProof: config.disableAppSecretProof };
     } else {
       throw new Error(`Number ${phoneNumberId} is not configured. Add it in Integrations (ربط المتجر) and set its access token.`);
     }
@@ -139,19 +164,20 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
         `Default number "${first.name ?? first.businessNumberId}" authentication is blocked (Meta OAuth error ${first.lastAuthErrorCode ?? 190}). Reconnect this number in Integrations.`
       );
     }
-    sampledInfo(`[WhatsApp Config] Using first number with token: ${first.name ?? first.businessNumberId}`);
+    logInfoSampled(`[WhatsApp Config] Using first number with token: ${first.name ?? first.businessNumberId}`);
     return {
       accessToken: firstToken,
       phoneId: first.businessNumberId,
       wabaId: first.businessAccountId,
       source: "db_first_with_token",
+      disableAppSecretProof: first.disableAppSecretProof,
     };
   }
   const accessToken = normalizeToken(process.env.WHATSAPP_ACCESS_TOKEN);
   const phoneId = (process.env.WHATSAPP_PHONE_ID ?? "").trim();
   const wabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (accessToken && phoneId) {
-    sampledInfo(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
+    logInfoSampled(`[WhatsApp Config] Using env fallback: WHATSAPP_ACCESS_TOKEN + WHATSAPP_PHONE_ID`);
     return { accessToken, phoneId, wabaId, source: "env_fallback" };
   }
   const webhook = await ctx.runQuery(internal.webhookSettings.getForConfig, {});
@@ -159,7 +185,7 @@ async function getWhatsAppConfig(ctx: any, phoneNumberId: string | undefined): P
   const fallbackPhoneId = webhook?.defaultPhoneNumberId?.trim() || (process.env.WHATSAPP_PHONE_ID ?? "").trim();
   const fallbackWabaId = (process.env.WHATSAPP_WABA_ID ?? "").trim();
   if (fallbackToken && fallbackPhoneId) {
-    sampledInfo(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
+    logInfoSampled(`[WhatsApp Config] Using webhook settings fallback: defaultPhoneNumberId=${fallbackPhoneId}`);
     return { accessToken: fallbackToken, phoneId: fallbackPhoneId, wabaId: fallbackWabaId, source: "webhook_fallback" };
   }
   throw new Error(
@@ -187,7 +213,7 @@ export const sendMessage = action({
     if (args.type === "template" && !args.phoneNumberId) {
       throw new Error("Template sends require an explicit phoneNumberId. Select a sending number for the campaign/chat/workflow.");
     }
-    const { accessToken, phoneId, source } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, disableAppSecretProof, phoneId, source } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     // Validate and clean phone number
     let recipient: string;
@@ -195,12 +221,12 @@ export const sendMessage = action({
       recipient = validateAndCleanPhoneNumber(args.to);
     } catch (err) {
       const error = err as Error;
-      console.error("[WhatsApp] Phone number validation failed:", error.message);
+      logError("[WhatsApp] Phone number validation failed:", error.message);
       throw error;
     }
 
-    sampledInfo(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
-    sampledInfo("[WhatsApp] Config resolved", {
+    logInfoSampled(`[WhatsApp] Preparing to send to cleaned recipient: ${recipient} (original was ${args.to})`);
+    logInfoSampled("[WhatsApp] Config resolved", {
       selectedPhoneNumberId: args.phoneNumberId ?? null,
       resolvedPhoneId: phoneId,
       source,
@@ -214,13 +240,13 @@ export const sendMessage = action({
       [args.type]: args.content,
     };
 
-    sampledInfo(`[WhatsApp] Sending payload to ${recipient} via ${WHATSAPP_API_URL}/${phoneId}/messages`);
+    logInfoSampled(`[WhatsApp] Sending payload to ${recipient} via ${WHATSAPP_API_URL}/${phoneId}/messages`);
     if (process.env.NODE_ENV !== "production") {
-      console.log(`[WhatsApp] Payload:`, JSON.stringify(payload, null, 2));
+      logDebug(`[WhatsApp] Payload:`, JSON.stringify(payload, null, 2));
     }
 
     try {
-      const sendUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/messages`, accessToken);
+      const sendUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/messages`, { accessToken });
       const response = await fetch(sendUrl, {
         method: "POST",
         headers: {
@@ -230,7 +256,7 @@ export const sendMessage = action({
         body: JSON.stringify(payload),
       });
 
-      sampledInfo(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
+      logInfoSampled(`[WhatsApp] Meta API Response Status: ${response.status} ${response.statusText}`);
       const data = await response.json();
 
       if (!response.ok) {
@@ -247,7 +273,7 @@ export const sendMessage = action({
             ? `${errorMessage} — ${suggestedAction}`
             : errorMessage;
 
-        console.error(
+        logError(
           `[WhatsApp] API Error (${errorCategory.category}):`,
           JSON.stringify(data),
           `Retryable: ${errorCategory.retryable}`
@@ -270,7 +296,7 @@ export const sendMessage = action({
           templateName: (args.content as any)?.name,
           languageCode: (args.content as any)?.language?.code,
         });
-        console.error("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
+        logError("[WhatsApp] Error Report:", JSON.stringify(errorReport, null, 2));
 
         throw makeTypedWhatsAppError(
           userMessage,
@@ -281,7 +307,7 @@ export const sendMessage = action({
       }
 
       await markNumberAuthHealthySafe(ctx, args.phoneNumberId ?? phoneId);
-      sampledInfo("[WhatsApp] Send Success:", JSON.stringify(data));
+      logInfoSampled("[WhatsApp] Send Success:", JSON.stringify(data));
 
       // Link Meta ID to Internal Message
       if (args.messageId && data.messages?.[0]?.id) {
@@ -290,14 +316,14 @@ export const sendMessage = action({
           messageId: args.messageId,
           metaMessageId: wamid,
         });
-        sampledInfo(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
+        logInfoSampled(`[WhatsApp] Linked local msg ${args.messageId} to wamid ${wamid}`);
       }
 
       return data;
     } catch (error) {
       // Log structured error info
       const err = error as Error & { code?: number; category?: string; retryable?: boolean };
-      console.error("[WhatsApp] Exception during send:", {
+      logError("[WhatsApp] Exception during send:", {
         message: err.message,
         code: err.code,
         category: err.category,
@@ -319,7 +345,7 @@ export const createTemplate = action({
   },
   handler: async (ctx, args) => {
     const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
-    const { accessToken, wabaId } = config;
+    const { accessToken, disableAppSecretProof, wabaId } = config;
     if (!wabaId) {
       throw new Error(
         "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
@@ -334,9 +360,9 @@ export const createTemplate = action({
       components: args.components,
     };
 
-    console.log("Creating Template Payload:", JSON.stringify(payload, null, 2));
+    logDebug("Creating Template Payload:", JSON.stringify(payload, null, 2));
 
-    const createTemplateUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${wabaId}/message_templates`, accessToken);
+    const createTemplateUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${wabaId}/message_templates`, { accessToken });
     const response = await fetch(createTemplateUrl, {
       method: "POST",
       headers: {
@@ -349,7 +375,7 @@ export const createTemplate = action({
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("WhatsApp Template Creation Error:", data);
+      logError("WhatsApp Template Creation Error:", data);
       const err = data?.error;
       const msg = err?.message ?? "Unknown error";
       const code = err?.code;
@@ -373,6 +399,7 @@ export const createTemplate = action({
       language: args.language,
       category: args.category,
       status: "PENDING", // Initial status from Meta is usually PENDING or APPROVED depending on cat
+      content: extractTemplateBodyContent(args.components),
       components: args.components,
       metaTemplateId: data.id,
     });
@@ -387,7 +414,7 @@ export const fetchTemplates = action({
   },
   handler: async (ctx, args) => {
     const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
-    const { accessToken, wabaId, phoneId } = config;
+    const { accessToken, disableAppSecretProof, wabaId, phoneId } = config;
     if (!wabaId) {
       throw new Error(
         "Missing WhatsApp config: set a number with access token in Integrations, or set WHATSAPP_ACCESS_TOKEN and WHATSAPP_WABA_ID in the environment."
@@ -409,7 +436,7 @@ export const fetchTemplates = action({
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("WhatsApp Fetch Templates Error:", data);
+      logError("WhatsApp Fetch Templates Error:", data);
       const err = data.error;
       const code = err?.code;
       const message = err?.message ?? "Unknown error";
@@ -465,18 +492,18 @@ export const fetchTemplates = action({
         const fullTemplates = detailData.data || [];
         for (const ft of fullTemplates) {
           if (ft.name && ft.components && Array.isArray(ft.components) && ft.components.length > 0) {
-            const key = `${ft.name}|${ft.language || ""}`;
+            const key = `${ft.name}|${normalizeTemplateLanguageKey(ft.language)}`;
             componentsByKey.set(key, ft.components);
           }
         }
       } catch (err) {
-        console.warn(`[WhatsApp] Failed to fetch full components for template "${name}":`, err);
+        logWarn(`[WhatsApp] Failed to fetch full components for template "${name}":`, err);
       }
     }
 
     // Merge full components into list items when available
     const enriched = templatesList.map((t) => {
-      const key = `${t.name}|${t.language || ""}`;
+      const key = `${t.name}|${normalizeTemplateLanguageKey(t.language)}`;
       const fullComponents = componentsByKey.get(key);
       if (fullComponents) {
         return { ...t, components: fullComponents };
@@ -494,10 +521,10 @@ export const markAsRead = action({
     phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, disableAppSecretProof, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     try {
-      const markReadUrl = await withAppSecretProof(ctx, `https://graph.facebook.com/v21.0/${phoneId}/messages`, accessToken);
+      const markReadUrl = await withAppSecretProof(ctx, `https://graph.facebook.com/v21.0/${phoneId}/messages`, { accessToken });
       await fetch(markReadUrl, {
         method: "POST",
         headers: {
@@ -511,7 +538,7 @@ export const markAsRead = action({
         }),
       });
     } catch (error) {
-      console.error("Failed to mark message as read:", error);
+      logError("Failed to mark message as read:", error);
     }
   },
 });
@@ -523,7 +550,7 @@ export const getTemplate = action({
   },
   handler: async (ctx, args) => {
     const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
-    const { accessToken, wabaId } = config;
+    const { accessToken, disableAppSecretProof, wabaId } = config;
     if (!wabaId) {
       throw new Error(
         "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
@@ -545,7 +572,7 @@ export const getTemplate = action({
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("WhatsApp Get Template Error:", data);
+      logError("WhatsApp Get Template Error:", data);
       throw new Error(`WhatsApp API Error: ${data.error?.message || "Unknown error"}`);
     }
 
@@ -560,7 +587,7 @@ export const deleteTemplate = action({
   },
   handler: async (ctx, args) => {
     const config = await getWhatsAppConfig(ctx, args.phoneNumberId);
-    const { accessToken, wabaId } = config;
+    const { accessToken, disableAppSecretProof, wabaId } = config;
     if (!wabaId) {
       throw new Error(
         "Missing WABA ID. Set a number with access token in Integrations, or set WHATSAPP_WABA_ID in the environment."
@@ -582,7 +609,7 @@ export const deleteTemplate = action({
     const data = await response.json();
 
     if (!response.ok) {
-      console.error("WhatsApp Delete Template Error:", data);
+      logError("WhatsApp Delete Template Error:", data);
       throw new Error(`WhatsApp API Error: ${data.error?.message || "Unknown error"}`);
     }
 
@@ -598,7 +625,7 @@ export const uploadMedia = action({
     phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, disableAppSecretProof, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
     // 1. Get File URL from Convex
     const fileUrl = await ctx.storage.getUrl(args.storageId);
@@ -615,7 +642,7 @@ export const uploadMedia = action({
     formData.append("messaging_product", "whatsapp");
 
     // 4. Upload to Meta
-    const uploadUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/media`, accessToken);
+    const uploadUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/media`, { accessToken });
     const response = await fetch(uploadUrl, {
       method: "POST",
       headers: { "Authorization": `Bearer ${accessToken}` },
@@ -624,7 +651,7 @@ export const uploadMedia = action({
 
     const data = await response.json();
     if (!response.ok) {
-      console.error("Media Upload Error:", data);
+      logError("Media Upload Error:", data);
 
       // Handle specific error codes
       const errorCode = data.error?.code;
@@ -643,7 +670,7 @@ export const uploadMedia = action({
         ) as Error & { code?: number; category?: string };
         error.code = 190;
         error.category = "AUTH_ERROR";
-        console.error("[WhatsApp] Authentication failed - check access token (Integrations or env)");
+        logError("[WhatsApp] Authentication failed - check access token (Integrations or env)");
         throw error;
       } else if (errorCode === 131047) {
         // Media type not supported
@@ -686,14 +713,14 @@ export const uploadMediaFromUrl = action({
     phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { accessToken, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, disableAppSecretProof, phoneId } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
-    console.log(`[uploadMediaFromUrl] Fetching media from: ${args.url.substring(0, 80)}...`);
+    logDebug(`[uploadMediaFromUrl] Fetching media from: ${args.url.substring(0, 80)}...`);
 
     // 1. Fetch the file from external URL
     const fileRes = await fetch(args.url);
     if (!fileRes.ok) {
-      console.error(`[uploadMediaFromUrl] Failed to fetch: ${fileRes.status} ${fileRes.statusText}`);
+      logError(`[uploadMediaFromUrl] Failed to fetch: ${fileRes.status} ${fileRes.statusText}`);
       throw new Error(`Failed to fetch media from URL: ${fileRes.status} ${fileRes.statusText}`);
     }
 
@@ -702,7 +729,7 @@ export const uploadMediaFromUrl = action({
       fileRes.headers.get("content-type") ||
       (args.type === "video" ? "video/mp4" : "image/jpeg");
 
-    console.log(`[uploadMediaFromUrl] Uploading ${contentType}, size: ${blob.size} bytes`);
+    logDebug(`[uploadMediaFromUrl] Uploading ${contentType}, size: ${blob.size} bytes`);
 
     // 2. Prepare Form Data for WhatsApp Media API
     const formData = new FormData();
@@ -711,7 +738,7 @@ export const uploadMediaFromUrl = action({
     formData.append("messaging_product", "whatsapp");
 
     // 3. Upload to WhatsApp Media API
-    const uploadUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/media`, accessToken);
+    const uploadUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${phoneId}/media`, { accessToken });
     const response = await fetch(uploadUrl, {
       method: "POST",
       headers: { "Authorization": `Bearer ${accessToken}` },
@@ -720,11 +747,11 @@ export const uploadMediaFromUrl = action({
 
     const data = await response.json();
     if (!response.ok) {
-      console.error("[uploadMediaFromUrl] Upload Error:", data);
+      logError("[uploadMediaFromUrl] Upload Error:", data);
       throw new Error(data.error?.message || "Failed to upload media to WhatsApp");
     }
 
-    console.log(`[uploadMediaFromUrl] Success! Media ID: ${data.id}`);
+    logDebug(`[uploadMediaFromUrl] Success! Media ID: ${data.id}`);
     return data.id; // WhatsApp Media ID to use in send requests
   }
 });
@@ -755,12 +782,12 @@ export const uploadTemplateMedia = action({
     const blob = await fileRes.blob();
     const fileLength = blob.size;
 
-    console.log(`[UploadTemplateMedia] Starting upload for ${args.type}, size: ${fileLength}`);
+    logDebug(`[UploadTemplateMedia] Starting upload for ${args.type}, size: ${fileLength}`);
 
     // 2. Start Upload Session
     const sessionUrl = `https://graph.facebook.com/v21.0/${appId}/uploads?file_length=${fileLength}&file_type=${args.type}`;
 
-    const proofSessionUrl = await withAppSecretProof(ctx, sessionUrl, accessToken);
+    const proofSessionUrl = await withAppSecretProof(ctx, sessionUrl, { accessToken });
     const sessionRes = await fetch(proofSessionUrl, {
       method: "POST",
       headers: {
@@ -771,17 +798,17 @@ export const uploadTemplateMedia = action({
     const sessionData = await sessionRes.json();
 
     if (!sessionRes.ok) {
-      console.error("Failed to create upload session:", sessionData);
+      logError("Failed to create upload session:", sessionData);
       throw new Error(sessionData.error?.message || "Failed to create upload session");
     }
 
     const uploadId = sessionData.id;
-    console.log(`[UploadTemplateMedia] Session created: ${uploadId}`);
+    logDebug(`[UploadTemplateMedia] Session created: ${uploadId}`);
 
     // 3. Upload File Content
     const uploadUrl = `https://graph.facebook.com/v21.0/${uploadId}`;
 
-    const proofUploadUrl = await withAppSecretProof(ctx, uploadUrl, accessToken);
+    const proofUploadUrl = await withAppSecretProof(ctx, uploadUrl, { accessToken });
     const uploadRes = await fetch(proofUploadUrl, {
       method: "POST",
       headers: {
@@ -794,11 +821,11 @@ export const uploadTemplateMedia = action({
     const uploadData = await uploadRes.json();
 
     if (!uploadRes.ok) {
-      console.error("Failed to upload file content:", uploadData);
+      logError("Failed to upload file content:", uploadData);
       throw new Error(uploadData.error?.message || "Failed to upload file content");
     }
 
-    console.log(`[UploadTemplateMedia] Upload complete, handle: ${uploadData.h}`);
+    logDebug(`[UploadTemplateMedia] Upload complete, handle: ${uploadData.h}`);
 
     // Return the handle
     return uploadData.h;
@@ -824,7 +851,7 @@ export const uploadExternalTemplateMedia = action({
     }
 
     // 1. Fetch File Content from External URL
-    console.log(`[UploadExternal] Fetching from ${args.url}`);
+    logDebug(`[UploadExternal] Fetching from ${args.url}`);
     const fileRes = await fetch(args.url);
     if (!fileRes.ok) throw new Error(`Failed to fetch external media: ${fileRes.statusText}`);
 
@@ -832,12 +859,12 @@ export const uploadExternalTemplateMedia = action({
     const fileLength = blob.size;
     const fileType = args.type || fileRes.headers.get("content-type") || "image/jpeg";
 
-    console.log(`[UploadExternal] Starting upload for ${fileType}, size: ${fileLength}`);
+    logDebug(`[UploadExternal] Starting upload for ${fileType}, size: ${fileLength}`);
 
     // 2. Start Upload Session
     const sessionUrl = `https://graph.facebook.com/v21.0/${appId}/uploads?file_length=${fileLength}&file_type=${fileType}`;
 
-    const proofSessionUrl = await withAppSecretProof(ctx, sessionUrl, accessToken);
+    const proofSessionUrl = await withAppSecretProof(ctx, sessionUrl, { accessToken });
     const sessionRes = await fetch(proofSessionUrl, {
       method: "POST",
       headers: {
@@ -848,7 +875,7 @@ export const uploadExternalTemplateMedia = action({
     const sessionData = await sessionRes.json();
 
     if (!sessionRes.ok) {
-      console.error("Failed to create upload session:", sessionData);
+      logError("Failed to create upload session:", sessionData);
       throw new Error(sessionData.error?.message || "Failed to create upload session");
     }
 
@@ -857,7 +884,7 @@ export const uploadExternalTemplateMedia = action({
     // 3. Upload File Content
     const uploadUrl = `https://graph.facebook.com/v21.0/${uploadId}`;
 
-    const proofUploadUrl = await withAppSecretProof(ctx, uploadUrl, accessToken);
+    const proofUploadUrl = await withAppSecretProof(ctx, uploadUrl, { accessToken });
     const uploadRes = await fetch(proofUploadUrl, {
       method: "POST",
       headers: {
@@ -870,11 +897,11 @@ export const uploadExternalTemplateMedia = action({
     const uploadData = await uploadRes.json();
 
     if (!uploadRes.ok) {
-      console.error("Failed to upload file content:", uploadData);
+      logError("Failed to upload file content:", uploadData);
       throw new Error(uploadData.error?.message || "Failed to upload file content");
     }
 
-    console.log(`[UploadExternal] Upload complete, handle: ${uploadData.h}`);
+    logDebug(`[UploadExternal] Upload complete, handle: ${uploadData.h}`);
 
     return uploadData.h;
   }
@@ -886,9 +913,9 @@ export const getMediaUrl = action({
     phoneNumberId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { accessToken } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+    const { accessToken, disableAppSecretProof } = await getWhatsAppConfig(ctx, args.phoneNumberId);
 
-    const mediaUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${args.mediaId}`, accessToken);
+    const mediaUrl = await withAppSecretProof(ctx, `${WHATSAPP_API_URL}/${args.mediaId}`, { accessToken });
     const response = await fetch(mediaUrl, {
       headers: { "Authorization": `Bearer ${accessToken}` }
     });
@@ -910,8 +937,8 @@ export const hydrateIncomingMedia = internalAction({
   handler: async (ctx, args) => {
     const attempt = args.attempt ?? 1;
     try {
-      const { accessToken } = await getWhatsAppConfig(ctx, args.phoneNumberId);
-      console.log(`[WhatsApp] hydrateIncomingMedia start mediaId=${args.mediaId} phoneNumberId=${args.phoneNumberId ?? "none"} attempt=${attempt}`);
+      const { accessToken, disableAppSecretProof } = await getWhatsAppConfig(ctx, args.phoneNumberId);
+      logDebug(`[WhatsApp] hydrateIncomingMedia start mediaId=${args.mediaId} phoneNumberId=${args.phoneNumberId ?? "none"} attempt=${attempt}`);
       const downloadUrl = await ctx.runAction(api.whatsapp.getMediaUrl, {
         mediaId: args.mediaId,
         phoneNumberId: args.phoneNumberId,
@@ -929,10 +956,10 @@ export const hydrateIncomingMedia = internalAction({
         messageId: args.messageId,
         storageId,
       });
-      console.log(`[WhatsApp] hydrateIncomingMedia success mediaId=${args.mediaId} attempt=${attempt}`);
+      logDebug(`[WhatsApp] hydrateIncomingMedia success mediaId=${args.mediaId} attempt=${attempt}`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
-      console.error(`[WhatsApp] hydrateIncomingMedia failed mediaId=${args.mediaId} attempt=${attempt}:`, errorMessage);
+      logError(`[WhatsApp] hydrateIncomingMedia failed mediaId=${args.mediaId} attempt=${attempt}:`, errorMessage);
       if (attempt < 3) {
         const delayMs = attempt * 2000;
         await ctx.scheduler.runAfter(delayMs, internal.whatsapp.hydrateIncomingMedia, {
@@ -970,14 +997,14 @@ export const verifyWebhook = internalAction({
   },
   handler: async (ctx, args) => {
     const verifyToken = args.expected_verify_token ?? process.env.WHATSAPP_VERIFY_TOKEN;
-    console.log("[VerifyWebhook] Expected token from:", args.expected_verify_token != null ? "DB" : "env");
-    console.log("[VerifyWebhook] Received:", { mode: args.mode, token: args.verify_token });
+    logDebug("[VerifyWebhook] Expected token from:", args.expected_verify_token != null ? "DB" : "env");
+    logDebug("[VerifyWebhook] Received:", { mode: args.mode, token: args.verify_token });
 
     if (args.mode === "subscribe" && verifyToken && args.verify_token === verifyToken) {
-      console.log("Webhook Verified!");
+      logDebug("Webhook Verified!");
       return { success: true, challenge: args.challenge };
     } else {
-      console.error("Webhook Verification Failed");
+      logError("Webhook Verification Failed");
       return { success: false };
     }
   }
@@ -1005,9 +1032,9 @@ export const processWebhookAction = internalAction({
   },
   handler: async (ctx, args) => {
     const changes = extractWebhookChanges(args.body);
-    console.log(`[Webhook Action] Processing payload changes=${changes.length}`);
+    logDebug(`[Webhook Action] Processing payload changes=${changes.length}`);
     if (changes.length === 0) {
-      console.warn("[Webhook Action] No entries found in payload");
+      logWarn("[Webhook Action] No entries found in payload");
       await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
         body: args.body,
         processingStatus: "ignored_no_messages",
@@ -1018,59 +1045,186 @@ export const processWebhookAction = internalAction({
     }
 
     for (const change of changes) {
-        const value = change.value;
-        const field = change.field;
-        if (!value) {
-          console.warn(`[Webhook Action] Skipping change with empty value. field=${field ?? "unknown"}`);
-          await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-            body: change,
-            processingStatus: "failed",
-            eventType: field ?? "unknown",
-            note: "Change has no value",
-          });
-          continue;
-        }
-
-        const resolvedNumber = await resolveInboundPhoneNumberId(ctx, value?.metadata?.phone_number_id);
-        const resolvedPhoneNumberId = resolvedNumber.phoneNumberId;
-        const businessPhoneId = resolvedPhoneNumberId ?? "unknown";
-        const messages = Array.isArray(value.messages) ? value.messages : [];
-        const statuses = Array.isArray(value.statuses) ? value.statuses : [];
-        const hasMessages = messages.length > 0;
-        const hasStatuses = statuses.length > 0;
-        const metadataPhoneNumberId =
-          typeof value?.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : undefined;
-        const metadataDisplayPhoneNumber =
-          typeof value?.metadata?.display_phone_number === "string" ? value.metadata.display_phone_number : undefined;
-        const metadataBusinessAccountId =
-          typeof change?.entryId === "string" ? change.entryId : undefined;
-
-        if (metadataPhoneNumberId) {
-          await ctx.runMutation(internal.whatsappNumbers.upsertFromWebhookMetadata, {
-            businessNumberId: metadataPhoneNumberId,
-            displayPhoneNumber: metadataDisplayPhoneNumber,
-            businessAccountId: metadataBusinessAccountId,
-          });
-        }
-
-        // Validate: when using metadata.phone_number_id (not fallback), number must be in whatsapp_numbers
-        if (resolvedPhoneNumberId && !resolvedNumber.usedFallback) {
-          const numberInDb = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
-            businessNumberId: resolvedPhoneNumberId,
-          });
-          if (!numberInDb) {
-            console.warn(
-              `[Webhook Action] Number ${resolvedPhoneNumberId} (${metadataDisplayPhoneNumber ?? "unknown"}) is not configured. Add it in Integrations and set access token. Sending replies will fail until configured.`
-            );
-          }
-        }
-
-        console.log(
-          `[Webhook Action] field="${field}" businessId="${businessPhoneId}" fallback=${resolvedNumber.usedFallback} hasMessages=${hasMessages} messagesCount=${messages.length} hasStatuses=${hasStatuses} statusesCount=${statuses.length} metadataPhoneNumberId=${metadataPhoneNumberId ?? "none"}`
-        );
+      const value = change.value;
+      const field = change.field;
+      if (!value) {
+        logWarn(`[Webhook Action] Skipping change with empty value. field=${field ?? "unknown"}`);
         await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
           body: change,
-          processingStatus: "received",
+          processingStatus: "failed",
+          eventType: field ?? "unknown",
+          note: "Change has no value",
+        });
+        continue;
+      }
+
+      const resolvedNumber = await resolveInboundPhoneNumberId(ctx, value?.metadata?.phone_number_id);
+      const resolvedPhoneNumberId = resolvedNumber.phoneNumberId;
+      const businessPhoneId = resolvedPhoneNumberId ?? "unknown";
+      const messages = Array.isArray(value.messages) ? value.messages : [];
+      const statuses = Array.isArray(value.statuses) ? value.statuses : [];
+      const hasMessages = messages.length > 0;
+      const hasStatuses = statuses.length > 0;
+      const metadataPhoneNumberId =
+        typeof value?.metadata?.phone_number_id === "string" ? value.metadata.phone_number_id : undefined;
+      const metadataDisplayPhoneNumber =
+        typeof value?.metadata?.display_phone_number === "string" ? value.metadata.display_phone_number : undefined;
+      const metadataBusinessAccountId =
+        typeof change?.entryId === "string" ? change.entryId : undefined;
+
+      if (metadataPhoneNumberId) {
+        await ctx.runMutation(internal.whatsappNumbers.upsertFromWebhookMetadata, {
+          businessNumberId: metadataPhoneNumberId,
+          displayPhoneNumber: metadataDisplayPhoneNumber,
+          businessAccountId: metadataBusinessAccountId,
+        });
+      }
+
+      // Validate: when using metadata.phone_number_id (not fallback), number must be in whatsapp_numbers
+      if (resolvedPhoneNumberId && !resolvedNumber.usedFallback) {
+        const numberInDb = await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
+          businessNumberId: resolvedPhoneNumberId,
+        });
+        if (!numberInDb) {
+          logWarn(
+            `[Webhook Action] Number ${resolvedPhoneNumberId} (${metadataDisplayPhoneNumber ?? "unknown"}) is not configured. Add it in Integrations and set access token. Sending replies will fail until configured.`
+          );
+        }
+      }
+
+      logDebug(
+        `[Webhook Action] field="${field}" businessId="${businessPhoneId}" fallback=${resolvedNumber.usedFallback} hasMessages=${hasMessages} messagesCount=${messages.length} hasStatuses=${hasStatuses} statusesCount=${statuses.length} metadataPhoneNumberId=${metadataPhoneNumberId ?? "none"}`
+      );
+      await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+        body: change,
+        processingStatus: "received",
+        eventType: field ?? "unknown",
+        resolvedPhoneNumberId: resolvedPhoneNumberId,
+        fallbackUsed: resolvedNumber.usedFallback,
+        hasMessages,
+        messagesCount: messages.length,
+        hasStatuses,
+        statusesCount: statuses.length,
+        metadataPhoneNumberId,
+        metadataDisplayPhoneNumber,
+      });
+
+      if (hasMessages) {
+        logDebug(`[Webhook Action] Processing ${messages.length} messages`);
+        for (const message of messages) {
+          let content = message.text?.body || "";
+          let mediaId = undefined;
+
+          if (["image", "video", "audio", "document", "voice"].includes(message.type)) {
+            const mediaData = message[message.type];
+            mediaId = mediaData?.id;
+            content = mediaData?.caption || "";
+          }
+
+          const contactPhone = message.from || value.contacts?.[0]?.wa_id || "unknown_contact";
+          const contactName = value.contacts?.[0]?.profile?.name || contactPhone;
+          const messageTimestamp = Number.parseInt(message.timestamp, 10);
+          let messageId;
+          try {
+            messageId = await ctx.runMutation(internal.messages.saveMessage, {
+              contactId: contactPhone,
+              contactName,
+              contactPhone,
+              phoneNumberId: resolvedPhoneNumberId,
+              direction: "inbound",
+              type: message.type,
+              content,
+              metaMessageId: message.id,
+              timestamp: Number.isFinite(messageTimestamp) ? messageTimestamp * 1000 : Date.now(),
+              status: "delivered",
+              mediaId,
+            });
+            await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+              body: message,
+              processingStatus: "saved",
+              eventType: "message",
+              resolvedPhoneNumberId: resolvedPhoneNumberId,
+              fallbackUsed: resolvedNumber.usedFallback,
+              hasMessages: true,
+              messagesCount: 1,
+              hasStatuses,
+              statusesCount: statuses.length,
+              metadataPhoneNumberId,
+              metadataDisplayPhoneNumber,
+              note: `Saved message ${message.id}`,
+            });
+          } catch (saveError) {
+            const errText = saveError instanceof Error ? saveError.message : String(saveError);
+            await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+              body: message,
+              processingStatus: "failed",
+              eventType: "message",
+              resolvedPhoneNumberId: resolvedPhoneNumberId,
+              fallbackUsed: resolvedNumber.usedFallback,
+              hasMessages: true,
+              messagesCount: 1,
+              hasStatuses,
+              statusesCount: statuses.length,
+              metadataPhoneNumberId,
+              metadataDisplayPhoneNumber,
+              note: errText,
+            });
+            throw saveError;
+          }
+
+          if (mediaId) {
+            await ctx.scheduler.runAfter(0, internal.whatsapp.hydrateIncomingMedia, {
+              messageId,
+              mediaId,
+              phoneNumberId: resolvedPhoneNumberId,
+              attempt: 1,
+            });
+          }
+
+          const chat = await ctx.runQuery(internal.chat.getChatByPhone, {
+            phone: contactPhone,
+            phoneNumberId: resolvedPhoneNumberId,
+          });
+          if (chat?.aiMode) {
+            const aiConfig = await ctx.runQuery(internal.ai_config.getInternalConfig, {
+              phoneNumberId: resolvedPhoneNumberId,
+            });
+            if (aiConfig?.isActive) {
+              await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+                body: { chatId: chat._id, contactPhone, userMessage: content },
+                processingStatus: "received",
+                eventType: "agent_dispatch",
+                resolvedPhoneNumberId,
+                fallbackUsed: false,
+                note: "Agent scheduled for reply",
+              });
+              await ctx.scheduler.runAfter(0, internal.agent.generateResponse, {
+                chatId: chat._id,
+                contactPhone,
+                userMessage: content,
+              });
+            } else {
+              await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+                body: { chatId: chat._id, contactPhone, userMessage: content },
+                processingStatus: "received",
+                eventType: "agent_dispatch_skipped",
+                resolvedPhoneNumberId,
+                fallbackUsed: false,
+                note: "chat.aiMode=true but per-number agent disabled",
+              });
+            }
+          }
+        }
+      } else {
+        logDebug(
+          `[Webhook Action] Status-only or non-message payload for field=${field ?? "unknown"} messagesCount=${messages.length} statusesCount=${statuses.length}`
+        );
+        const statusNote = hasStatuses
+          ? "Status-only payload; processing status updates"
+          : "Change has no value.messages (metadata-only or empty)";
+        await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
+          body: change,
+          processingStatus: hasStatuses ? "received" : "ignored_no_messages",
           eventType: field ?? "unknown",
           resolvedPhoneNumberId: resolvedPhoneNumberId,
           fallbackUsed: resolvedNumber.usedFallback,
@@ -1080,194 +1234,67 @@ export const processWebhookAction = internalAction({
           statusesCount: statuses.length,
           metadataPhoneNumberId,
           metadataDisplayPhoneNumber,
+          note: statusNote,
         });
+      }
 
-        if (hasMessages) {
-          console.log(`[Webhook Action] Processing ${messages.length} messages`);
-          for (const message of messages) {
-            let content = message.text?.body || "";
-            let mediaId = undefined;
+      if (hasStatuses) {
+        logDebug(`[Webhook Action] Processing ${statuses.length} status updates`);
+        for (const status of statuses) {
+          const msgSuccess = await ctx.runMutation(internal.messages.updateMessageStatus, {
+            metaMessageId: status.id,
+            status: status.status,
+          });
+          const campaignSuccess = await ctx.runMutation(internal.campaigns.updateMessageStatus, {
+            metaMessageId: status.id,
+            status: status.status,
+          });
 
-            if (["image", "video", "audio", "document", "voice"].includes(message.type)) {
-              const mediaData = message[message.type];
-              mediaId = mediaData?.id;
-              content = mediaData?.caption || "";
+          if (!msgSuccess && !campaignSuccess) {
+            const attempt = args.attempt || 1;
+            if (attempt < 3) {
+              logDebug(
+                `[Webhook] Message ${status.id} not found. Scheduling targeted status retry #${attempt + 1}`
+              );
+              const retryBody = {
+                object: (args.body as any)?.object,
+                entry: [
+                  {
+                    changes: [
+                      {
+                        field: field ?? "messages",
+                        value: {
+                          metadata: value?.metadata,
+                          statuses: [status],
+                        },
+                      },
+                    ],
+                  },
+                ],
+              };
+              await ctx.scheduler.runAfter(2000, internal.whatsapp.processWebhookAction, {
+                body: retryBody,
+                attempt: attempt + 1,
+              });
+              continue;
             }
-
-            const contactPhone = message.from || value.contacts?.[0]?.wa_id || "unknown_contact";
-            const contactName = value.contacts?.[0]?.profile?.name || contactPhone;
-            const messageTimestamp = Number.parseInt(message.timestamp, 10);
-            let messageId;
-            try {
-              messageId = await ctx.runMutation(internal.messages.saveMessage, {
-                contactId: contactPhone,
-                contactName,
-                contactPhone,
-                phoneNumberId: resolvedPhoneNumberId,
-                direction: "inbound",
-                type: message.type,
-                content,
-                metaMessageId: message.id,
-                timestamp: Number.isFinite(messageTimestamp) ? messageTimestamp * 1000 : Date.now(),
-                status: "delivered",
-                mediaId,
-              });
-              await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-                body: message,
-                processingStatus: "saved",
-                eventType: "message",
-                resolvedPhoneNumberId: resolvedPhoneNumberId,
-                fallbackUsed: resolvedNumber.usedFallback,
-                hasMessages: true,
-                messagesCount: 1,
-                hasStatuses,
-                statusesCount: statuses.length,
-                metadataPhoneNumberId,
-                metadataDisplayPhoneNumber,
-                note: `Saved message ${message.id}`,
-              });
-            } catch (saveError) {
-              const errText = saveError instanceof Error ? saveError.message : String(saveError);
-              await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-                body: message,
-                processingStatus: "failed",
-                eventType: "message",
-                resolvedPhoneNumberId: resolvedPhoneNumberId,
-                fallbackUsed: resolvedNumber.usedFallback,
-                hasMessages: true,
-                messagesCount: 1,
-                hasStatuses,
-                statusesCount: statuses.length,
-                metadataPhoneNumberId,
-                metadataDisplayPhoneNumber,
-                note: errText,
-              });
-              throw saveError;
-            }
-
-            if (mediaId) {
-              await ctx.scheduler.runAfter(0, internal.whatsapp.hydrateIncomingMedia, {
-                messageId,
-                mediaId,
-                phoneNumberId: resolvedPhoneNumberId,
-                attempt: 1,
-              });
-            }
-
-            const chat = await ctx.runQuery(internal.chat.getChatByPhone, {
-              phone: contactPhone,
-              phoneNumberId: resolvedPhoneNumberId,
-            });
-            if (chat?.aiMode) {
-              const aiConfig = await ctx.runQuery(internal.ai_config.getInternalConfig, {
-                phoneNumberId: resolvedPhoneNumberId,
-              });
-              if (aiConfig?.isActive) {
-                await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-                  body: { chatId: chat._id, contactPhone, userMessage: content },
-                  processingStatus: "received",
-                  eventType: "agent_dispatch",
-                  resolvedPhoneNumberId,
-                  fallbackUsed: false,
-                  note: "Agent scheduled for reply",
-                });
-                await ctx.scheduler.runAfter(0, internal.agent.generateResponse, {
-                  chatId: chat._id,
-                  contactPhone,
-                  userMessage: content,
-                });
-              } else {
-                await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-                  body: { chatId: chat._id, contactPhone, userMessage: content },
-                  processingStatus: "received",
-                  eventType: "agent_dispatch_skipped",
-                  resolvedPhoneNumberId,
-                  fallbackUsed: false,
-                  note: "chat.aiMode=true but per-number agent disabled",
-                });
-              }
-            }
+            logWarn(`[Webhook] Message ${status.id} not found after 3 attempts`);
+          } else {
+            logDebug(`[Webhook Action] Status updated for message ${status.id} -> ${status.status}`);
           }
-        } else {
-          console.log(
-            `[Webhook Action] Status-only or non-message payload for field=${field ?? "unknown"} messagesCount=${messages.length} statusesCount=${statuses.length}`
-          );
-          const statusNote = hasStatuses
-            ? "Status-only payload; processing status updates"
-            : "Change has no value.messages (metadata-only or empty)";
-          await ctx.runMutation(internal.webhookEvents.logWhatsappProcessing, {
-            body: change,
-            processingStatus: hasStatuses ? "received" : "ignored_no_messages",
-            eventType: field ?? "unknown",
-            resolvedPhoneNumberId: resolvedPhoneNumberId,
-            fallbackUsed: resolvedNumber.usedFallback,
-            hasMessages,
-            messagesCount: messages.length,
-            hasStatuses,
-            statusesCount: statuses.length,
-            metadataPhoneNumberId,
-            metadataDisplayPhoneNumber,
-            note: statusNote,
+        }
+      }
+
+      if (field === "message_template_status_update") {
+        const templateUpdate = value;
+        if (templateUpdate?.message_template_name && templateUpdate?.event) {
+          await ctx.runMutation((internal as any).templates.updateStatus, {
+            name: templateUpdate.message_template_name,
+            status: templateUpdate.event.toUpperCase(),
+            phoneNumberId: resolvedPhoneNumberId,
           });
         }
-
-        if (hasStatuses) {
-          console.log(`[Webhook Action] Processing ${statuses.length} status updates`);
-          for (const status of statuses) {
-            const msgSuccess = await ctx.runMutation(internal.messages.updateMessageStatus, {
-              metaMessageId: status.id,
-              status: status.status,
-            });
-            const campaignSuccess = await ctx.runMutation(internal.campaigns.updateMessageStatus, {
-              metaMessageId: status.id,
-              status: status.status,
-            });
-
-            if (!msgSuccess && !campaignSuccess) {
-              const attempt = args.attempt || 1;
-              if (attempt < 3) {
-                console.log(
-                  `[Webhook] Message ${status.id} not found. Scheduling targeted status retry #${attempt + 1}`
-                );
-                const retryBody = {
-                  object: (args.body as any)?.object,
-                  entry: [
-                    {
-                      changes: [
-                        {
-                          field: field ?? "messages",
-                          value: {
-                            metadata: value?.metadata,
-                            statuses: [status],
-                          },
-                        },
-                      ],
-                    },
-                  ],
-                };
-                await ctx.scheduler.runAfter(2000, internal.whatsapp.processWebhookAction, {
-                  body: retryBody,
-                  attempt: attempt + 1,
-                });
-                continue;
-              }
-              console.warn(`[Webhook] Message ${status.id} not found after 3 attempts`);
-            } else {
-              console.log(`[Webhook Action] Status updated for message ${status.id} -> ${status.status}`);
-            }
-          }
-        }
-
-        if (field === "message_template_status_update") {
-          const templateUpdate = value;
-          if (templateUpdate?.message_template_name && templateUpdate?.event) {
-            await ctx.runMutation((internal as any).templates.updateStatus, {
-              name: templateUpdate.message_template_name,
-              status: templateUpdate.event.toUpperCase(),
-              phoneNumberId: resolvedPhoneNumberId,
-            });
-          }
-        }
+      }
     }
   }
 });

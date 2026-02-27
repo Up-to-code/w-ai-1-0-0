@@ -42,9 +42,10 @@ import type { Id } from "../../../../../convex/_generated/dataModel"
 import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 import { toast } from "sonner"
 import { toUserSafeConvexMessage } from "@/lib/convexErrors"
+import { runConvexActionSafe } from "@/lib/convexActionSafe"
 
 export default function NewCampaignPage() {
-    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
+    const enableExtendedCampaignApis = true; // Feature flag removed
     const router = useRouter()
     const convex = useConvex()
     const { isAdmin } = useAuth()
@@ -116,12 +117,13 @@ export default function NewCampaignPage() {
     const [isTemplateValidationLoading, setIsTemplateValidationLoading] = useState(false)
     const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
     const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
+    const [templateSyncWarning, setTemplateSyncWarning] = useState<string | null>(null)
     const [runtimeInfo, setRuntimeInfo] = useState<any | null>(null)
     const [runtimeInfoUnavailable, setRuntimeInfoUnavailable] = useState(false)
     const contacts = useQuery(api.contacts.list, { limit: 1000 }) as any[] | undefined
 
     const createCampaign = useMutation(api.campaigns.create) as any
-    const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
+    const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
     const [isSubmitting, setIsSubmitting] = useState(false)
 
     // Derived Stats
@@ -158,7 +160,7 @@ export default function NewCampaignPage() {
     const readinessBlockingMessage =
         isTemplateReadinessHardBlocked
             ? (sendReadiness?.recommendedAction as string | undefined) ||
-              "Cannot sync/send templates for this number until sending readiness issues are resolved."
+            "Cannot sync/send templates for this number until sending readiness issues are resolved."
             : null
     const optionalExtendedApisUnavailable =
         scopedTemplatesQuery.unavailable ||
@@ -168,38 +170,48 @@ export default function NewCampaignPage() {
     const strictTemplateChecksEnabled = !templateCriticalApisUnavailable
 
     const triggerScopedTemplateSync = useCallback(async (force: boolean = false) => {
-        if (!enableExtendedCampaignApis) {
-            setTemplateSyncError("مزامنة القوالب المخصصة غير مفعلة حالياً. فعّل NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS=1 بعد نشر دوال Convex على hardy-gopher-480.")
-            return
-        }
         if (!selectedPhoneNumberId) return
         if (isTemplateReadinessHardBlocked) {
             setTemplateSyncError(readinessBlockingMessage || "Cannot sync templates for this number until number auth/token setup is fixed.")
             return
         }
+        if (isTemplateAuthFailed) {
+            setTemplateSyncError("لا يمكن مزامنة القوالب لهذا الرقم حتى إعادة ربط Access Token من صفحة الإعدادات والربط.")
+            return
+        }
         if (!force && !shouldSyncScopedTemplates(selectedPhoneNumberId)) return
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
+        setTemplateSyncWarning(null)
         try {
-            await syncScopedTemplatesForNumber({ phoneNumberId: selectedPhoneNumberId })
+            const fallbackResult = await runConvexActionSafe(syncTemplatesForNumber as any, {
+                phoneNumberId: selectedPhoneNumberId,
+            }, { actionName: "templates:syncFromMeta" })
+            if (!fallbackResult.ok) {
+                setTemplateSyncError(
+                    fallbackResult.unavailable
+                        ? "دالة مزامنة القوالب غير متاحة على نسخة Convex الحالية. قم بنشر backend ثم أعد المحاولة."
+                        : (fallbackResult.message || "تعذر مزامنة القوالب.")
+                )
+                return
+            }
+            if (enableExtendedCampaignApis) {
+                setTemplateSyncWarning("تمت مزامنة القوالب عبر المسار المتوافق مع هذه النسخة.")
+            }
             markScopedTemplatesSynced(selectedPhoneNumberId)
         } catch (error) {
             const message = error instanceof Error ? error.message : String(error)
-            const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
-            if (missingScopedSync) {
-                setTemplateSyncError("دالة مزامنة القوالب غير متاحة على نسخة Convex الحالية. لا يمكن متابعة إنشاء الحملة حتى نشر الدالة المطلوبة.")
-            } else {
-                setTemplateSyncError(message || "تعذر مزامنة القوالب.")
-            }
+            setTemplateSyncError(message || "تعذر مزامنة القوالب.")
         } finally {
             setIsSyncingTemplates(false)
         }
     }, [
         enableExtendedCampaignApis,
+        isTemplateAuthFailed,
         selectedPhoneNumberId,
         isTemplateReadinessHardBlocked,
         readinessBlockingMessage,
-        syncScopedTemplatesForNumber,
+        syncTemplatesForNumber,
     ])
 
     useEffect(() => {
@@ -221,6 +233,7 @@ export default function NewCampaignPage() {
         previousPhoneNumberIdRef.current = selectedPhoneNumberId
         setTemplateValidation(null)
         setTemplateSyncError(null)
+        setTemplateSyncWarning(null)
     }, [selectedPhoneNumberId, selectedTemplate])
 
     useEffect(() => {
@@ -254,18 +267,7 @@ export default function NewCampaignPage() {
                 }
                 return
             }
-            if (!strictTemplateChecksEnabled) {
-                if (!cancelled) {
-                    setTemplateValidation({
-                        ok: false,
-                        reasonCode: "MISSING_REQUIRED_APIS",
-                        message: "لا يمكن التحقق من القالب لأن واجهات Convex المطلوبة غير متاحة حالياً على هذه النسخة.",
-                        suggestedAction: "انشر دوال الحملات/القوالب على hardy-gopher-480 ثم أعد المحاولة.",
-                    })
-                    setIsTemplateValidationLoading(false)
-                }
-                return
-            }
+            // Even if optional health/readiness APIs are unavailable, still try validation directly
             if (!cancelled) {
                 setIsTemplateValidationLoading(true)
             }
@@ -347,16 +349,17 @@ export default function NewCampaignPage() {
     const handleSubmit = async () => {
         if (testBypassValidationError || testContactOverflowWarning) return
         if (!selectedPhoneNumberId || !selectedTemplate?._id) return
-        if (templateCriticalApisUnavailable) {
-            toast.error("لا يمكن إنشاء الحملة الآن لأن واجهات التحقق الأساسية غير متاحة على نسخة الخادم الحالية.")
-            return
-        }
         if (isTemplateReadinessHardBlocked || isTemplateAuthFailed || !!templateSyncError) {
             toast.error("لا يمكن إنشاء الحملة قبل إصلاح حالة الرقم/القوالب لهذا الرقم.")
             return
         }
-        if (isTemplateValidationLoading || !templateValidation?.ok) {
-            toast.error("التحقق من القالب لم يكتمل أو فشل. أصلح المشكلة ثم أعد المحاولة.")
+        if (isTemplateValidationLoading) {
+            toast.error("جاري التحقق من القالب، انتظر لحظة ثم أعد المحاولة.")
+            return
+        }
+        // Allow submit if validation passed, or if validation couldn't run due to unavailable APIs
+        if (!templateValidation?.ok && !templateCriticalApisUnavailable) {
+            toast.error("التحقق من القالب فشل. أصلح المشكلة ثم أعد المحاولة.")
             return
         }
         setIsSubmitting(true)
@@ -459,17 +462,15 @@ export default function NewCampaignPage() {
                     {steps.map((step) => (
                         <div
                             key={step.id}
-                            className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-300 ${
-                                currentStep === step.id 
-                                    ? "bg-primary text-primary-foreground" 
-                                    : currentStep > step.id 
-                                        ? "bg-muted text-foreground"
-                                        : "text-muted-foreground"
-                            }`}
+                            className={`flex items-center gap-3 p-3 rounded-lg transition-all duration-300 ${currentStep === step.id
+                                ? "bg-primary text-primary-foreground"
+                                : currentStep > step.id
+                                    ? "bg-muted text-foreground"
+                                    : "text-muted-foreground"
+                                }`}
                         >
-                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${
-                                currentStep === step.id ? "bg-white/20" : "bg-muted-foreground/10"
-                            }`}>
+                            <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${currentStep === step.id ? "bg-white/20" : "bg-muted-foreground/10"
+                                }`}>
                                 {currentStep > step.id ? <CheckCircle2 className="h-5 w-5" /> : step.icon}
                             </div>
                             <span className="font-medium">{step.title}</span>
@@ -513,7 +514,7 @@ export default function NewCampaignPage() {
                                             <p className="text-xs text-muted-foreground">سيتم إرسال رسائل الحملة من هذا الرقم</p>
                                         </div>
                                     )}
-                                    
+
                                     <SchedulePicker
                                         value={scheduledAt}
                                         onChange={(datetime) => setScheduledAt(datetime || "")}
@@ -522,12 +523,11 @@ export default function NewCampaignPage() {
 
                                     {/* Recurrence Section - Collapsible */}
                                     <div className="space-y-4 pt-6 border-t mt-6">
-                                        <div 
-                                            className={`p-6 border-2 rounded-lg cursor-pointer transition-all ${
-                                                recurrenceCronSpec 
-                                                    ? 'border-primary bg-primary/5' 
-                                                    : 'border-border hover:border-primary/50'
-                                            }`}
+                                        <div
+                                            className={`p-6 border-2 rounded-lg cursor-pointer transition-all ${recurrenceCronSpec
+                                                ? 'border-primary bg-primary/5'
+                                                : 'border-border hover:border-primary/50'
+                                                }`}
                                             onClick={() => {
                                                 if (!recurrenceCronSpec) {
                                                     // Set default daily at 9 AM if enabling
@@ -546,9 +546,8 @@ export default function NewCampaignPage() {
                                             }}
                                         >
                                             <div className="flex items-center gap-3 mb-3">
-                                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${
-                                                    recurrenceCronSpec ? 'border-primary' : 'border-muted-foreground'
-                                                }`}>
+                                                <div className={`w-6 h-6 rounded-full border-2 flex items-center justify-center shrink-0 ${recurrenceCronSpec ? 'border-primary' : 'border-muted-foreground'
+                                                    }`}>
                                                     {recurrenceCronSpec && <div className="w-3 h-3 rounded-full bg-primary" />}
                                                 </div>
                                                 <div className="flex-1">
@@ -571,8 +570,8 @@ export default function NewCampaignPage() {
                                                 )}
                                             </div>
                                             <p className="text-sm text-muted-foreground mr-9">
-                                                {recurrenceCronSpec 
-                                                    ? "الحملة ستعيد الإرسال تلقائياً حسب الجدولة" 
+                                                {recurrenceCronSpec
+                                                    ? "الحملة ستعيد الإرسال تلقائياً حسب الجدولة"
                                                     : "إرسال الحملة بشكل متكرر (يومي، أسبوعي، شهري، سنوي)"}
                                             </p>
                                         </div>
@@ -592,7 +591,7 @@ export default function NewCampaignPage() {
                                             <Shield className="h-5 w-5 text-green-600" />
                                             <Label className="text-base font-semibold">حماية من الحظر</Label>
                                         </div>
-                                        
+
                                         <div className="bg-green-50 dark:bg-green-900/10 border border-green-200 dark:border-green-900/30 rounded-lg p-4 space-y-4">
                                             <div className="flex items-center justify-between">
                                                 <div className="space-y-1">
@@ -603,18 +602,18 @@ export default function NewCampaignPage() {
                                                 </div>
                                                 <Switch
                                                     checked={sendingConfig.skipRecentlyContacted}
-                                                    onCheckedChange={(checked) => 
+                                                    onCheckedChange={(checked) =>
                                                         setSendingConfig(prev => ({ ...prev, skipRecentlyContacted: checked }))
                                                     }
                                                 />
                                             </div>
-                                            
+
                                             {sendingConfig.skipRecentlyContacted && (
                                                 <div className="flex items-center gap-3 pr-4">
                                                     <Label className="text-sm text-muted-foreground whitespace-nowrap">خلال:</Label>
                                                     <select
                                                         value={sendingConfig.recentContactHours}
-                                                        onChange={(e) => 
+                                                        onChange={(e) =>
                                                             setSendingConfig(prev => ({ ...prev, recentContactHours: Number(e.target.value) }))
                                                         }
                                                         className="h-9 px-3 rounded-lg border bg-background text-sm"
@@ -648,7 +647,7 @@ export default function NewCampaignPage() {
                                                             min={1}
                                                             max={80}
                                                             value={sendingConfig.messagesPerSecond}
-                                                            onChange={(e) => 
+                                                            onChange={(e) =>
                                                                 setSendingConfig(prev => ({ ...prev, messagesPerSecond: Number(e.target.value) }))
                                                             }
                                                             className="h-9"
@@ -664,7 +663,7 @@ export default function NewCampaignPage() {
                                                             min={50}
                                                             max={5000}
                                                             value={sendingConfig.delayBetweenMessages}
-                                                            onChange={(e) => 
+                                                            onChange={(e) =>
                                                                 setSendingConfig(prev => ({ ...prev, delayBetweenMessages: Number(e.target.value) }))
                                                             }
                                                             className="h-9"
@@ -681,7 +680,7 @@ export default function NewCampaignPage() {
                                                         min={0}
                                                         max={5}
                                                         value={sendingConfig.maxRetries}
-                                                        onChange={(e) => 
+                                                        onChange={(e) =>
                                                             setSendingConfig(prev => ({ ...prev, maxRetries: Number(e.target.value) }))
                                                         }
                                                         className="h-9 w-24"
@@ -957,6 +956,11 @@ export default function NewCampaignPage() {
                                                 تعذر مزامنة القوالب. حاول مرة أخرى. {templateSyncError}
                                             </div>
                                         )}
+                                        {templateSyncWarning && (
+                                            <div className="rounded-lg border border-amber-300/50 bg-amber-50 p-3 text-xs text-amber-900 dark:bg-amber-900/20 dark:text-amber-300">
+                                                {templateSyncWarning}
+                                            </div>
+                                        )}
 
                                         <ScrollArea className="h-[400px] pr-4">
                                             <div className="space-y-3">
@@ -965,7 +969,7 @@ export default function NewCampaignPage() {
                                                         اختر رقم إرسال أولاً لعرض القوالب المرتبطة به.
                                                     </div>
                                                 ) : !templates ? (
-                                                    [1,2,3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)
+                                                    [1, 2, 3].map(i => <div key={i} className="h-24 bg-muted animate-pulse rounded-lg" />)
                                                 ) : templates.length === 0 ? (
                                                     <div className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground space-y-3">
                                                         <p>لا توجد قوالب معتمدة مرتبطة بهذا الرقم بعد.</p>
@@ -1062,10 +1066,10 @@ export default function NewCampaignPage() {
                                                     <div className="text-sm font-semibold">W-AI Demo</div>
                                                 </div>
                                             </div>
-                                            
+
                                             {/* Message Area */}
                                             <div className="flex-1 p-3 overflow-y-auto bg-[url('https://user-images.githubusercontent.com/15075759/28719144-86dc0f70-73b1-11e7-911d-60d70fcded21.png')] bg-repeat opacity-90">
-                                                <TemplatePreview 
+                                                <TemplatePreview
                                                     template={selectedTemplate}
                                                     className="max-w-[85%]"
                                                 />
@@ -1198,7 +1202,7 @@ export default function NewCampaignPage() {
                                 >
                                     السابق
                                 </Button>
-                                
+
                                 {currentStep < 3 ? (
                                     <Button
                                         onClick={() => setCurrentStep(currentStep + 1)}

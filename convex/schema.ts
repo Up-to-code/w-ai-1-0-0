@@ -35,6 +35,12 @@ export default defineSchema({
     lastAuthErrorCode: v.optional(v.number()),
     lastAuthErrorMessage: v.optional(v.string()),
     lastAuthErrorAt: v.optional(v.number()),
+    lastWabaValidationAt: v.optional(v.number()),
+    wabaValidationStatus: v.optional(v.union(
+      v.literal("valid"),
+      v.literal("invalid"),
+      v.literal("pending")
+    )),
     createdAt: v.number(),
   }).index("by_business_number_id", ["businessNumberId"]),
 
@@ -410,6 +416,295 @@ export default defineSchema({
     items: v.any(), // JSON array of items
     createdAt: v.number(),
   }).index("by_status", ["status"]),
+
+  admin_seed_runs: defineTable({
+    status: v.union(v.literal("success"), v.literal("failed"), v.literal("dry_run")),
+    summary: v.any(),
+    startedAt: v.number(),
+    finishedAt: v.number(),
+    durationMs: v.number(),
+    error: v.optional(v.string()),
+  }).index("by_started_at", ["startedAt"]),
+
+  admin_users: defineTable({
+    name: v.optional(v.string()),
+    email: v.optional(v.string()),
+    phone: v.optional(v.string()),
+    role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user")),
+    tokenIdentifier: v.optional(v.string()),
+    password: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_email", ["email"])
+    .index("by_phone", ["phone"])
+    .index("by_token", ["tokenIdentifier"]),
+
+  admin_whatsapp_numbers: defineTable({
+    businessAccountId: v.string(),
+    businessNumberId: v.string(),
+    phone: v.string(),
+    name: v.string(),
+    accessToken: v.optional(v.string()),
+    tokenStatus: v.optional(v.union(
+      v.literal("connected"),
+      v.literal("token_invalid"),
+      v.literal("auth_failed")
+    )),
+    lastAuthErrorCode: v.optional(v.number()),
+    lastAuthErrorMessage: v.optional(v.string()),
+    lastAuthErrorAt: v.optional(v.number()),
+    isActive: v.optional(v.boolean()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_business_number_id", ["businessNumberId"])
+    .index("by_phone", ["phone"]),
+
+  admin_contacts: defineTable({
+    name: v.string(),
+    phone: v.string(),
+    email: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    isSubscribed: v.boolean(),
+    lastMessagedAt: v.optional(v.number()),
+    lastMessagedTemplate: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone", ["phone"])
+    .index("by_created_at", ["createdAt"]),
+
+  admin_chats: defineTable({
+    contactId: v.string(),
+    contactName: v.string(),
+    contactPhone: v.string(),
+    phoneNumberId: v.optional(v.string()),
+    lastMessage: v.optional(v.string()),
+    lastMessageTime: v.number(),
+    unreadCount: v.number(),
+    status: v.union(v.literal("active"), v.literal("expired")),
+    aiMode: v.optional(v.boolean()),
+    assignedTo: v.optional(v.id("admin_users")),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_last_message", ["lastMessageTime"])
+    .index("by_phone_last_message", ["phoneNumberId", "lastMessageTime"])
+    .index("by_phone_contact", ["phoneNumberId", "contactPhone"]),
+
+  admin_messages: defineTable({
+    chatId: v.id("admin_chats"),
+    direction: v.union(v.literal("inbound"), v.literal("outbound")),
+    type: v.union(v.literal("text"), v.literal("image"), v.literal("video"), v.literal("audio"), v.literal("document"), v.literal("template"), v.literal("interactive")),
+    content: v.optional(v.string()),
+    mediaId: v.optional(v.string()),
+    storageId: v.optional(v.string()),
+    status: v.union(v.literal("sent"), v.literal("delivered"), v.literal("read"), v.literal("failed")),
+    timestamp: v.number(),
+    metaMessageId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_chat", ["chatId"])
+    .index("by_meta_message_id", ["metaMessageId"]),
+
+  admin_templates: defineTable({
+    phoneNumberId: v.optional(v.string()),
+    name: v.string(),
+    language: v.string(),
+    category: v.string(),
+    content: v.optional(v.string()),
+    components: v.any(),
+    status: v.union(v.literal("APPROVED"), v.literal("REJECTED"), v.literal("PENDING")),
+    metaTemplateId: v.optional(v.string()),
+    lastSyncedAt: v.number(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone", ["phoneNumberId"])
+    .index("by_phone_name", ["phoneNumberId", "name"])
+    .index("by_phone_name_language", ["phoneNumberId", "name", "language"]),
+
+  admin_template_store: defineTable({
+    name: v.string(),
+    language: v.string(),
+    category: v.string(),
+    components: v.any(),
+    description: v.optional(v.string()),
+    tags: v.optional(v.array(v.string())),
+    isDefault: v.optional(v.boolean()),
+    formSnapshot: v.optional(v.any()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_created_at", ["createdAt"])
+    .index("by_category", ["category"]),
+
+  admin_campaigns: defineTable({
+    name: v.string(),
+    templateId: v.id("admin_templates"),
+    templateName: v.string(),
+    templateLanguage: v.optional(v.string()),
+    phoneNumberId: v.optional(v.string()),
+    status: v.union(
+      v.literal("DRAFT"),
+      v.literal("SCHEDULED"),
+      v.literal("PROCESSING"),
+      v.literal("COMPLETED"),
+      v.literal("FAILED"),
+      v.literal("PAUSED")
+    ),
+    scheduledAt: v.number(),
+    recurrenceCronSpec: v.optional(v.string()),
+    segmentId: v.optional(v.string()),
+    targetTags: v.optional(v.array(v.string())),
+    targetContactIds: v.optional(v.array(v.id("admin_contacts"))),
+    isTestCampaign: v.optional(v.boolean()),
+    testBypassRecentContact: v.optional(v.boolean()),
+    testContactPhones: v.optional(v.array(v.string())),
+    stats: v.object({
+      total: v.number(),
+      sent: v.number(),
+      delivered: v.number(),
+      read: v.number(),
+      failed: v.number(),
+      skipped: v.optional(v.number()),
+    }),
+    sendingConfig: v.optional(v.object({
+      messagesPerSecond: v.number(),
+      delayBetweenMessages: v.number(),
+      maxRetries: v.number(),
+      skipRecentlyContacted: v.boolean(),
+      recentContactHours: v.number(),
+    })),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_number_id", ["phoneNumberId"])
+    .index("by_status", ["status"])
+    .index("by_created_at", ["createdAt"]),
+
+  admin_campaign_logs: defineTable({
+    campaignId: v.id("admin_campaigns"),
+    contactId: v.id("admin_contacts"),
+    status: v.union(
+      v.literal("sent"),
+      v.literal("delivered"),
+      v.literal("read"),
+      v.literal("failed"),
+      v.literal("skipped")
+    ),
+    metaMessageId: v.optional(v.string()),
+    error: v.optional(v.string()),
+    skipReason: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_campaign", ["campaignId"])
+    .index("by_message_id", ["metaMessageId"])
+    .index("by_created_at", ["createdAt"]),
+
+  admin_workflows: defineTable({
+    phoneNumberId: v.optional(v.string()),
+    name: v.string(),
+    trigger: v.string(),
+    triggerConfig: v.any(),
+    action: v.string(),
+    actionConfig: v.any(),
+    enabled: v.boolean(),
+    stats: v.object({
+      runs: v.number(),
+      lastRun: v.optional(v.number()),
+    }),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_enabled", ["phoneNumberId", "enabled"])
+    .index("by_updated_at", ["updatedAt"]),
+
+  admin_notifications: defineTable({
+    type: v.union(v.literal("info"), v.literal("warning"), v.literal("error"), v.literal("success")),
+    title: v.string(),
+    message: v.string(),
+    read: v.boolean(),
+    link: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_read", ["read"])
+    .index("by_created_at", ["createdAt"]),
+
+  admin_ai_configs: defineTable({
+    phoneNumberId: v.optional(v.string()),
+    systemPrompt: v.string(),
+    model: v.string(),
+    temperature: v.optional(v.number()),
+    isActive: v.boolean(),
+    agentName: v.optional(v.string()),
+    toolsEnabled: v.optional(v.array(v.union(
+      v.literal("send_text"),
+      v.literal("send_image"),
+      v.literal("send_link"),
+      v.literal("send_audio"),
+      v.literal("send_product"),
+      v.literal("transfer_to_human")
+    ))),
+    recommendProducts: v.optional(v.boolean()),
+    manualCatalogEnabled: v.optional(v.boolean()),
+    fallbackMode: v.optional(v.union(
+      v.literal("no_reply"),
+      v.literal("text_only"),
+      v.literal("human_handoff")
+    )),
+    updatedAt: v.number(),
+  }).index("by_phone_number_id", ["phoneNumberId"]),
+
+  admin_product_categories: defineTable({
+    phoneNumberId: v.string(),
+    name: v.string(),
+    slug: v.string(),
+    description: v.optional(v.string()),
+    source: v.union(v.literal("ai"), v.literal("manual")),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_name", ["phoneNumberId", "name"])
+    .index("by_phone_slug", ["phoneNumberId", "slug"])
+    .index("by_phone_updated", ["phoneNumberId", "updatedAt"]),
+
+  admin_manual_products: defineTable({
+    phoneNumberId: v.string(),
+    title: v.string(),
+    description: v.string(),
+    images: v.array(v.object({
+      storageId: v.optional(v.string()),
+      url: v.string(),
+      alt: v.optional(v.string()),
+      order: v.number(),
+    })),
+    primaryImageUrl: v.optional(v.string()),
+    categoryId: v.optional(v.id("admin_product_categories")),
+    categoryNameSnapshot: v.optional(v.string()),
+    aiAdvice: v.optional(v.string()),
+    aiSummary: v.optional(v.string()),
+    aiKeywords: v.optional(v.array(v.string())),
+    isActive: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  }).index("by_phone_updated", ["phoneNumberId", "updatedAt"])
+    .index("by_phone_category", ["phoneNumberId", "categoryId"])
+    .searchIndex("search_admin_manual_products", {
+      searchField: "title",
+      filterFields: ["phoneNumberId"],
+    }),
+
+  admin_webhook_settings: defineTable({
+    verifyToken: v.optional(v.string()),
+    accessToken: v.optional(v.string()),
+    appId: v.optional(v.string()),
+    defaultPhoneNumberId: v.optional(v.string()),
+    updatedAt: v.number(),
+  }),
+
+  admin_files: defineTable({
+    storageId: v.string(),
+    url: v.string(),
+    name: v.string(),
+    mimeType: v.string(),
+    size: v.number(),
+    uploadedBy: v.optional(v.id("admin_users")),
+    category: v.optional(v.string()),
+    whatsappMediaId: v.optional(v.string()),
+    createdAt: v.number(),
+  }).index("by_category", ["category"])
+    .index("by_whatsapp_media_id", ["whatsappMediaId"]),
 
   userActiveChats: defineTable({
     userId: v.id("users"),

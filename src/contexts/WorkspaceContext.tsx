@@ -1,9 +1,9 @@
 "use client";
 
 import React, { createContext, useCallback, useContext, useMemo, useState } from "react";
-import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery";
 
 const STORAGE_KEY = "w-ai-active-phone-number-id";
 const ALL_NUMBERS_SENTINEL = "__all__";
@@ -28,8 +28,12 @@ type WorkspaceContextValue = {
 const WorkspaceContext = createContext<WorkspaceContextValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
-  const numbersQuery = useQuery(api.whatsappNumbers.list);
-  const numbers = useMemo(() => numbersQuery ?? [], [numbersQuery]);
+  const numbersQuery = useOptionalConvexQuery<Workspace[]>(
+    (api as any).whatsappNumbers.list,
+    {},
+    true
+  );
+  const numbers = numbersQuery.data ?? [];
   const [selectedPhoneNumberId, setSelectedPhoneNumberId] = useState<string | null>(() => {
     if (typeof window === "undefined") return null;
     const stored = window.localStorage.getItem(STORAGE_KEY);
@@ -64,7 +68,7 @@ export function WorkspaceProvider({ children }: { children: React.ReactNode }) {
     activePhoneNumberId,
     setActivePhoneNumberId,
     activeWorkspace,
-    isLoading: numbersQuery === undefined,
+    isLoading: numbersQuery.loading,
   };
 
   return (

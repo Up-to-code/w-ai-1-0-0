@@ -27,27 +27,29 @@ import {
     Trash2,
     Link2,
     Phone,
-    MoreVertical
+    MoreVertical,
+    Send
 } from "lucide-react"
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
 
 export default function TemplatesPage() {
-    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
+    const enableExtendedCampaignApis = true; // Feature flag removed
     const { activePhoneNumberId } = useWorkspace()
     const syncFromMeta = useAction(api.templates.syncFromMeta)
     const deleteTemplate = useAction(api.templates.deleteTemplate)
-    
+    const sendTestCampaign = useAction(api.campaigns.createWithTestConfig)
+
     // "__all__" or null = default number. Convex expects undefined, not null.
     const effectivePhoneNumberId =
-      !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
+        !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
     const templateHealthQuery = useOptionalConvexQuery<any>(
         (api as any).templates.getScopedTemplateHealth,
         enableExtendedCampaignApis && effectivePhoneNumberId ? { phoneNumberId: effectivePhoneNumberId } : "skip",
@@ -63,6 +65,9 @@ export default function TemplatesPage() {
     const [activeTab, setActiveTab] = useState("all")
     const [previewTemplate, setPreviewTemplate] = useState<any>(null)
     const [deleteTemplateData, setDeleteTemplateData] = useState<any>(null)
+    const [testTemplateData, setTestTemplateData] = useState<any>(null)
+    const [testPhone, setTestPhone] = useState("")
+    const [isTesting, setIsTesting] = useState(false)
     const [isSyncing, setIsSyncing] = useState(false)
     const [isDeleting, setIsDeleting] = useState(false)
     const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null)
@@ -101,12 +106,38 @@ export default function TemplatesPage() {
             console.error("Delete failed:", error)
             const errorMessage = error.message || String(error)
             if (errorMessage.includes("Permission") || errorMessage.includes("(#100)")) {
-                 showToast("error", "فشل الحذف: لا تملك صلاحيات كافية في حساب Meta")
+                showToast("error", "فشل الحذف: لا تملك صلاحيات كافية في حساب Meta")
             } else {
-                 showToast("error", "فشل في حذف القالب")
+                showToast("error", "فشل في حذف القالب")
             }
         } finally {
             setIsDeleting(false)
+        }
+    }
+
+    const handleSendTest = async () => {
+        if (!testTemplateData || !testPhone) return
+        setIsTesting(true)
+        try {
+            await sendTestCampaign({
+                name: `Test Campaign - ${testTemplateData.name} - ${new Date().toISOString()}`,
+                templateId: testTemplateData._id,
+                templateName: testTemplateData.name,
+                templateLanguage: testTemplateData.language,
+                phoneNumberId: effectivePhoneNumberId || testTemplateData.phoneNumberId,
+                isTestCampaign: true,
+                testBypassRecentContact: true,
+                testContactPhones: [testPhone],
+                scheduledAt: Date.now(),
+            })
+            showToast("success", "تم إرسال القالب التجريبي بنجاح")
+            setTestTemplateData(null)
+            setTestPhone("")
+        } catch (error: any) {
+            console.error("Test send failed:", error)
+            showToast("error", error.message || "فشل إرسال القالب التجريبي")
+        } finally {
+            setIsTesting(false)
         }
     }
 
@@ -181,27 +212,27 @@ export default function TemplatesPage() {
 
             {/* Stats Cards */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                <StatCard 
-                    title="إجمالي القوالب" 
-                    value={stats.total} 
-                    icon={<FileText className="h-4 w-4 text-primary" />} 
+                <StatCard
+                    title="إجمالي القوالب"
+                    value={stats.total}
+                    icon={<FileText className="h-4 w-4 text-primary" />}
                 />
-                <StatCard 
-                    title="معتمدة" 
-                    value={stats.approved} 
-                    icon={<CheckCircle2 className="h-4 w-4 text-success" />} 
+                <StatCard
+                    title="معتمدة"
+                    value={stats.approved}
+                    icon={<CheckCircle2 className="h-4 w-4 text-success" />}
                     variant="default"
                 />
-                <StatCard 
-                    title="قيد المراجعة" 
-                    value={stats.pending} 
-                    icon={<Clock className="h-4 w-4 text-yellow-600" />} 
+                <StatCard
+                    title="قيد المراجعة"
+                    value={stats.pending}
+                    icon={<Clock className="h-4 w-4 text-yellow-600" />}
                     variant="default"
                 />
-                <StatCard 
-                    title="مرفوضة" 
-                    value={stats.rejected} 
-                    icon={<AlertTriangle className="h-4 w-4 text-destructive" />} 
+                <StatCard
+                    title="مرفوضة"
+                    value={stats.rejected}
+                    icon={<AlertTriangle className="h-4 w-4 text-destructive" />}
                     variant="default"
                 />
             </div>
@@ -293,7 +324,15 @@ export default function TemplatesPage() {
                                                     تعديل
                                                 </DropdownMenuItem>
                                             </Link>
-                                            <DropdownMenuItem 
+                                            {template.status === "APPROVED" && (
+                                                <DropdownMenuItem
+                                                    onClick={() => setTestTemplateData(template)}
+                                                >
+                                                    <Send className="h-4 w-4 ml-2" />
+                                                    إرسال تجريبي
+                                                </DropdownMenuItem>
+                                            )}
+                                            <DropdownMenuItem
                                                 className="text-destructive focus:text-destructive"
                                                 onClick={() => setDeleteTemplateData(template)}
                                             >
@@ -338,7 +377,7 @@ export default function TemplatesPage() {
                             <div className="h-[46px] w-[3px] bg-gray-800 absolute -left-[17px] top-[124px] rounded-l-lg"></div>
                             <div className="h-[46px] w-[3px] bg-gray-800 absolute -left-[17px] top-[178px] rounded-l-lg"></div>
                             <div className="h-[64px] w-[3px] bg-gray-800 absolute -right-[17px] top-[142px] rounded-r-lg"></div>
-                            
+
                             {/* WhatsApp Header */}
                             <div className="bg-[#008069] dark:bg-[#202c33] p-3 pt-8 flex items-center gap-2 text-white z-10 rounded-t-[2rem]">
                                 <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
@@ -349,7 +388,7 @@ export default function TemplatesPage() {
                                     <div className="text-[10px] opacity-80">Business Account</div>
                                 </div>
                             </div>
-                            
+
                             {/* Message Area */}
                             <div className="flex-1 p-3 overflow-y-auto bg-[#E5DDD5] dark:bg-[#111b21] bg-opacity-90 relative rounded-b-[2rem]">
                                 {previewTemplate.components?.some((c: any) => c.type === "CAROUSEL") ? (
@@ -422,7 +461,7 @@ export default function TemplatesPage() {
                                                     {previewTemplate.components.find((c: any) => c.type === "FOOTER")?.text}
                                                 </p>
                                             )}
-                                            
+
                                             <div className="text-[10px] text-gray-400 text-right mt-1">
                                                 12:00 PM
                                             </div>
@@ -475,11 +514,40 @@ export default function TemplatesPage() {
                 </DialogContent>
             </Dialog>
 
+            {/* Test Send Dialog */}
+            <Dialog open={!!testTemplateData} onOpenChange={(open) => !open && setTestTemplateData(null)}>
+                <DialogContent className="max-w-sm rounded-2xl">
+                    <DialogHeader>
+                        <DialogTitle>إرسال تجريبي للقالب</DialogTitle>
+                        <DialogDescription>أدخل رقم الواتساب لإرسال تجربة من هذا القالب فوراً (سيتم تخطي أي قيود للإرسال).</DialogDescription>
+                    </DialogHeader>
+                    {testTemplateData && (
+                        <div className="space-y-4">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium">رقم الهاتف (مع رمز الدولة)</label>
+                                <Input
+                                    placeholder="مثال: 966500000000"
+                                    value={testPhone}
+                                    onChange={(e) => setTestPhone(e.target.value)}
+                                    className="rounded-xl bg-muted/50"
+                                />
+                            </div>
+                            <div className="flex gap-3 justify-end mt-4">
+                                <Button variant="outline" onClick={() => setTestTemplateData(null)} className="rounded-xl">إلغاء</Button>
+                                <Button onClick={handleSendTest} disabled={isTesting || !testPhone} className="rounded-xl gap-2">
+                                    {isTesting ? "جاري الإرسال..." : "إرسال"}
+                                    {!isTesting && <Send className="w-4 h-4" />}
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </DialogContent>
+            </Dialog>
+
             {/* Toast Notification */}
             {toast && (
-                <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full shadow-lg z-50 animate-in slide-in-from-bottom-5 duration-300 ${
-                    toast.type === "success" ? "bg-black text-white" : "bg-destructive text-white"
-                }`}>
+                <div className={`fixed bottom-6 left-1/2 -translate-x-1/2 px-6 py-3 rounded-full shadow-lg z-50 animate-in slide-in-from-bottom-5 duration-300 ${toast.type === "success" ? "bg-black text-white" : "bg-destructive text-white"
+                    }`}>
                     {toast.message}
                 </div>
             )}

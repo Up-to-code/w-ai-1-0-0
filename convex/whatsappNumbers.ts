@@ -320,11 +320,11 @@ async function fetchWabaPhoneNumbers(
     if (!response.ok) {
       const errorMessage =
         typeof body === "object" &&
-        body &&
-        "error" in body &&
-        typeof body.error === "object" &&
-        body.error &&
-        "message" in body.error
+          body &&
+          "error" in body &&
+          typeof body.error === "object" &&
+          body.error &&
+          "message" in body.error
           ? String(body.error.message)
           : `HTTP ${response.status}`;
       throw new Error(`Meta phone_numbers fetch failed for WABA ${wabaId}: ${errorMessage}`);
@@ -332,9 +332,9 @@ async function fetchWabaPhoneNumbers(
 
     const rows =
       typeof body === "object" &&
-      body &&
-      "data" in body &&
-      Array.isArray(body.data)
+        body &&
+        "data" in body &&
+        Array.isArray(body.data)
         ? body.data
         : [];
 
@@ -356,12 +356,12 @@ async function fetchWabaPhoneNumbers(
 
     const nextUrl =
       typeof body === "object" &&
-      body &&
-      "paging" in body &&
-      body.paging &&
-      typeof body.paging === "object" &&
-      "next" in body.paging &&
-      typeof body.paging.next === "string"
+        body &&
+        "paging" in body &&
+        body.paging &&
+        typeof body.paging === "object" &&
+        "next" in body.paging &&
+        typeof body.paging.next === "string"
         ? body.paging.next
         : null;
     url = nextUrl ? new URL(nextUrl) : null;

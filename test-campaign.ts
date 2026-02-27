@@ -18,13 +18,13 @@ async function main() {
 
         if (data.status === "success") {
             const campaigns = data.value;
-            const targetCampaign = campaigns.find((c: any) => c._id === "jh7a0ap0ggd0w16rjnn1b8d33s81nn53");
+            const targetCampaign = campaigns.find((c: any) => c._id === "jh75kjqv23mkng54x2f6ax8f5181z7f0");
 
             if (targetCampaign) {
                 console.log("\n✅ Found Campaign Details:");
                 console.log(JSON.stringify(targetCampaign, null, 2));
             } else {
-                console.log("\n❌ Campaign jh7a0ap0ggd0w16rjnn1b8d33s81nn53 not found in the latest 20 campaigns.");
+                console.log("\n❌ Campaign jh75kjqv23mkng54x2f6ax8f5181z7f0 not found in the latest 20 campaigns.");
                 console.log("Available recent campaign IDs:");
                 campaigns.forEach((c: any) => console.log(`- ${c._id} '${c.name}' (Status: ${c.status})`));
             }

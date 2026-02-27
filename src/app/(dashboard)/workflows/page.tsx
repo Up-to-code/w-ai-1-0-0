@@ -6,6 +6,7 @@ import { api } from "../../../../convex/_generated/api"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
 import { markScopedTemplatesSynced, shouldSyncScopedTemplates } from "@/lib/templateSyncCache"
 import { useOptionalConvexQuery } from "@/hooks/useOptionalConvexQuery"
+import { runConvexActionSafe } from "@/lib/convexActionSafe"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -91,7 +92,7 @@ const ACTIONS = [
 ]
 
 export default function WorkflowsPage() {
-    const enableExtendedCampaignApis = process.env.NEXT_PUBLIC_EXTENDED_CAMPAIGN_APIS === "1"
+    const enableExtendedCampaignApis = true; // Feature flag removed
     const { activePhoneNumberId } = useWorkspace()
     const effectivePhoneNumberId =
         !activePhoneNumberId || activePhoneNumberId === "__all__" ? undefined : activePhoneNumberId
@@ -126,7 +127,6 @@ export default function WorkflowsPage() {
     const updateWorkflow = useMutation(api.workflows.update)
     const toggleWorkflowMutation = useMutation(api.workflows.toggle)
     const deleteWorkflow = useMutation(api.workflows.remove)
-    const syncScopedTemplatesForNumber = useAction((api as any).templates.syncScopedFromMeta)
     const syncTemplatesForNumber = useAction(api.templates.syncFromMeta)
 
     const [isCreateOpen, setIsCreateOpen] = useState(false)
@@ -138,6 +138,7 @@ export default function WorkflowsPage() {
     const [actionConfig, setActionConfig] = useState<any>({})
     const [isSyncingTemplates, setIsSyncingTemplates] = useState(false)
     const [templateSyncError, setTemplateSyncError] = useState<string | null>(null)
+    const [templateSyncWarning, setTemplateSyncWarning] = useState<string | null>(null)
     const isTemplateAuthFailed = templateHealth?.tokenStatus === "auth_failed"
     const templateAuthFailedMessage = templateHealth?.lastAuthErrorMessage as string | undefined
     const readinessBlockingReason = sendReadiness?.blockingReason as string | null | undefined
@@ -148,7 +149,7 @@ export default function WorkflowsPage() {
     const readinessBlockingMessage =
         isTemplateReadinessHardBlocked
             ? (sendReadiness?.recommendedAction as string | undefined) ||
-              "Cannot sync/send templates for this number until sending readiness issues are resolved."
+            "Cannot sync/send templates for this number until sending readiness issues are resolved."
             : null
     const optionalExtendedApisUnavailable =
         scopedTemplatesQuery.unavailable ||
@@ -173,18 +174,21 @@ export default function WorkflowsPage() {
         if (!force && !shouldSyncScopedTemplates(effectivePhoneNumberId)) return
         setIsSyncingTemplates(true)
         setTemplateSyncError(null)
+        setTemplateSyncWarning(null)
         try {
+            const fallbackResult = await runConvexActionSafe(syncTemplatesForNumber as any, {
+                phoneNumberId: effectivePhoneNumberId,
+            }, { actionName: "templates:syncFromMeta" })
+            if (!fallbackResult.ok) {
+                setTemplateSyncError(
+                    fallbackResult.unavailable
+                        ? "دالة مزامنة القوالب غير متاحة على نسخة Convex الحالية. قم بنشر backend ثم أعد المحاولة."
+                        : (fallbackResult.message || "تعذر مزامنة القوالب.")
+                )
+                return
+            }
             if (enableExtendedCampaignApis) {
-                try {
-                    await syncScopedTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
-                } catch (error) {
-                    const message = error instanceof Error ? error.message : String(error)
-                    const missingScopedSync = message.includes("Could not find public function for 'templates:syncScopedFromMeta'")
-                    if (!missingScopedSync) throw error
-                    await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
-                }
-            } else {
-                await syncTemplatesForNumber({ phoneNumberId: effectivePhoneNumberId })
+                setTemplateSyncWarning("تمت مزامنة القوالب عبر المسار المتوافق مع هذه النسخة.")
             }
             markScopedTemplatesSynced(effectivePhoneNumberId)
         } catch (error) {
@@ -199,7 +203,6 @@ export default function WorkflowsPage() {
         isTemplateAuthFailed,
         isTemplateReadinessHardBlocked,
         readinessBlockingMessage,
-        syncScopedTemplatesForNumber,
         syncTemplatesForNumber,
     ])
 
@@ -297,6 +300,7 @@ export default function WorkflowsPage() {
         setSelectedAction("")
         setActionConfig({})
         setTemplateSyncError(null)
+        setTemplateSyncWarning(null)
     }
 
     return (
@@ -466,6 +470,11 @@ export default function WorkflowsPage() {
                                                 <a href="/templates" className="inline-flex items-center rounded-md border px-2 py-1 text-[11px] text-foreground hover:bg-muted">
                                                     افتح صفحة القوالب
                                                 </a>
+                                            </div>
+                                        )}
+                                        {templateSyncWarning && (
+                                            <div className="text-xs text-amber-700 dark:text-amber-300">
+                                                {templateSyncWarning}
                                             </div>
                                         )}
                                         {optionalExtendedApisUnavailable && (

@@ -10,7 +10,12 @@
     "start": "expo start",
     "android": "expo run:android",
     "ios": "expo run:ios",
-    "web": "expo start --web"
+    "web": "expo start --web",
+    "apk": "cd android && JAVA_HOME=/opt/homebrew/opt/openjdk@17/libexec/openjdk.jdk/Contents/Home ./gradlew assembleDebug",
+    "android:install": "PATH=\"/opt/homebrew/share/android-commandlinetools/platform-tools:$PATH\" adb install android/app/build/outputs/apk/debug/app-debug.apk",
+    "android:emulator": "PATH=\"/opt/homebrew/share/android-commandlinetools/emulator:/opt/homebrew/share/android-commandlinetools/platform-tools:$PATH\" emulator -avd TestDevice",
+    "run": "npm run check:env && npm start",
+    "run:android": "npm run check:env && npx expo run:android"
   },
   "dependencies": {
     "@expo-google-fonts/cairo": "^0.4.2",

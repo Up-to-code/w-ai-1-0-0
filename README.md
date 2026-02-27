@@ -1,5 +1,12 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Repos / Apps
+
+| App | Path | Run |
+|-----|------|-----|
+| **Main** (chatcb-ui) | `/` | `npm run dev` |
+| **Admin Dashboard** | `/admin-dashboard` | `npm run admin` |
+
 ## Getting Started
 
 First, run the development server:
@@ -35,9 +42,25 @@ The easiest way to deploy your Next.js app is to use the [Vercel Platform](https
 
 Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
 
+## Admin Dashboard
+
+Admin UI at `admin-dashboard/`. Uses its own Convex config and `.env.local`.
+
+```bash
+npm run admin        # dev server
+npm run admin:build # production build
+npm run admin:start # production server
+```
+
+See `admin-dashboard/README.md` for deployment.
+
 ## Production / WhatsApp Webhook
 
+- **Canonical Convex target:** `dev:hardy-gopher-480` / `https://hardy-gopher-480.convex.cloud`.
+- **Pre-deploy guard:** run `npm run check:convex-deployment` before any Convex push.
+- **One-command guarded push:** `npm run deploy:convex:hardy`.
 - **Convex deployment:** The app uses the Convex deployment whose URL is set in `NEXT_PUBLIC_CONVEX_URL` (e.g. in Vercel). **You must deploy Convex to that deployment** after any Convex code or function changes: run `npx convex deploy` (for production) or use the same deployment as your dev URL. `npx convex dev` only pushes to the dev deployment; production must be updated with `npx convex deploy` or the app may see "Could not find public function" or outdated validators.
+- **Logging policy envs (optional):** `CONVEX_LOG_DEBUG=1` (non-production only), `CONVEX_LOG_INFO_SAMPLED=1`, `CONVEX_LOG_SAMPLE_RATE=0.01`.
 - **Convex (Dashboard → Settings → Environment Variables):** Set `WHATSAPP_VERIFY_TOKEN` (if not set in Integrations webhook form), and `WHATSAPP_APP_SECRET` (recommended) to verify POST webhook signature. Optionally `WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_ID`, `WHATSAPP_WABA_ID` when not using per-number tokens.
 - **Vercel (recommended):** Keep Vercel build as `next build` only, and run `npx convex deploy` in a separate authenticated release step targeting the same deployment URL (`NEXT_PUBLIC_CONVEX_URL`). This avoids build failures like `MissingAccessToken` when Vercel tries to deploy Convex without credentials.
 - **Vercel (alternative):** If you intentionally run `npx convex deploy --cmd 'next build'` during Vercel build, add `CONVEX_DEPLOY_KEY` in Vercel env vars. See [Convex + Vercel docs](https://docs.convex.dev/production/hosting/vercel).
