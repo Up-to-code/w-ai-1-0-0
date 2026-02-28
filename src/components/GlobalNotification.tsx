@@ -67,9 +67,9 @@ export function GlobalNotification() {
                         <div className="relative overflow-hidden rounded-[22px] bg-white/95 dark:bg-[#1C1C1E]/95 backdrop-blur-xl border border-black/5 dark:border-white/10 p-4 shadow-2xl transition-all hover:scale-[1.02]">
                             <div className="flex items-start gap-3">
                                 <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${latest.type === 'error' ? 'bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400' :
-                                        latest.type === 'warning' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' :
-                                            latest.type === 'success' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' :
-                                                'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
+                                    latest.type === 'warning' ? 'bg-amber-100 text-amber-600 dark:bg-amber-900/30 dark:text-amber-400' :
+                                        latest.type === 'success' ? 'bg-green-100 text-green-600 dark:bg-green-900/30 dark:text-green-400' :
+                                            'bg-blue-100 text-blue-600 dark:bg-blue-900/30 dark:text-blue-400'
                                     }`}>
                                     <Bell className="w-5 h-5" />
                                 </div>
@@ -111,7 +111,7 @@ export function GlobalNotification() {
         if (isChatOpen) return
 
         // 4. Play Sound & Show Notification
-        audioRef.current?.play().catch(e => console.error("Audio play failed", e))
+        audioRef.current?.play().catch(() => { /* Autoplay was blocked by browser, safely ignore */ })
 
         const workspaceNumber = latestMessage.phoneNumberId
             ? numbers.find((n) => n.businessNumberId === latestMessage.phoneNumberId)

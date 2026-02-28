@@ -24,7 +24,7 @@ type TypedWhatsAppError = Error & {
 async function withAppSecretProof(ctx: any, url: string, configOrToken: { accessToken: string; disableAppSecretProof?: boolean } | string): Promise<string> {
   const accessToken = typeof configOrToken === 'string' ? configOrToken : configOrToken.accessToken;
   const disableDb = typeof configOrToken === 'string' ? false : !!configOrToken.disableAppSecretProof;
-  
+
   const disableAppSecretProof = disableDb || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
   if (disableAppSecretProof) {
     return url;
@@ -477,28 +477,35 @@ export const fetchTemplates = action({
     const uniqueNames: string[] = [...new Set(templatesList.map((t) => t.name))];
     const componentsByKey = new Map<string, any[]>(); // key: "name|language" -> components
 
-    for (const name of uniqueNames) {
-      try {
-        const url = await withAppSecretProof(
-          ctx,
-          `${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${encodeURIComponent(String(name))}`,
-          accessToken
-        );
-        const detailRes = await fetch(url, {
-          method: "GET",
-          headers: { "Authorization": `Bearer ${accessToken}` },
-        });
-        const detailData = await detailRes.json();
-        const fullTemplates = detailData.data || [];
-        for (const ft of fullTemplates) {
-          if (ft.name && ft.components && Array.isArray(ft.components) && ft.components.length > 0) {
-            const key = `${ft.name}|${normalizeTemplateLanguageKey(ft.language)}`;
-            componentsByKey.set(key, ft.components);
+    // Fetch details in parallel, batched to avoid rate limits
+    const chunkSize = 5;
+    for (let i = 0; i < uniqueNames.length; i += chunkSize) {
+      const chunk = uniqueNames.slice(i, i + chunkSize);
+      await Promise.all(
+        chunk.map(async (name) => {
+          try {
+            const url = await withAppSecretProof(
+              ctx,
+              `${WHATSAPP_API_URL}/${wabaId}/message_templates?name=${encodeURIComponent(String(name))}`,
+              accessToken
+            );
+            const detailRes = await fetch(url, {
+              method: "GET",
+              headers: { Authorization: `Bearer ${accessToken}` },
+            });
+            const detailData = await detailRes.json();
+            const fullTemplates = detailData.data || [];
+            for (const ft of fullTemplates) {
+              if (ft.name && ft.components && Array.isArray(ft.components) && ft.components.length > 0) {
+                const key = `${ft.name}|${normalizeTemplateLanguageKey(ft.language)}`;
+                componentsByKey.set(key, ft.components);
+              }
+            }
+          } catch (err) {
+            logWarn(`[WhatsApp] Failed to fetch full components for template "${name}":`, err);
           }
-        }
-      } catch (err) {
-        logWarn(`[WhatsApp] Failed to fetch full components for template "${name}":`, err);
-      }
+        })
+      );
     }
 
     // Merge full components into list items when available

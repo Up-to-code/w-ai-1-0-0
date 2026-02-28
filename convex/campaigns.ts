@@ -20,6 +20,7 @@ const createCampaignArgs = {
     templateId: v.id("templates"),
     templateName: v.string(),
     templateLanguage: v.optional(v.string()),
+    templateVariables: v.optional(v.any()),
     phoneNumberId: v.optional(v.string()),
     isTestCampaign: v.optional(v.boolean()),
     testBypassRecentContact: v.optional(v.boolean()),
@@ -97,6 +98,7 @@ export const createCampaignInternal = internalMutation({
             templateId: args.templateId,
             templateName: args.templateName,
             templateLanguage: args.templateLanguage,
+            templateVariables: args.templateVariables,
             phoneNumberId: args.phoneNumberId,
             isTestCampaign,
             testBypassRecentContact,
@@ -193,6 +195,7 @@ export const insertQuickCampaignInternal = internalMutation({
         templateId: v.id("templates"),
         templateName: v.string(),
         templateLanguage: v.optional(v.string()),
+        templateVariables: v.optional(v.any()),
         phoneNumberId: v.string(),
         scheduledAt: v.number(),
     },
@@ -202,6 +205,7 @@ export const insertQuickCampaignInternal = internalMutation({
             templateId: args.templateId,
             templateName: args.templateName,
             templateLanguage: args.templateLanguage,
+            templateVariables: args.templateVariables,
             phoneNumberId: args.phoneNumberId,
             status: "SCHEDULED",
             scheduledAt: args.scheduledAt,
@@ -925,53 +929,41 @@ export const sendToContact = internalAction({
                 components: JSON.stringify(template?.components || [], null, 2)
             });
 
-            /**
-             * Processes a header component for standard (non-carousel) templates.
-             * 
-             * Header formats supported:
-             * - IMAGE: Uses header_handle URL or placeholder
-             * - VIDEO: Uses video URL
-             * - DOCUMENT: Uses document URL with filename
-             * - TEXT: Static text or text with {{variables}}
-             * 
-             * Note: For static text headers (no variables), the header component
-             * should be included WITHOUT parameters per WhatsApp API spec.
-             */
             const processHeaderComponent = (comp: any) => {
+                const headerVars = campaign.templateVariables?.header; // The user-provided link for the campaign
                 if (comp.format === "IMAGE") {
-                    const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
+                    const link = headerVars?.link || comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
                     return {
                         type: "header",
                         parameters: [{ type: "image", image: { link } }]
                     };
                 } else if (comp.format === "VIDEO") {
+                    const link = headerVars?.link || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
                     return {
                         type: "header",
-                        parameters: [{ type: "video", video: { link: "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4" } }]
+                        parameters: [{ type: "video", video: { link } }]
                     };
                 } else if (comp.format === "DOCUMENT") {
+                    const link = headerVars?.link || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
+                    const filename = headerVars?.filename || "document.pdf";
                     return {
                         type: "header",
-                        parameters: [{ type: "document", document: { link: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf", filename: "document.pdf" } }]
+                        parameters: [{ type: "document", document: { link, filename } }]
                     };
                 } else if (comp.format === "TEXT") {
-                    // Check if header has variables by looking at the text content
-                    // If text contains {{variable}} patterns, it has variables
                     const hasVariables = comp.text?.includes("{{") ||
                         (comp.example?.header_text && comp.example.header_text.length > 0);
 
-                    if (hasVariables && comp.example?.header_text && comp.example.header_text.length > 0) {
-                        // Header has variables - include parameters
+                    if (hasVariables) {
+                        // User-provided variables map to the exact number of {{x}} placeholders
+                        const variables = campaign.templateVariables?.header?.text || comp.example?.header_text || ["1"];
                         return {
                             type: "header",
-                            parameters: comp.example.header_text.map((text: string) => ({ type: "text", text }))
+                            parameters: variables.map((text: string) => ({ type: "text", text: String(text) }))
                         };
                     } else {
-                        // Static text header - include header WITHOUT parameters field
-                        // WhatsApp API: if header has no variables, don't include parameters at all
                         return {
                             type: "header"
-                            // No parameters field for static headers
                         };
                     }
                 }
@@ -998,30 +990,48 @@ export const sendToContact = internalAction({
                 if (productCarouselComp && productCarouselComp.catalog_id && productCarouselComp.products) {
                     logDebug(`[Campaign] Processing PRODUCT_CAROUSEL template with ${productCarouselComp.products.length} products`);
 
-                    const bodyComp: any = template.components.find((c: any) => c.type === "BODY");
-                    const footerComp: any = template.components.find((c: any) => c.type === "FOOTER");
-
-                    const interactiveContent: any = {
-                        type: "product_list",
-                        body: {
-                            text: bodyComp?.text || "Our Products"
-                        },
-                        footer: footerComp ? { text: footerComp.text } : undefined,
-                        action: {
-                            catalog_id: productCarouselComp.catalog_id,
-                            sections: [{
-                                title: "Products",
-                                product_items: productCarouselComp.products.map((p: any) => ({
-                                    product_retailer_id: p.product_retailer_id || p.productId
-                                }))
-                            }]
+                    const templateParameters: any[] = [];
+                    // Find if there are body variables
+                    const bodyComp: any = template.components.find((c: any) => c.type === "BODY" || c.type === "body");
+                    if (bodyComp && (bodyComp.text?.includes("{{") || (bodyComp.example?.body_text && bodyComp.example.body_text.length > 0))) {
+                        // Standard body parameters...
+                        if (bodyComp.example?.body_text) {
+                            const texts = (bodyComp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t));
+                            const parameters = texts.map((text: string) => ({ type: "text" as const, text: text || "1" }));
+                            templateParameters.push({ type: "body", parameters });
                         }
+                    }
+
+                    // Add the MPM button component
+                    const buttonComponent = {
+                        type: "button",
+                        sub_type: "MPM",
+                        index: 0,
+                        parameters: [
+                            {
+                                type: "action",
+                                action: {
+                                    thumbnail_product_retailer_id: productCarouselComp.products[0]?.product_retailer_id || productCarouselComp.products[0]?.productId,
+                                    sections: [{
+                                        title: "Products",
+                                        product_items: productCarouselComp.products.map((p: any) => ({
+                                            product_retailer_id: p.product_retailer_id || p.productId
+                                        }))
+                                    }]
+                                }
+                            }
+                        ]
                     };
+                    templateParameters.push(buttonComponent);
 
                     const result: any = await ctx.runAction(api.whatsapp.sendMessage, {
                         to: (contact as { phone?: string }).phone as string,
-                        type: "interactive",
-                        content: interactiveContent,
+                        type: "template",
+                        content: {
+                            name: resolved.selected.name,
+                            language: { code: resolved.selected.language },
+                            components: templateParameters
+                        },
                         phoneNumberId: campaign.phoneNumberId ?? undefined,
                     });
 
@@ -1038,40 +1048,41 @@ export const sendToContact = internalAction({
 
                 // Handle CATALOG template
                 if (catalogComp && catalogComp.catalog_id) {
-                    logDebug(`[Campaign] Processing CATALOG template`);
-
-                    const headerComp = template.components.find((c: any) => c.type === "HEADER");
-                    const bodyComp = template.components.find((c: any) => c.type === "BODY");
-                    const footerComp = template.components.find((c: any) => c.type === "FOOTER");
-
-                    const interactiveContent: any = {
-                        type: "catalog_message",
-                        body: {
-                            text: bodyComp?.text || "View our catalog"
-                        },
-                        footer: footerComp ? { text: footerComp.text } : undefined,
-                        action: {
-                            name: "catalog",
-                            parameters: {
-                                thumbnail_product_retailer_id: catalogComp.thumbnail_product_id || undefined
-                            }
+                    const templateParameters: any[] = [];
+                    // Find if there are body variables
+                    const bodyComp: any = template.components.find((c: any) => c.type === "BODY" || c.type === "body");
+                    if (bodyComp && (bodyComp.text?.includes("{{") || (bodyComp.example?.body_text && bodyComp.example.body_text.length > 0))) {
+                        if (bodyComp.example?.body_text) {
+                            const texts = (bodyComp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t));
+                            const parameters = texts.map((text: string) => ({ type: "text" as const, text: text || "1" }));
+                            templateParameters.push({ type: "body", parameters });
                         }
-                    };
-
-                    // Add header if present
-                    if (headerComp && headerComp.example?.header_handle) {
-                        interactiveContent.header = {
-                            type: "image",
-                            image: {
-                                id: headerComp.example.header_handle[0] // Media ID
-                            }
-                        };
                     }
+
+                    // Add the catalog button component
+                    const buttonComponent = {
+                        type: "button",
+                        sub_type: "CATALOG",
+                        index: 0,
+                        parameters: [
+                            {
+                                type: "action",
+                                action: {
+                                    thumbnail_product_retailer_id: catalogComp.thumbnail_product_id || undefined
+                                }
+                            }
+                        ]
+                    };
+                    templateParameters.push(buttonComponent);
 
                     const result: any = await ctx.runAction(api.whatsapp.sendMessage, {
                         to: (contact as { phone?: string }).phone as string,
-                        type: "interactive",
-                        content: interactiveContent,
+                        type: "template",
+                        content: {
+                            name: resolved.selected.name,
+                            language: { code: resolved.selected.language },
+                            components: templateParameters
+                        },
                         phoneNumberId: campaign.phoneNumberId ?? undefined,
                     });
 
@@ -1294,9 +1305,23 @@ export const sendToContact = internalAction({
                             if (headerComponent) components.push(headerComponent);
                         } else if (comp.type === "BODY" || comp.type === "body") {
                             const hasVariables = comp.text?.includes("{{") || (comp.example?.body_text && comp.example.body_text.length > 0);
-                            if (hasVariables && comp.example?.body_text) {
-                                const texts = (comp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t));
-                                const parameters = texts.map((text: string) => ({ type: "text" as const, text: text || "1" }));
+                            if (hasVariables) {
+                                // Default to example text or "1" if no template variables were provided
+                                const defaultTexts = comp.example?.body_text ? (comp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t)) : [];
+                                const userBodyVars = campaign.templateVariables?.body || defaultTexts;
+
+                                // Ensure we have at least one element if variables exist, fallback to "1"
+                                const texts = userBodyVars.length > 0 ? userBodyVars : ["1"];
+                                const parameters = texts.map((text: string) => {
+                                    // Handle dynamic contact variables (e.g., {{contact.name}})
+                                    let resolvedText = String(text || "1");
+                                    if (resolvedText === "{{contact.name}}" || resolvedText === "contact.name") {
+                                        resolvedText = contact.name || "Customer";
+                                    } else if (resolvedText === "{{contact.phone}}" || resolvedText === "contact.phone") {
+                                        resolvedText = contact.phone || "";
+                                    }
+                                    return { type: "text" as const, text: resolvedText };
+                                });
                                 components.push({ type: "body", parameters });
                             }
                         } else if (comp.type === "BUTTONS" || comp.type === "buttons") {
@@ -1306,8 +1331,12 @@ export const sendToContact = internalAction({
                                     const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
                                     if (!hasVariable) return;
                                     const subType = (btn.type === "URL" || btn.type === "url") ? "url" : (btn.type === "COPY_CODE" || btn.type === "copy_code") ? "copy_code" : "url";
-                                    let paramText = "1";
-                                    if (btn.example && btn.example[0]) {
+
+                                    // Use variable from campaign.templateVariables.buttons[idx] if exists
+                                    const userBtnVar = campaign.templateVariables?.buttons?.[String(idx)];
+                                    let paramText = userBtnVar || "1";
+
+                                    if (!userBtnVar && btn.example && btn.example[0]) {
                                         const ex = String(btn.example[0]);
                                         const codeMatch = ex.match(/code=([^&\s]+)/i);
                                         paramText = codeMatch ? codeMatch[1] : ex;
@@ -1316,7 +1345,7 @@ export const sendToContact = internalAction({
                                         type: "button",
                                         sub_type: subType,
                                         index: idx,
-                                        parameters: [{ type: "text" as const, text: paramText }]
+                                        parameters: [{ type: "text" as const, payload: paramText, text: paramText }]
                                     });
                                 });
                             }

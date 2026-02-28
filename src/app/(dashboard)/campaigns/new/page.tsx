@@ -66,6 +66,11 @@ export default function NewCampaignPage() {
         components?: { type?: string; text?: string }[]
         content?: string
     } | null>(null)
+    const [templateVariables, setTemplateVariables] = useState<{
+        header?: { type: "text" | "image" | "video" | "document", text?: string[], link?: string, filename?: string },
+        body?: string[],
+        buttons?: Record<string, string> // Map index string -> URL/Payload variable string
+    }>({})
     const [templateAutoClearedMessage, setTemplateAutoClearedMessage] = useState<string | null>(null)
     const previousPhoneNumberIdRef = useRef<string | null>(null)
     const [targetAudience, setTargetAudience] = useState<"all" | "tags" | "selected">("all")
@@ -228,6 +233,7 @@ export default function NewCampaignPage() {
             selectedTemplate
         ) {
             setSelectedTemplate(null)
+            setTemplateVariables({})
             setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
         }
         previousPhoneNumberIdRef.current = selectedPhoneNumberId
@@ -241,6 +247,7 @@ export default function NewCampaignPage() {
         const stillExists = templates.some((template) => template._id === selectedTemplate._id)
         if (stillExists) return
         setSelectedTemplate(null)
+        setTemplateVariables({})
         setTemplateAutoClearedMessage("Selected template is no longer valid for this number; please reselect.")
     }, [selectedTemplate, templates])
 
@@ -368,6 +375,7 @@ export default function NewCampaignPage() {
             templateId: selectedTemplate?._id as Id<"templates">,
             templateName: selectedTemplate?.name || "",
             templateLanguage: selectedTemplate?.language || undefined,
+            templateVariables: Object.keys(templateVariables).length > 0 ? templateVariables : undefined,
             phoneNumberId: selectedPhoneNumberId ?? undefined,
             isTestCampaign: isTestCampaign || undefined,
             testBypassRecentContact: isTestCampaign ? testBypassRecentContact : undefined,
@@ -1005,6 +1013,41 @@ export default function NewCampaignPage() {
                                                             className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedTemplate?._id === template._id ? 'border-primary bg-primary/5' : 'hover:border-primary/50'}`}
                                                             onClick={() => {
                                                                 setSelectedTemplate(template)
+
+                                                                // Initialize variables based on this template
+                                                                const vars: any = {}
+                                                                const components = template.components as any[] || []
+
+                                                                const headerComp = components.find(c => c.type === 'HEADER' || c.type === 'header')
+                                                                if (headerComp) {
+                                                                    if (headerComp.format === 'TEXT' && (headerComp.text?.includes("{{") || headerComp.example?.header_text)) {
+                                                                        vars.header = { type: 'text', text: new Array(headerComp.example?.header_text?.length || 1).fill('') }
+                                                                    } else if (headerComp.format === 'IMAGE') {
+                                                                        vars.header = { type: 'image', link: '' }
+                                                                    } else if (headerComp.format === 'VIDEO') {
+                                                                        vars.header = { type: 'video', link: '' }
+                                                                    } else if (headerComp.format === 'DOCUMENT') {
+                                                                        vars.header = { type: 'document', link: '', filename: '' }
+                                                                    }
+                                                                }
+
+                                                                const bodyComp = components.find(c => c.type === 'BODY' || c.type === 'body')
+                                                                if (bodyComp && (bodyComp.text?.includes("{{") || bodyComp.example?.body_text)) {
+                                                                    const count = bodyComp.example?.body_text?.length || 1
+                                                                    vars.body = new Array(count).fill('')
+                                                                }
+
+                                                                const buttonsComp = components.find(c => c.type === 'BUTTONS' || c.type === 'buttons')
+                                                                if (buttonsComp && buttonsComp.buttons) {
+                                                                    vars.buttons = {}
+                                                                    buttonsComp.buttons.forEach((btn: any, idx: number) => {
+                                                                        if (btn.url?.includes("{{") || btn.example) {
+                                                                            vars.buttons[String(idx)] = ''
+                                                                        }
+                                                                    })
+                                                                }
+
+                                                                setTemplateVariables(vars)
                                                                 setTemplateAutoClearedMessage(null)
                                                             }}
                                                         >
@@ -1036,6 +1079,124 @@ export default function NewCampaignPage() {
                                                 </div>
                                             </div>
                                         )}
+
+                                        {selectedTemplate && Object.keys(templateVariables).length > 0 && (
+                                            <div className="rounded-lg border bg-card p-4 space-y-4 animate-in fade-in slide-in-from-top-4">
+                                                <h3 className="font-semibold text-base flex items-center gap-2">
+                                                    <MessageSquare className="h-4 w-4 text-primary" />
+                                                    متغيرات القالب
+                                                </h3>
+
+                                                {/* Header Variables */}
+                                                {templateVariables.header && (
+                                                    <div className="space-y-3 pt-2 border-t">
+                                                        <Label className="text-xs text-muted-foreground uppercase font-bold">رأس الرسالة (Header)</Label>
+
+                                                        {templateVariables.header.type === 'image' && (
+                                                            <div className="space-y-1">
+                                                                <Label className="text-sm">رابط الصورة</Label>
+                                                                <Input
+                                                                    placeholder="https://example.com/image.png"
+                                                                    value={templateVariables.header.link || ''}
+                                                                    onChange={e => setTemplateVariables(prev => ({ ...prev, header: { ...prev.header, type: 'image', link: e.target.value } }))}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                        {templateVariables.header.type === 'video' && (
+                                                            <div className="space-y-1">
+                                                                <Label className="text-sm">رابط الفيديو</Label>
+                                                                <Input
+                                                                    placeholder="https://example.com/video.mp4"
+                                                                    value={templateVariables.header.link || ''}
+                                                                    onChange={e => setTemplateVariables(prev => ({ ...prev, header: { ...prev.header, type: 'video', link: e.target.value } }))}
+                                                                />
+                                                            </div>
+                                                        )}
+                                                        {templateVariables.header.type === 'document' && (
+                                                            <div className="space-y-3">
+                                                                <div className="space-y-1">
+                                                                    <Label className="text-sm">رابط الملف</Label>
+                                                                    <Input
+                                                                        placeholder="https://example.com/file.pdf"
+                                                                        value={templateVariables.header.link || ''}
+                                                                        onChange={e => setTemplateVariables(prev => ({ ...prev, header: { ...prev.header, type: 'document', link: e.target.value, filename: prev.header?.filename } }))}
+                                                                    />
+                                                                </div>
+                                                                <div className="space-y-1">
+                                                                    <Label className="text-sm">اسم الملف (اختياري)</Label>
+                                                                    <Input
+                                                                        placeholder="document.pdf"
+                                                                        value={templateVariables.header.filename || ''}
+                                                                        onChange={e => setTemplateVariables(prev => ({ ...prev, header: { ...prev.header, type: 'document', link: prev.header?.link, filename: e.target.value } }))}
+                                                                    />
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                        {templateVariables.header.type === 'text' && templateVariables.header.text?.map((v, i) => (
+                                                            <div key={`headervar-${i}`} className="space-y-1">
+                                                                <Label className="text-sm">متغير الرأس {i + 1}</Label>
+                                                                <Input
+                                                                    placeholder="نص متغير الرأس..."
+                                                                    value={v || ''}
+                                                                    onChange={e => {
+                                                                        const newText = [...(templateVariables.header?.text || [])];
+                                                                        newText[i] = e.target.value;
+                                                                        setTemplateVariables(prev => ({ ...prev, header: { ...prev.header, type: 'text', text: newText } }));
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Body Variables */}
+                                                {templateVariables.body && templateVariables.body.length > 0 && (
+                                                    <div className="space-y-3 pt-3 border-t">
+                                                        <Label className="text-xs text-muted-foreground uppercase font-bold flex justify-between">
+                                                            <span>محتوى الرسالة (Body)</span>
+                                                            <span className="text-[10px] text-primary normal-case">يدعم: {"{{contact.name}}"}, {"{{contact.phone}}"}</span>
+                                                        </Label>
+                                                        {templateVariables.body.map((v, i) => (
+                                                            <div key={`bodyvar-${i}`} className="space-y-1">
+                                                                <Label className="text-sm flex gap-2">
+                                                                    متغير المحتوى {"{{"}{i + 1}{"}}"}
+                                                                </Label>
+                                                                <Input
+                                                                    placeholder={`{{contact.name}} أو نص ثابت...`}
+                                                                    value={v || ''}
+                                                                    onChange={e => {
+                                                                        const newBody = [...(templateVariables.body || [])];
+                                                                        newBody[i] = e.target.value;
+                                                                        setTemplateVariables(prev => ({ ...prev, body: newBody }));
+                                                                    }}
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+
+                                                {/* Button Variables */}
+                                                {templateVariables.buttons && Object.keys(templateVariables.buttons).length > 0 && (
+                                                    <div className="space-y-3 pt-3 border-t">
+                                                        <Label className="text-xs text-muted-foreground uppercase font-bold">الأزرار (Buttons)</Label>
+                                                        {Object.keys(templateVariables.buttons).map((idxStr) => (
+                                                            <div key={`btnvar-${idxStr}`} className="space-y-1">
+                                                                <Label className="text-sm">الزر {Number(idxStr) + 1}</Label>
+                                                                <Input
+                                                                    placeholder="نص المتغير أو الكود"
+                                                                    value={templateVariables.buttons?.[idxStr] || ''}
+                                                                    onChange={e => setTemplateVariables(prev => ({
+                                                                        ...prev,
+                                                                        buttons: { ...(prev.buttons || {}), [idxStr]: e.target.value }
+                                                                    }))}
+                                                                />
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
                                         {isTemplateValidationLoading && selectedTemplate && (
                                             <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 text-xs text-blue-900 dark:bg-blue-900/20 dark:text-blue-200">
                                                 جارٍ التحقق من القالب...

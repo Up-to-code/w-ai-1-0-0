@@ -289,6 +289,9 @@ async function withAppSecretProof(
   url: URL,
   accessToken: string
 ): Promise<URL> {
+  const disableAppSecretProof = process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
+  if (disableAppSecretProof) return url;
+
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
   if (!appSecret) return url;
   const proof = (await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
@@ -320,11 +323,11 @@ async function fetchWabaPhoneNumbers(
     if (!response.ok) {
       const errorMessage =
         typeof body === "object" &&
-        body &&
-        "error" in body &&
-        typeof body.error === "object" &&
-        body.error &&
-        "message" in body.error
+          body &&
+          "error" in body &&
+          typeof body.error === "object" &&
+          body.error &&
+          "message" in body.error
           ? String(body.error.message)
           : `HTTP ${response.status}`;
       throw new Error(`Meta phone_numbers fetch failed for WABA ${wabaId}: ${errorMessage}`);
@@ -332,9 +335,9 @@ async function fetchWabaPhoneNumbers(
 
     const rows =
       typeof body === "object" &&
-      body &&
-      "data" in body &&
-      Array.isArray(body.data)
+        body &&
+        "data" in body &&
+        Array.isArray(body.data)
         ? body.data
         : [];
 
@@ -356,12 +359,12 @@ async function fetchWabaPhoneNumbers(
 
     const nextUrl =
       typeof body === "object" &&
-      body &&
-      "paging" in body &&
-      body.paging &&
-      typeof body.paging === "object" &&
-      "next" in body.paging &&
-      typeof body.paging.next === "string"
+        body &&
+        "paging" in body &&
+        body.paging &&
+        typeof body.paging === "object" &&
+        "next" in body.paging &&
+        typeof body.paging.next === "string"
         ? body.paging.next
         : null;
     url = nextUrl ? new URL(nextUrl) : null;
@@ -517,8 +520,9 @@ export const checkHealth = action({
       let profileReadable = false;
       let mediaEndpointReadable = false;
       const issues: string[] = [];
+      const disableAppSecretProof = process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
       const appSecretProof =
-        appSecret && token
+        appSecret && token && !disableAppSecretProof
           ? await ctx.runAction(internal.nodeUtils.createAppSecretProof, { accessToken: token, appSecret })
           : undefined;
 

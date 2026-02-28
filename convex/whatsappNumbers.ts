@@ -289,6 +289,9 @@ async function withAppSecretProof(
   url: URL,
   accessToken: string
 ): Promise<URL> {
+  const disableAppSecretProof = process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
+  if (disableAppSecretProof) return url;
+
   const appSecret = process.env.WHATSAPP_APP_SECRET?.trim();
   if (!appSecret) return url;
   const proof = (await ctx.runAction(internal.nodeUtils.createAppSecretProof, {
@@ -517,8 +520,9 @@ export const checkHealth = action({
       let profileReadable = false;
       let mediaEndpointReadable = false;
       const issues: string[] = [];
+      const disableAppSecretProof = process.env.WHATSAPP_DISABLE_APPSECRET_PROOF === "1" || process.env.WHATSAPP_DISABLE_APPSECRET_PROOF?.toLowerCase() === "true";
       const appSecretProof =
-        appSecret && token
+        appSecret && token && !disableAppSecretProof
           ? await ctx.runAction(internal.nodeUtils.createAppSecretProof, { accessToken: token, appSecret })
           : undefined;
 
