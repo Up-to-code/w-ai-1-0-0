@@ -929,27 +929,48 @@ export const sendToContact = internalAction({
                 components: JSON.stringify(template?.components || [], null, 2)
             });
 
-            const processHeaderComponent = (comp: any) => {
+            const processHeaderComponent = async (comp: any) => {
                 const headerVars = campaign.templateVariables?.header; // The user-provided link for the campaign
-                if (comp.format === "IMAGE") {
-                    const link = headerVars?.link || comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
-                    return {
-                        type: "header",
-                        parameters: [{ type: "image", image: { link } }]
-                    };
-                } else if (comp.format === "VIDEO") {
-                    const link = headerVars?.link || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
-                    return {
-                        type: "header",
-                        parameters: [{ type: "video", video: { link } }]
-                    };
-                } else if (comp.format === "DOCUMENT") {
-                    const link = headerVars?.link || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
-                    const filename = headerVars?.filename || "document.pdf";
-                    return {
-                        type: "header",
-                        parameters: [{ type: "document", document: { link, filename } }]
-                    };
+                if (comp.format === "IMAGE" || comp.format === "VIDEO" || comp.format === "DOCUMENT") {
+                    let link = "";
+                    const format = comp.format.toLowerCase();
+                    let filename = "";
+
+                    if (comp.format === "IMAGE") {
+                        link = headerVars?.link || comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
+                    } else if (comp.format === "VIDEO") {
+                        link = headerVars?.link || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
+                    } else if (comp.format === "DOCUMENT") {
+                        link = headerVars?.link || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
+                        filename = headerVars?.filename || "document.pdf";
+                    }
+
+                    try {
+                        logDebug(`[Campaign] Uploading ${comp.format} header from URL: ${link}`);
+                        const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
+                            url: link,
+                            type: format,
+                            phoneNumberId: campaign.phoneNumberId ?? undefined,
+                        });
+
+                        // If successfully uploaded, use the generated media ID to send
+                        logDebug(`[Campaign] Got media ID for header: ${mediaId}`);
+                        const param: any = { type: format };
+                        if (format === "image") param.image = { id: mediaId };
+                        else if (format === "video") param.video = { id: mediaId };
+                        else if (format === "document") param.document = { id: mediaId, filename };
+
+                        return { type: "header", parameters: [param] };
+                    } catch (uploadError) {
+                        logError(`[Campaign] Failed to upload header media, falling back to URL:`, uploadError);
+                        // Fallback to sending the link directly
+                        const param: any = { type: format };
+                        if (format === "image") param.image = { link };
+                        else if (format === "video") param.video = { link };
+                        else if (format === "document") param.document = { link, filename };
+
+                        return { type: "header", parameters: [param] };
+                    }
                 } else if (comp.format === "TEXT") {
                     const hasVariables = comp.text?.includes("{{") ||
                         (comp.example?.header_text && comp.example.header_text.length > 0);
@@ -1301,7 +1322,7 @@ export const sendToContact = internalAction({
                         });
 
                         if (comp.type === "HEADER" || comp.type === "header") {
-                            const headerComponent = processHeaderComponent(comp);
+                            const headerComponent = await processHeaderComponent(comp);
                             if (headerComponent) components.push(headerComponent);
                         } else if (comp.type === "BODY" || comp.type === "body") {
                             const hasVariables = comp.text?.includes("{{") || (comp.example?.body_text && comp.example.body_text.length > 0);
