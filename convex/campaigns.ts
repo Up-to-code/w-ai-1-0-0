@@ -1243,25 +1243,71 @@ export const sendToContact = internalAction({
                                 });
                             }
 
-                            // Process body if it has variables (TODO: implement variable substitution)
+                            // Process body if it has variables
                             const cardBodyComp = card.components?.find((c: any) =>
                                 c.type === "BODY" || c.type === "body"
                             );
                             if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
-                                logDebug(`[Campaign] Card ${index} body has variables - needs implementation`);
+                                const defaultTexts = cardBodyComp.example?.body_text ? (cardBodyComp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t)) : ["1"];
+                                const userBodyVars = campaign.templateVariables?.body || defaultTexts;
+                                const texts = userBodyVars.length > 0 ? userBodyVars : ["1"];
+
+                                const parameters = texts.map((text: string) => {
+                                    let resolvedText = String(text || "1");
+                                    if (resolvedText === "{{contact.name}}" || resolvedText === "contact.name") {
+                                        resolvedText = contact.name || "Customer";
+                                    } else if (resolvedText === "{{contact.phone}}" || resolvedText === "contact.phone") {
+                                        resolvedText = contact.phone || "";
+                                    }
+                                    return { type: "text" as const, text: resolvedText };
+                                });
+                                cardComponents.push({ type: "body", parameters });
                             }
 
-                            // Process buttons if they have variables (TODO: implement)
+                            // Process buttons if they have variables
                             const buttonsComp = card.components?.find((c: any) =>
                                 c.type === "BUTTONS" || c.type === "buttons"
                             );
                             if (buttonsComp?.buttons) {
-                                const hasButtonVariables = buttonsComp.buttons.some((btn: any) =>
-                                    btn.url?.includes("{{") || btn.example
-                                );
-                                if (hasButtonVariables) {
-                                    logDebug(`[Campaign] Card ${index} buttons have variables - needs implementation`);
-                                }
+                                buttonsComp.buttons.forEach((btn: any, idx: number) => {
+                                    const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
+                                    if (!hasVariable) return;
+
+                                    let subType = "url";
+                                    let paramType = "text";
+
+                                    if (btn.type === "URL" || btn.type === "url") {
+                                        subType = "url";
+                                        paramType = "text";
+                                    } else if (btn.type === "COPY_CODE" || btn.type === "copy_code") {
+                                        subType = "copy_code";
+                                        paramType = "coupon_code";
+                                    } else if (btn.type === "QUICK_REPLY" || btn.type === "quick_reply") {
+                                        subType = "quick_reply";
+                                        paramType = "payload";
+                                    }
+
+                                    const userBtnVar = campaign.templateVariables?.buttons?.[String(idx)];
+                                    let paramText = userBtnVar || "1";
+
+                                    if (!userBtnVar && btn.example && btn.example[0]) {
+                                        const ex = String(btn.example[0]);
+                                        const codeMatch = ex.match(/code=([^&\s]+)/i);
+                                        paramText = codeMatch ? codeMatch[1] : ex;
+                                    }
+
+                                    const paramObj: any = { type: paramType };
+                                    if (paramType === "text") paramObj.text = paramText;
+                                    else if (paramType === "coupon_code") paramObj.coupon_code = paramText;
+                                    else if (paramType === "payload") paramObj.payload = paramText;
+
+                                    cardComponents.push({
+                                        type: "button",
+                                        sub_type: subType,
+                                        index: idx,
+                                        parameters: [paramObj]
+                                    });
+                                });
                             }
 
                             return {
@@ -1295,7 +1341,66 @@ export const sendToContact = internalAction({
                                     c.type === "BODY" || c.type === "body"
                                 );
                                 if (cardBodyComp && cardBodyComp.text?.includes("{{")) {
-                                    logDebug(`[Campaign] Card ${index} body has variables - needs implementation`);
+                                    const defaultTexts = cardBodyComp.example?.body_text ? (cardBodyComp.example.body_text as (string | string[])[]).flat().map((t: string | string[]) => (Array.isArray(t) ? t[0] : t)) : ["1"];
+                                    const userBodyVars = campaign.templateVariables?.body || defaultTexts;
+                                    const texts = userBodyVars.length > 0 ? userBodyVars : ["1"];
+
+                                    const parameters = texts.map((text: string) => {
+                                        let resolvedText = String(text || "1");
+                                        if (resolvedText === "{{contact.name}}" || resolvedText === "contact.name") {
+                                            resolvedText = contact.name || "Customer";
+                                        } else if (resolvedText === "{{contact.phone}}" || resolvedText === "contact.phone") {
+                                            resolvedText = contact.phone || "";
+                                        }
+                                        return { type: "text" as const, text: resolvedText };
+                                    });
+                                    cardComponents.push({ type: "body", parameters });
+                                }
+
+                                // Process buttons if they have variables
+                                const buttonsComp = card.components?.find((c: any) =>
+                                    c.type === "BUTTONS" || c.type === "buttons"
+                                );
+                                if (buttonsComp?.buttons) {
+                                    buttonsComp.buttons.forEach((btn: any, idx: number) => {
+                                        const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
+                                        if (!hasVariable) return;
+
+                                        let subType = "url";
+                                        let paramType = "text";
+
+                                        if (btn.type === "URL" || btn.type === "url") {
+                                            subType = "url";
+                                            paramType = "text";
+                                        } else if (btn.type === "COPY_CODE" || btn.type === "copy_code") {
+                                            subType = "copy_code";
+                                            paramType = "coupon_code";
+                                        } else if (btn.type === "QUICK_REPLY" || btn.type === "quick_reply") {
+                                            subType = "quick_reply";
+                                            paramType = "payload";
+                                        }
+
+                                        const userBtnVar = campaign.templateVariables?.buttons?.[String(idx)];
+                                        let paramText = userBtnVar || "1";
+
+                                        if (!userBtnVar && btn.example && btn.example[0]) {
+                                            const ex = String(btn.example[0]);
+                                            const codeMatch = ex.match(/code=([^&\s]+)/i);
+                                            paramText = codeMatch ? codeMatch[1] : ex;
+                                        }
+
+                                        const paramObj: any = { type: paramType };
+                                        if (paramType === "text") paramObj.text = paramText;
+                                        else if (paramType === "coupon_code") paramObj.coupon_code = paramText;
+                                        else if (paramType === "payload") paramObj.payload = paramText;
+
+                                        cardComponents.push({
+                                            type: "button",
+                                            sub_type: subType,
+                                            index: idx,
+                                            parameters: [paramObj]
+                                        });
+                                    });
                                 }
 
                                 return {
