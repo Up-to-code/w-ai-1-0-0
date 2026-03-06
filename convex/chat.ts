@@ -343,7 +343,7 @@ export const getMessagesPage = query({
  * 
  * Returns null if template is a carousel (requires special handling via action).
  */
-function buildTemplateComponents(template: any): any[] | null {
+async function buildTemplateComponents(ctx: any, template: any, phoneNumberId?: string): Promise<any[] | null> {
   const components: any[] = [];
 
   if (!template || !template.components) {
@@ -368,24 +368,46 @@ function buildTemplateComponents(template: any): any[] | null {
   for (const comp of template.components) {
     // Process HEADER component
     if (comp.type === "HEADER" || comp.type === "header") {
-      if (comp.format === "IMAGE") {
-        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
-        components.push({
-          type: "header",
-          parameters: [{ type: "image", image: { link } }]
-        });
-      } else if (comp.format === "VIDEO") {
-        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
-        components.push({
-          type: "header",
-          parameters: [{ type: "video", video: { link } }]
-        });
-      } else if (comp.format === "DOCUMENT") {
-        const link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
-        components.push({
-          type: "header",
-          parameters: [{ type: "document", document: { link, filename: "document.pdf" } }]
-        });
+      if (comp.format === "IMAGE" || comp.format === "VIDEO" || comp.format === "DOCUMENT") {
+        let link = "";
+        const format = comp.format.toLowerCase();
+        let filename = "";
+
+        if (comp.format === "IMAGE") {
+          link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://placehold.co/600x400.png";
+        } else if (comp.format === "VIDEO") {
+          link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://sample-videos.com/video123/mp4/720/big_buck_bunny_720p_1mb.mp4";
+        } else if (comp.format === "DOCUMENT") {
+          link = comp.example?.header_handle?.[0] || comp.example?.header_url?.[0] || "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf";
+          filename = "document.pdf";
+        }
+
+        try {
+          console.log(`[Chat] Uploading ${comp.format} header from URL: ${link}`);
+          const mediaId = await ctx.runAction(api.whatsapp.uploadMediaFromUrl, {
+            url: link,
+            type: format,
+            phoneNumberId: phoneNumberId,
+          });
+
+          // Successfully uploaded
+          console.log(`[Chat] Got media ID for header: ${mediaId}`);
+          const param: any = { type: format };
+          if (format === "image") param.image = { id: mediaId };
+          else if (format === "video") param.video = { id: mediaId };
+          else if (format === "document") param.document = { id: mediaId, filename };
+
+          components.push({ type: "header", parameters: [param] });
+        } catch (uploadError) {
+          console.error(`[Chat] Failed to upload header media, falling back to URL:`, uploadError);
+          // Fallback to direct link
+          const param: any = { type: format };
+          if (format === "image") param.image = { link };
+          else if (format === "video") param.video = { link };
+          else if (format === "document") param.document = { link, filename };
+
+          components.push({ type: "header", parameters: [param] });
+        }
       } else if (comp.format === "TEXT") {
         // Check if header has variables
         const hasVariables = comp.text?.includes("{{") ||
@@ -596,7 +618,7 @@ export const sendMessage = mutation({
       }
 
       // Build components based on template definition
-      const components = buildTemplateComponents(template);
+      const components = await buildTemplateComponents(ctx, template, chat.phoneNumberId ?? undefined);
 
       // If buildTemplateComponents returned null, it means carousel without headers
       // For static carousels, we can send empty components
