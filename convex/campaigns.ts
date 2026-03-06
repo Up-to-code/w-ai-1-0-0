@@ -1351,7 +1351,20 @@ export const sendToContact = internalAction({
                                 buttons.forEach((btn: any, idx: number) => {
                                     const hasVariable = btn.url?.includes("{{") || (btn.example && btn.example.length > 0);
                                     if (!hasVariable) return;
-                                    const subType = (btn.type === "URL" || btn.type === "url") ? "url" : (btn.type === "COPY_CODE" || btn.type === "copy_code") ? "copy_code" : "url";
+
+                                    let subType = "url";
+                                    let paramType = "text";
+
+                                    if (btn.type === "URL" || btn.type === "url") {
+                                        subType = "url";
+                                        paramType = "text";
+                                    } else if (btn.type === "COPY_CODE" || btn.type === "copy_code") {
+                                        subType = "copy_code";
+                                        paramType = "coupon_code";
+                                    } else if (btn.type === "QUICK_REPLY" || btn.type === "quick_reply") {
+                                        subType = "quick_reply";
+                                        paramType = "payload";
+                                    }
 
                                     // Use variable from campaign.templateVariables.buttons[idx] if exists
                                     const userBtnVar = campaign.templateVariables?.buttons?.[String(idx)];
@@ -1359,14 +1372,21 @@ export const sendToContact = internalAction({
 
                                     if (!userBtnVar && btn.example && btn.example[0]) {
                                         const ex = String(btn.example[0]);
+                                        // Specific parsing logic for known types if needed, else fallback to raw example
                                         const codeMatch = ex.match(/code=([^&\s]+)/i);
                                         paramText = codeMatch ? codeMatch[1] : ex;
                                     }
+
+                                    const paramObj: any = { type: paramType };
+                                    if (paramType === "text") paramObj.text = paramText;
+                                    else if (paramType === "coupon_code") paramObj.coupon_code = paramText;
+                                    else if (paramType === "payload") paramObj.payload = paramText;
+
                                     components.push({
                                         type: "button",
                                         sub_type: subType,
                                         index: idx,
-                                        parameters: [{ type: "text" as const, payload: paramText, text: paramText }]
+                                        parameters: [paramObj]
                                     });
                                 });
                             }
