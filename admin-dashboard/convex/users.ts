@@ -37,10 +37,10 @@ export const getCurrentUserRole = query({
         .query("users")
         .withIndex("by_token", (q) => q.eq("tokenIdentifier", identity.tokenIdentifier))
         .first();
-      if (user) return { role: user.role as "admin" | "agent" | "user" };
+      if (user) return { role: user.role as "owner" | "admin" | "agent" | "user" };
     }
     const first = await ctx.db.query("users").first();
-    if (first) return { role: first.role as "admin" | "agent" | "user" };
+    if (first) return { role: first.role as "owner" | "admin" | "agent" | "user" };
     return null;
   },
 });
@@ -48,7 +48,7 @@ export const getCurrentUserRole = query({
 export const updateRole = mutation({
   args: { 
     userId: v.id("users"),
-    role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user"))
+    role: v.union(v.literal("owner"), v.literal("admin"), v.literal("agent"), v.literal("user"))
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);

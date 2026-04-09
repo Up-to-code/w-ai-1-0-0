@@ -4,7 +4,7 @@ import { DEFAULT_TOOLS_ENABLED, normalizeToolsEnabled } from "./agentsUtils";
 
 const DEFAULT_PROMPT =
   "You are a helpful sales assistant for this WhatsApp number. Keep replies concise and practical, and recommend relevant store products when useful.";
-const DEFAULT_FREE_MODEL = "stepfun/step-3.5-flash:free";
+const DEFAULT_FREE_MODEL = "arcee-ai/trinity-mini:free";
 
 function toView(config: {
   phoneNumberId?: string;
@@ -160,5 +160,25 @@ export const ensureForPhoneNumber = mutation({
       fallbackMode: "text_only",
       updatedAt: Date.now(),
     });
+  },
+});
+
+export const replaceModelAcrossConfigs = mutation({
+  args: {
+    fromModel: v.string(),
+    toModel: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db.query("ai_configs").collect();
+    const matchingRows = rows.filter((row) => row.model === args.fromModel);
+
+    for (const row of matchingRows) {
+      await ctx.db.patch(row._id, {
+        model: args.toModel,
+        updatedAt: Date.now(),
+      });
+    }
+
+    return { updated: matchingRows.length };
   },
 });

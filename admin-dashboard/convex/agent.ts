@@ -5,6 +5,13 @@ import { isToolAllowed, normalizeToolsEnabled } from "./agentsUtils";
 import { buildConversationContext } from "./contextBuilder";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_FREE_MODEL = "arcee-ai/trinity-mini:free";
+const FREE_MODEL_FALLBACKS = [
+  DEFAULT_FREE_MODEL,
+  "arcee-ai/trinity-mini:free",
+  "qwen/qwen3-32b:free",
+  "openrouter/auto",
+] as const;
 
 /** Tool registry: add new tools here and implement parsing in LLM response + executeTool/messengerProduct. */
 const TOOL_REGISTRY = [
@@ -40,6 +47,102 @@ function cleanText(t: string): string {
 
 function hasArabicText(text: string): boolean {
   return /[\u0600-\u06FF]/.test(text);
+}
+
+function uniqueModels(models: Array<string | undefined | null>): string[] {
+  return [...new Set(models.map((model) => model?.trim()).filter((model): model is string => !!model))];
+}
+
+function buildModelFallbackChain(preferredModel?: string): string[] {
+  return uniqueModels([preferredModel, ...FREE_MODEL_FALLBACKS]);
+}
+
+function parseOpenRouterError(errText: string): { code?: number; message?: string } {
+  try {
+    const parsed = JSON.parse(errText) as { error?: { code?: number; message?: string } };
+    return parsed.error ?? {};
+  } catch {
+    return {};
+  }
+}
+
+function shouldRetryOpenRouterWithFallback(input: {
+  status: number;
+  errorCode?: number;
+  errorMessage?: string;
+  hasMoreModels: boolean;
+}): boolean {
+  if (!input.hasMoreModels) return false;
+  const code = input.errorCode ?? input.status;
+  const message = input.errorMessage ?? "";
+  return (
+    code === 404 ||
+    code === 429 ||
+    input.status >= 500 ||
+    /No endpoints found|rate limit|overloaded|temporarily unavailable/i.test(message)
+  );
+}
+
+async function callOpenRouterWithFallback(input: {
+  apiKey: string;
+  preferredModel?: string;
+  body: Record<string, unknown>;
+  referer?: string;
+  title: string;
+}): Promise<{
+  response: Response;
+  modelUsed: string;
+  attemptedModels: string[];
+}> {
+  const models = buildModelFallbackChain(input.preferredModel);
+  let lastErrorText = "No model available";
+
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    const response = await fetch(OPENROUTER_API_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${input.apiKey}`,
+        "Content-Type": "application/json",
+        "HTTP-Referer": input.referer || "https://w-ai.com",
+        "X-Title": input.title,
+      },
+      body: JSON.stringify({
+        ...input.body,
+        model,
+      }),
+    });
+
+    if (response.ok) {
+      return {
+        response,
+        modelUsed: model,
+        attemptedModels: models.slice(0, index + 1),
+      };
+    }
+
+    const errText = await response.text();
+    lastErrorText = errText;
+    const parsedError = parseOpenRouterError(errText);
+    const hasMoreModels = index < models.length - 1;
+
+    console.warn(
+      `[OpenRouter] ${input.title} failed for model=${model} status=${response.status} code=${parsedError.code ?? "unknown"} message=${parsedError.message ?? "unknown"}`
+    );
+
+    if (
+      !shouldRetryOpenRouterWithFallback({
+        status: response.status,
+        errorCode: parsedError.code,
+        errorMessage: parsedError.message,
+        hasMoreModels,
+      })
+    ) {
+      throw new Error(`OpenRouter Error: ${errText}`);
+    }
+  }
+
+  throw new Error(`OpenRouter Error: ${lastErrorText}`);
 }
 
 export function buildIdentityLockPrompt(input: {
@@ -87,25 +190,14 @@ export const testResponse = internalAction({
         ];
 
         try {
-            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://w-ai.com",
-                    "X-Title": "W-AI Agent Test",
+            const { response } = await callOpenRouterWithFallback({
+                apiKey,
+                preferredModel: args.model,
+                body: {
+                    messages,
                 },
-                body: JSON.stringify({
-                    model: args.model,
-                    messages: messages,
-                })
+                title: "W-AI Agent Test",
             });
-
-            if (!response.ok) {
-                const err = await response.text();
-                throw new Error(`OpenRouter Error: ${err}`);
-            }
-
             const data = await response.json();
             return data.choices?.[0]?.message?.content || "No response generated.";
         } catch (error: any) {
@@ -129,29 +221,21 @@ export const runRealTest = action({
     if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
     const config = await ctx.runQuery(api.ai_config.getConfig, {}) as { systemPrompt?: string; model?: string } | null;
     const systemPrompt = config?.systemPrompt ?? "You are a helpful sales assistant.";
-    const model = config?.model ?? "arcee-ai/trinity-mini:free";
+    const model = config?.model ?? DEFAULT_FREE_MODEL;
     const userMessage = (args.message ?? "مرحبا، ما المنتجات المتوفرة؟").trim();
     const messages = [
       { role: "system" as const, content: systemPrompt },
       { role: "user" as const, content: userMessage },
     ];
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://w-ai.com",
-        "X-Title": "W-AI Agent Real Test",
-      },
-      body: JSON.stringify({ model, messages }),
+    const { response, modelUsed } = await callOpenRouterWithFallback({
+      apiKey,
+      preferredModel: model,
+      body: { messages },
+      title: "W-AI Agent Real Test",
     });
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenRouter Error: ${err}`);
-    }
     const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
     const content = data.choices?.[0]?.message?.content ?? "No response generated.";
-    return { message: userMessage, model, response: content };
+    return { message: userMessage, model: modelUsed, response: content };
   },
 });
 
@@ -175,20 +259,12 @@ export const runTest = action({
       messages,
     };
     if (args.temperature !== undefined) body.temperature = args.temperature;
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://w-ai.com",
-        "X-Title": "W-AI Agent Test",
-      },
-      body: JSON.stringify(body),
+    const { response } = await callOpenRouterWithFallback({
+      apiKey,
+      preferredModel: args.model,
+      body,
+      title: "W-AI Agent Test",
     });
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenRouter Error: ${err}`);
-    }
     const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
     return data.choices?.[0]?.message?.content ?? "No response generated.";
   },
@@ -346,7 +422,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     const config = await ctx.runQuery(internal.ai_config.getInternalConfig, { 
       phoneNumberId: chat?.phoneNumberId 
     });
-    const model = config?.model || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
+    const model = config?.model || process.env.OPENROUTER_MODEL || DEFAULT_FREE_MODEL;
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
     const numberProfile = chat?.phoneNumberId
       ? await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
@@ -839,43 +915,18 @@ Description: ${p.description.substring(0, 150)}...
     }
 
     try {
-        const response = await fetch(OPENROUTER_API_URL, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${effectiveApiKey}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
-                "X-Title": "W-AI Agent",
+        const { response, modelUsed, attemptedModels } = await callOpenRouterWithFallback({
+            apiKey: effectiveApiKey,
+            preferredModel: model,
+            body: {
+                messages,
             },
-            body: JSON.stringify({
-                model: model,
-                messages: messages,
-            })
+            referer: process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
+            title: "W-AI Agent",
         });
 
-        if (!response.ok) {
-            const errText = await response.text();
-            console.error("[Agent] OpenRouter Error:", errText);
-            let parsed: { error?: { code?: number; message?: string } } = {};
-            try {
-                parsed = JSON.parse(errText) as typeof parsed;
-            } catch {
-                // ignore
-            }
-            const code = parsed?.error?.code ?? response.status;
-            const isRateLimit = code === 429 || (typeof parsed?.error?.message === "string" && parsed.error.message.includes("Rate limit"));
-            if (isRateLimit) {
-                const fallback = hasArabicText(args.userMessage)
-                    ? "عذراً، الطلب كثير حالياً. جرّب بعد دقائق أو تواصل معنا لاحقاً."
-                    : "Sorry, we're a bit overloaded. Try again in a few minutes or contact us later.";
-                await ctx.runMutation(internal.messages.sendAndSave, {
-                    chatId: args.chatId,
-                    content: fallback,
-                    type: "text",
-                    contactPhone: args.contactPhone,
-                });
-            }
-            return;
+        if (modelUsed !== model) {
+            console.log(`[Agent] OpenRouter fallback engaged requested=${model} used=${modelUsed} tried=${attemptedModels.join(" -> ")}`);
         }
 
         const data = await response.json();
@@ -884,16 +935,10 @@ Description: ${p.description.substring(0, 150)}...
         // Quality guard: if user wrote Arabic but model replied non-Arabic, auto-rewrite in Arabic.
         if (hasArabicText(args.userMessage) && !hasArabicText(aiText)) {
             try {
-                const rewriteResponse = await fetch(OPENROUTER_API_URL, {
-                    method: "POST",
-                    headers: {
-                        "Authorization": `Bearer ${effectiveApiKey}`,
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
-                        "X-Title": "W-AI Agent Arabic Rewriter",
-                    },
-                    body: JSON.stringify({
-                        model,
+                const { response: rewriteResponse } = await callOpenRouterWithFallback({
+                    apiKey: effectiveApiKey,
+                    preferredModel: modelUsed,
+                    body: {
                         messages: [
                             {
                                 role: "system",
@@ -905,14 +950,14 @@ Description: ${p.description.substring(0, 150)}...
                                 content: aiText,
                             },
                         ],
-                    }),
+                    },
+                    referer: process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
+                    title: "W-AI Agent Arabic Rewriter",
                 });
-                if (rewriteResponse.ok) {
-                    const rewriteData = await rewriteResponse.json();
-                    const rewritten = rewriteData.choices?.[0]?.message?.content;
-                    if (typeof rewritten === "string" && hasArabicText(rewritten)) {
-                        aiText = rewritten;
-                    }
+                const rewriteData = await rewriteResponse.json();
+                const rewritten = rewriteData.choices?.[0]?.message?.content;
+                if (typeof rewritten === "string" && hasArabicText(rewritten)) {
+                    aiText = rewritten;
                 }
             } catch (rewriteError) {
                 console.warn("[Agent] Arabic rewrite fallback failed:", rewriteError);
@@ -1097,12 +1142,24 @@ Description: ${p.description.substring(0, 150)}...
                 { role: "user", content: args.userMessage },
                 { role: "assistant", content: aiText }
             ],
-            model: model,
+            model: modelUsed,
             apiKey: effectiveApiKey
         });
 
     } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
         console.error("[Agent] Execution Failed:", error);
+        if (/Rate limit/i.test(errorMessage)) {
+            const fallback = hasArabicText(args.userMessage)
+                ? "عذراً، الطلب كثير حالياً. جرّب بعد دقائق أو تواصل معنا لاحقاً."
+                : "Sorry, we're a bit overloaded. Try again in a few minutes or contact us later.";
+            await ctx.runMutation(internal.messages.sendAndSave, {
+                chatId: args.chatId,
+                content: fallback,
+                type: "text",
+                contactPhone: args.contactPhone,
+            });
+        }
     }
   },
 });
@@ -1143,21 +1200,14 @@ export const updateSummary = internalAction({
         `;
 
         try {
-            const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-                method: "POST",
-                headers: {
-                    "Authorization": `Bearer ${apiKey}`,
-                    "Content-Type": "application/json",
-                    "HTTP-Referer": "https://w-ai.com",
-                    "X-Title": "W-AI Summary Agent",
-                },
-                body: JSON.stringify({
-                    model: "arcee-ai/trinity-mini:free", // Use small fast model for summary
+            const { response } = await callOpenRouterWithFallback({
+                apiKey,
+                preferredModel: args.model || "arcee-ai/trinity-mini:free",
+                body: {
                     messages: [{ role: "user", content: summaryPrompt }],
-                })
+                },
+                title: "W-AI Summary Agent",
             });
-
-            if (!response.ok) return;
 
             const data = await response.json();
             const newSummaryRaw = data.choices?.[0]?.message?.content || args.existingSummary;

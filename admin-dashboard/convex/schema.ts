@@ -6,7 +6,7 @@ export default defineSchema({
     name: v.optional(v.string()),
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
-    role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user")),
+    role: v.union(v.literal("owner"), v.literal("admin"), v.literal("agent"), v.literal("user")),
     // Auth fields (if using custom auth or linking to provider)
     tokenIdentifier: v.optional(v.string()),
     password: v.optional(v.string()),
@@ -22,6 +22,7 @@ export default defineSchema({
   }).index("by_phone", ["phone"]),
 
   whatsapp_numbers: defineTable({
+    orgId: v.optional(v.string()),
     businessAccountId: v.string(),
     businessNumberId: v.string(), // Meta phone_number_id; used for routing
     phone: v.string(),
@@ -35,10 +36,17 @@ export default defineSchema({
     lastAuthErrorCode: v.optional(v.number()),
     lastAuthErrorMessage: v.optional(v.string()),
     lastAuthErrorAt: v.optional(v.number()),
+    lastWabaValidationAt: v.optional(v.number()),
+    wabaValidationStatus: v.optional(v.union(
+      v.literal("valid"),
+      v.literal("invalid"),
+      v.literal("pending")
+    )),
     createdAt: v.number(),
   }).index("by_business_number_id", ["businessNumberId"]),
 
   chats: defineTable({
+    orgId: v.optional(v.string()),
     contactId: v.string(), // WhatsApp contact id / phone
     contactName: v.string(),
     contactPhone: v.string(),
@@ -57,6 +65,7 @@ export default defineSchema({
 
   ai_configs: defineTable({
     phoneNumberId: v.optional(v.string()), // null/undefined = global default; otherwise per-number config
+    orgId: v.optional(v.string()),
     systemPrompt: v.string(),
     model: v.string(),
     temperature: v.optional(v.number()),
@@ -91,6 +100,7 @@ export default defineSchema({
   }).index("by_created_at", ["createdAt"]),
 
   messages: defineTable({
+    orgId: v.optional(v.string()),
     chatId: v.id("chats"),
     direction: v.union(v.literal("inbound"), v.literal("outbound")),
     type: v.union(v.literal("text"), v.literal("image"), v.literal("video"), v.literal("audio"), v.literal("document"), v.literal("template"), v.literal("interactive")),
@@ -108,6 +118,7 @@ export default defineSchema({
     .index("by_meta_message_id", ["metaMessageId"]),
 
   files: defineTable({
+    orgId: v.optional(v.string()),
     storageId: v.string(),
     url: v.string(),
     name: v.string(),
@@ -121,6 +132,7 @@ export default defineSchema({
     .index("by_whatsapp_media_id", ["whatsappMediaId"]),
 
   templates: defineTable({
+    orgId: v.optional(v.string()),
     phoneNumberId: v.optional(v.string()), // Meta phone_number_id; template scope per sender number
     name: v.string(),
     language: v.string(),
@@ -136,6 +148,7 @@ export default defineSchema({
 
   // Template store: library of default + user-added template definitions (not yet on Meta)
   template_store: defineTable({
+    orgId: v.optional(v.string()),
     name: v.string(),
     language: v.string(),
     category: v.string(),
@@ -148,6 +161,7 @@ export default defineSchema({
   }).index("by_created_at", ["createdAt"]),
 
   products: defineTable({
+    orgId: v.optional(v.string()),
     externalId: v.string(), // SOLO ID
     name: v.string(),
     price: v.number(),
@@ -162,6 +176,7 @@ export default defineSchema({
     }),
 
   knowledge_base: defineTable({
+    orgId: v.optional(v.string()),
     phoneNumberId: v.optional(v.string()),
     title: v.string(),
     content: v.string(),
@@ -175,6 +190,7 @@ export default defineSchema({
   }),
 
   product_categories: defineTable({
+    orgId: v.optional(v.string()),
     phoneNumberId: v.string(),
     name: v.string(),
     slug: v.string(),
@@ -188,6 +204,7 @@ export default defineSchema({
     .index("by_phone_updated", ["phoneNumberId", "updatedAt"]),
 
   manual_products: defineTable({
+    orgId: v.optional(v.string()),
     phoneNumberId: v.string(),
     title: v.string(),
     description: v.string(),
@@ -215,6 +232,7 @@ export default defineSchema({
 
   // Salla OAuth Integration - stores tokens, fetches products on demand
   sallaIntegrations: defineTable({
+    orgId: v.optional(v.string()),
     merchantId: v.string(),
     accessToken: v.string(),
     refreshToken: v.string(),
@@ -235,6 +253,7 @@ export default defineSchema({
   // --- Scalable Campaigns Schema ---
 
   contacts: defineTable({
+    orgId: v.optional(v.string()),
     name: v.string(),
     phone: v.string(),
     email: v.optional(v.string()),
@@ -250,6 +269,7 @@ export default defineSchema({
     .index("by_tag", ["tags"]), // Note: Convex doesn't support array indexing directly like this, but we'll filter
 
   segments: defineTable({
+    orgId: v.optional(v.string()),
     name: v.string(),
     criteria: v.any(), // JSON criteria
     count: v.number(),
@@ -257,6 +277,7 @@ export default defineSchema({
   }),
 
   campaigns: defineTable({
+    orgId: v.optional(v.string()),
     name: v.string(),
     templateId: v.id("templates"),
     templateName: v.string(),
@@ -299,6 +320,7 @@ export default defineSchema({
 
   // Workflows (Automation)
   workflows: defineTable({
+    orgId: v.optional(v.string()),
     phoneNumberId: v.optional(v.string()), // Undefined means global fallback workflow
     name: v.string(),
     trigger: v.string(), // new_message, keyword, etc.
@@ -316,6 +338,7 @@ export default defineSchema({
   campaign_logs: defineTable({
     campaignId: v.id("campaigns"),
     contactId: v.id("contacts"),
+    orgId: v.optional(v.string()),
     status: v.union(
       v.literal("sent"),
       v.literal("delivered"),
@@ -330,6 +353,7 @@ export default defineSchema({
     .index("by_message_id", ["metaMessageId"]),
 
   notifications: defineTable({
+    orgId: v.optional(v.string()),
     type: v.union(v.literal("info"), v.literal("warning"), v.literal("error"), v.literal("success")),
     title: v.string(),
     message: v.string(),
@@ -347,6 +371,7 @@ export default defineSchema({
   }),
 
   webhook_events: defineTable({
+    orgId: v.optional(v.string()),
     source: v.union(v.literal("whatsapp"), v.literal("salla")),
     body: v.any(),
     processingStatus: v.optional(v.union(
@@ -401,6 +426,7 @@ export default defineSchema({
   }),
 
   orders: defineTable({
+    orgId: v.optional(v.string()),
     orderNumber: v.string(),
     customerName: v.string(),
     customerPhone: v.optional(v.string()),
@@ -424,7 +450,7 @@ export default defineSchema({
     name: v.optional(v.string()),
     email: v.optional(v.string()),
     phone: v.optional(v.string()),
-    role: v.union(v.literal("admin"), v.literal("agent"), v.literal("user")),
+    role: v.union(v.literal("owner"), v.literal("admin"), v.literal("agent"), v.literal("user")),
     tokenIdentifier: v.optional(v.string()),
     password: v.optional(v.string()),
     createdAt: v.number(),

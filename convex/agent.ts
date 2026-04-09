@@ -5,6 +5,79 @@ import { isToolAllowed, normalizeToolsEnabled } from "./agentsUtils";
 import { buildConversationContext } from "./contextBuilder";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
+const DEFAULT_OPENROUTER_FREE_FALLBACK_MODELS = [
+  "arcee-ai/trinity-mini:free",
+  "qwen/qwen3-32b:free",
+  "meta-llama/llama-3.3-70b-instruct:free",
+  "deepseek/deepseek-r1-0528:free",
+  "openrouter/auto",
+] as const;
+
+function parseFallbackModelsFromEnv(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+}
+
+function buildModelFallbackChain(primaryModel: string): string[] {
+  const configured = parseFallbackModelsFromEnv(process.env.OPENROUTER_FALLBACK_MODELS);
+  const combined = [primaryModel, ...configured, ...DEFAULT_OPENROUTER_FREE_FALLBACK_MODELS];
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const model of combined) {
+    if (seen.has(model)) continue;
+    seen.add(model);
+    unique.push(model);
+  }
+  return unique;
+}
+
+function isRateLimitedResponse(responseStatus: number, errorPayload: unknown): boolean {
+  if (responseStatus === 429) return true;
+  if (!errorPayload || typeof errorPayload !== "object") return false;
+  const payload = errorPayload as { error?: { code?: number; message?: string; metadata?: { raw?: string } } };
+  const code = payload.error?.code;
+  const message = payload.error?.message || "";
+  const raw = payload.error?.metadata?.raw || "";
+  return code === 429 || /rate.?limit|temporarily rate-limited/i.test(`${message} ${raw}`);
+}
+
+function isRetryableOpenRouterFailure(responseStatus: number, errorPayload: unknown): boolean {
+  if (responseStatus === 429 || responseStatus >= 500) return true;
+  if (!errorPayload || typeof errorPayload !== "object") return false;
+  const payload = errorPayload as { error?: { code?: number; message?: string; metadata?: { raw?: string } } };
+  const code = payload.error?.code;
+  const message = payload.error?.message || "";
+  const raw = payload.error?.metadata?.raw || "";
+  // Retry for common upstream/provider failures and key-level spend-limit blocks.
+  return (
+    code === 402 ||
+    code === 429 ||
+    /rate.?limit|temporarily rate-limited|overloaded|provider returned error|spend limit exceeded|temporarily unavailable/i.test(
+      `${message} ${raw}`
+    )
+  );
+}
+
+function isLowQualityOverloadReply(text: string): boolean {
+  if (!text) return true;
+  const normalized = text.toLowerCase().replace(/\s+/g, " ").trim();
+  const patterns = [
+    /service is currently busy/,
+    /try again in a few minutes/,
+    /we (are|\'re) (a bit )?overloaded/,
+    /temporarily unavailable/,
+    /rate[- ]?limited/,
+    /provider returned error/,
+    /الخدمة مشغولة/,
+    /الطلب كثير/,
+    /جرّب بعد دقائق/,
+    /حاليا|حالياً/,
+  ];
+  return patterns.some((p) => p.test(normalized));
+}
 
 /** Tool registry: add new tools here and implement parsing in LLM response + executeTool/messengerProduct. */
 const TOOL_REGISTRY = [
@@ -135,23 +208,46 @@ export const runRealTest = action({
       { role: "system" as const, content: systemPrompt },
       { role: "user" as const, content: userMessage },
     ];
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://w-ai.com",
-        "X-Title": "W-AI Agent Real Test",
-      },
-      body: JSON.stringify({ model, messages }),
-    });
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenRouter Error: ${err}`);
+    const modelChain = buildModelFallbackChain(model);
+    let data: { choices?: { message?: { content?: string } }[] } | null = null;
+    let usedModel = model;
+    let lastError = "Unknown OpenRouter error";
+    for (let i = 0; i < modelChain.length; i += 1) {
+      const candidate = modelChain[i];
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://w-ai.com",
+          "X-Title": "W-AI Agent Real Test",
+        },
+        body: JSON.stringify({ model: candidate, messages }),
+      });
+      if (response.ok) {
+        const candidateData = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+        const candidateText = candidateData.choices?.[0]?.message?.content ?? "";
+        if (isLowQualityOverloadReply(candidateText) && i < modelChain.length - 1) {
+          lastError = `Low-quality overload reply from ${candidate}`;
+          continue;
+        }
+        data = candidateData;
+        usedModel = candidate;
+        break;
+      }
+      const errText = await response.text();
+      lastError = errText;
+      let parsed: unknown = {};
+      try {
+        parsed = JSON.parse(errText);
+      } catch {
+        // ignore parse errors
+      }
+      if (!isRetryableOpenRouterFailure(response.status, parsed)) break;
     }
-    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    if (!data) throw new Error(`OpenRouter Error: ${lastError}`);
     const content = data.choices?.[0]?.message?.content ?? "No response generated.";
-    return { message: userMessage, model, response: content };
+    return { message: userMessage, model: usedModel, response: content };
   },
 });
 
@@ -175,21 +271,42 @@ export const runTest = action({
       messages,
     };
     if (args.temperature !== undefined) body.temperature = args.temperature;
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://w-ai.com",
-        "X-Title": "W-AI Agent Test",
-      },
-      body: JSON.stringify(body),
-    });
-    if (!response.ok) {
-      const err = await response.text();
-      throw new Error(`OpenRouter Error: ${err}`);
+    const modelChain = buildModelFallbackChain(args.model);
+    let data: { choices?: { message?: { content?: string } }[] } | null = null;
+    let lastError = "Unknown OpenRouter error";
+    for (let i = 0; i < modelChain.length; i += 1) {
+      const candidate = modelChain[i];
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://w-ai.com",
+          "X-Title": "W-AI Agent Test",
+        },
+        body: JSON.stringify({ ...body, model: candidate }),
+      });
+      if (response.ok) {
+        const candidateData = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+        const candidateText = candidateData.choices?.[0]?.message?.content ?? "";
+        if (isLowQualityOverloadReply(candidateText) && i < modelChain.length - 1) {
+          lastError = `Low-quality overload reply from ${candidate}`;
+          continue;
+        }
+        data = candidateData;
+        break;
+      }
+      const errText = await response.text();
+      lastError = errText;
+      let parsed: unknown = {};
+      try {
+        parsed = JSON.parse(errText);
+      } catch {
+        // ignore parse errors
+      }
+      if (!isRetryableOpenRouterFailure(response.status, parsed)) break;
     }
-    const data = (await response.json()) as { choices?: { message?: { content?: string } }[] };
+    if (!data) throw new Error(`OpenRouter Error: ${lastError}`);
     return data.choices?.[0]?.message?.content ?? "No response generated.";
   },
 });
@@ -346,7 +463,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     const config = await ctx.runQuery(internal.ai_config.getInternalConfig, { 
       phoneNumberId: chat?.phoneNumberId 
     });
-    const model = config?.model || process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
+    const model = config?.model || process.env.OPENROUTER_MODEL || "openrouter/auto";
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
     const numberProfile = chat?.phoneNumberId
       ? await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
@@ -839,46 +956,99 @@ Description: ${p.description.substring(0, 150)}...
     }
 
     try {
-        const response = await fetch(OPENROUTER_API_URL, {
-            method: "POST",
-            headers: {
-                "Authorization": `Bearer ${effectiveApiKey}`,
-                "Content-Type": "application/json",
-                "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
-                "X-Title": "W-AI Agent",
-            },
-            body: JSON.stringify({
-                model: model,
-                messages: messages,
-            })
-        });
+        const fallbackModels = buildModelFallbackChain(model);
+        let data: any = null;
+        let selectedModel = model;
+        let hadRetryableError = false;
+        let finalErrorText: string | null = null;
+        const fallbackMode = config?.fallbackMode ?? "text_only";
 
-        if (!response.ok) {
-            const errText = await response.text();
-            console.error("[Agent] OpenRouter Error:", errText);
-            let parsed: { error?: { code?: number; message?: string } } = {};
-            try {
-                parsed = JSON.parse(errText) as typeof parsed;
-            } catch {
-                // ignore
+        for (let i = 0; i < fallbackModels.length; i += 1) {
+            const candidateModel = fallbackModels[i];
+            console.log(`[Agent] Trying OpenRouter model: ${candidateModel}`);
+            const response = await fetch(OPENROUTER_API_URL, {
+                method: "POST",
+                headers: {
+                    "Authorization": `Bearer ${effectiveApiKey}`,
+                    "Content-Type": "application/json",
+                    "HTTP-Referer": process.env.NEXT_PUBLIC_APP_URL || "https://w-ai.com",
+                    "X-Title": "W-AI Agent",
+                },
+                body: JSON.stringify({
+                    model: candidateModel,
+                    messages: messages,
+                })
+            });
+
+            if (response.ok) {
+                const candidateData = await response.json();
+                const candidateText = candidateData?.choices?.[0]?.message?.content ?? "";
+                if (isLowQualityOverloadReply(candidateText) && i < fallbackModels.length - 1) {
+                  hadRetryableError = true;
+                  finalErrorText = `Low-quality overload reply from ${candidateModel}`;
+                  console.warn(`[Agent] Retrying due to low-quality overload reply from ${candidateModel}`);
+                  continue;
+                }
+                data = candidateData;
+                selectedModel = candidateModel;
+                if (candidateModel !== model) {
+                  console.log(`[Agent] Fallback model used successfully: ${candidateModel}`);
+                }
+                break;
             }
-            const code = parsed?.error?.code ?? response.status;
-            const isRateLimit = code === 429 || (typeof parsed?.error?.message === "string" && parsed.error.message.includes("Rate limit"));
-            if (isRateLimit) {
-                const fallback = hasArabicText(args.userMessage)
-                    ? "عذراً، الطلب كثير حالياً. جرّب بعد دقائق أو تواصل معنا لاحقاً."
-                    : "Sorry, we're a bit overloaded. Try again in a few minutes or contact us later.";
-                await ctx.runMutation(internal.messages.sendAndSave, {
-                    chatId: args.chatId,
-                    content: fallback,
-                    type: "text",
-                    contactPhone: args.contactPhone,
-                });
+
+            const errText = await response.text();
+            finalErrorText = errText;
+            let parsed: unknown = {};
+            try {
+              parsed = JSON.parse(errText);
+            } catch {
+              // ignore parse errors
+            }
+            const isRetryable = isRetryableOpenRouterFailure(response.status, parsed);
+            console.error(`[Agent] OpenRouter Error (${candidateModel}):`, errText);
+            if (isRetryable) {
+              hadRetryableError = true;
+              continue;
             }
             return;
         }
 
-        const data = await response.json();
+        if (!data) {
+            if (hadRetryableError) {
+                const fallbackText = hasArabicText(args.userMessage)
+                    ? "عذراً، الخدمة مشغولة حالياً. تم تسجيل طلبك وسنخدمك بأسرع وقت."
+                    : "Sorry, service is currently busy. We logged your request and will assist you shortly.";
+                if (fallbackMode === "human_handoff") {
+                  await ctx.runMutation(internal.chat.transferToHuman, { chatId: args.chatId });
+                  await ctx.runMutation(internal.messages.sendAndSave, {
+                      chatId: args.chatId,
+                      content: HANDOFF_MESSAGE,
+                      type: "text",
+                      contactPhone: args.contactPhone,
+                  });
+                  await ctx.scheduler.runAfter(0, (internal as any).notifications.sendHumanEscalationPush, {
+                      chatId: args.chatId,
+                      title: chat?.contactName || args.contactPhone,
+                      body: "AI error fallback triggered a human handoff.",
+                      phoneNumberId: chat?.phoneNumberId,
+                  });
+                } else if (fallbackMode === "text_only") {
+                  await ctx.runMutation(internal.messages.sendAndSave, {
+                      chatId: args.chatId,
+                      content: fallbackText,
+                      type: "text",
+                      contactPhone: args.contactPhone,
+                  });
+                } else {
+                  console.warn("[Agent] OpenRouter failed and fallbackMode=no_reply; no user message sent.");
+                }
+            } else if (finalErrorText) {
+                console.error("[Agent] OpenRouter Error:", finalErrorText);
+            }
+            return;
+        }
+
         let aiText = data.choices?.[0]?.message?.content || "Sorry, I couldn't generate a response.";
 
         // Quality guard: if user wrote Arabic but model replied non-Arabic, auto-rewrite in Arabic.
@@ -893,7 +1063,7 @@ Description: ${p.description.substring(0, 150)}...
                         "X-Title": "W-AI Agent Arabic Rewriter",
                     },
                     body: JSON.stringify({
-                        model,
+                        model: selectedModel,
                         messages: [
                             {
                                 role: "system",
@@ -1097,7 +1267,7 @@ Description: ${p.description.substring(0, 150)}...
                 { role: "user", content: args.userMessage },
                 { role: "assistant", content: aiText }
             ],
-            model: model,
+            model: selectedModel,
             apiKey: effectiveApiKey
         });
 

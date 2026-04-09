@@ -2,7 +2,7 @@ import { action, internalMutation, internalQuery, mutation, query } from "./_gen
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 
-const ENRICHMENT_MODEL = process.env.OPENROUTER_MODEL || "google/gemini-2.0-flash-lite-preview-02-05:free";
+const ENRICHMENT_MODEL = process.env.OPENROUTER_MODEL || "openrouter/auto";
 
 function normalizeSlug(input: string): string {
   return input
