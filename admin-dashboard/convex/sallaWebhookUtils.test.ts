@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { extractBearerToken, extractSallaEventType, resolveSallaWebhookToken } from "./sallaWebhookUtils";
+import { extractBearerToken, extractSallaAuthorizePayload, extractSallaEventType, extractSallaMerchantId, resolveSallaWebhookToken } from "./sallaWebhookUtils";
 
 describe("extractBearerToken", () => {
   it("extracts bearer token case-insensitively", () => {
@@ -53,5 +53,42 @@ describe("extractSallaEventType", () => {
   it("returns undefined for unknown payload", () => {
     expect(extractSallaEventType({})).toBeUndefined();
     expect(extractSallaEventType(null)).toBeUndefined();
+  });
+});
+
+describe("extractSallaMerchantId", () => {
+  it("extracts merchant id from numeric or string payloads", () => {
+    expect(extractSallaMerchantId({ merchant: 12345 })).toBe("12345");
+    expect(extractSallaMerchantId({ merchant: "98765" })).toBe("98765");
+  });
+
+  it("returns undefined when merchant id is missing", () => {
+    expect(extractSallaMerchantId({})).toBeUndefined();
+  });
+});
+
+describe("extractSallaAuthorizePayload", () => {
+  it("extracts tokens from app.store.authorize payloads", () => {
+    expect(
+      extractSallaAuthorizePayload({
+        event: "app.store.authorize",
+        merchant: 1234509876,
+        data: {
+          access_token: "access-token",
+          refresh_token: "refresh-token",
+          expires: 1634819484,
+        },
+      })
+    ).toEqual({
+      merchantId: "1234509876",
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      expiresAt: 1634819484 * 1000,
+    });
+  });
+
+  it("returns null for non-authorize or incomplete payloads", () => {
+    expect(extractSallaAuthorizePayload({ event: "app.updated", merchant: 1, data: {} })).toBeNull();
+    expect(extractSallaAuthorizePayload({ event: "app.store.authorize", merchant: 1, data: {} })).toBeNull();
   });
 });

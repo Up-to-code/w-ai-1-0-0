@@ -1,10 +1,10 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { DEFAULT_TOOLS_ENABLED, normalizeToolsEnabled } from "./agentsUtils";
+import { DEFAULT_OPENROUTER_MODEL, normalizeOpenRouterModel } from "./modelDefaults";
 
 const DEFAULT_PROMPT =
   "You are a helpful sales assistant for this WhatsApp number. Keep replies concise and practical, and recommend relevant store products when useful.";
-const DEFAULT_FREE_MODEL = "arcee-ai/trinity-mini:free";
 
 function toView(config: {
   phoneNumberId?: string;
@@ -22,7 +22,7 @@ function toView(config: {
   return {
     phoneNumberId: config.phoneNumberId,
     systemPrompt: config.systemPrompt,
-    model: config.model,
+    model: normalizeOpenRouterModel(config.model),
     isActive: config.isActive,
     temperature: config.temperature,
     agentName: config.agentName ?? "Assistant",
@@ -53,7 +53,7 @@ export const getByPhoneNumberId = query({
       return {
         phoneNumberId: args.phoneNumberId,
         systemPrompt: DEFAULT_PROMPT,
-        model: DEFAULT_FREE_MODEL,
+        model: DEFAULT_OPENROUTER_MODEL,
         isActive: false,
         temperature: undefined,
         agentName: "Assistant",
@@ -90,7 +90,7 @@ export const upsertByPhoneNumberId = mutation({
       phoneNumberId: args.phoneNumberId,
       isActive: args.isActive,
       systemPrompt: args.systemPrompt,
-      model: args.model,
+      model: normalizeOpenRouterModel(args.model),
       temperature: args.temperature,
       agentName: args.agentName?.trim() || undefined,
       toolsEnabled: normalizeToolsEnabled(args.toolsEnabled),
@@ -122,7 +122,7 @@ export const toggleByPhoneNumberId = mutation({
       return await ctx.db.insert("ai_configs", {
         phoneNumberId: args.phoneNumberId,
         systemPrompt: DEFAULT_PROMPT,
-        model: DEFAULT_FREE_MODEL,
+        model: DEFAULT_OPENROUTER_MODEL,
         isActive: args.isActive,
         toolsEnabled: DEFAULT_TOOLS_ENABLED,
         recommendProducts: true,
@@ -152,7 +152,7 @@ export const ensureForPhoneNumber = mutation({
     return await ctx.db.insert("ai_configs", {
       phoneNumberId: args.phoneNumberId,
       systemPrompt: DEFAULT_PROMPT,
-      model: DEFAULT_FREE_MODEL,
+      model: DEFAULT_OPENROUTER_MODEL,
       isActive: false,
       toolsEnabled: DEFAULT_TOOLS_ENABLED,
       recommendProducts: true,
@@ -174,7 +174,7 @@ export const replaceModelAcrossConfigs = mutation({
 
     for (const row of matchingRows) {
       await ctx.db.patch(row._id, {
-        model: args.toModel,
+        model: normalizeOpenRouterModel(args.toModel),
         updatedAt: Date.now(),
       });
     }

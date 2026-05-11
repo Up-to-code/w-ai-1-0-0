@@ -1,8 +1,9 @@
 import { action, internalMutation, internalQuery, mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
+import { DEFAULT_OPENROUTER_MODEL } from "./modelDefaults";
 
-const ENRICHMENT_MODEL = process.env.OPENROUTER_MODEL || "openrouter/auto";
+const ENRICHMENT_MODEL = process.env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
 
 function normalizeSlug(input: string): string {
   return input

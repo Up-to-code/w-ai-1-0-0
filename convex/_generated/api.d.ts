@@ -53,6 +53,7 @@ import type * as messages from "../messages.js";
 import type * as metaNumbersSync from "../metaNumbersSync.js";
 import type * as migrations from "../migrations.js";
 import type * as mobileRuntimeEvents from "../mobileRuntimeEvents.js";
+import type * as modelDefaults from "../modelDefaults.js";
 import type * as nodeUtils from "../nodeUtils.js";
 import type * as notificationPreferences from "../notificationPreferences.js";
 import type * as notifications from "../notifications.js";
@@ -126,6 +127,7 @@ declare const fullApi: ApiFromModules<{
   metaNumbersSync: typeof metaNumbersSync;
   migrations: typeof migrations;
   mobileRuntimeEvents: typeof mobileRuntimeEvents;
+  modelDefaults: typeof modelDefaults;
   nodeUtils: typeof nodeUtils;
   notificationPreferences: typeof notificationPreferences;
   notifications: typeof notifications;

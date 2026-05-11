@@ -3,15 +3,9 @@ import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { isToolAllowed, normalizeToolsEnabled } from "./agentsUtils";
 import { buildConversationContext } from "./contextBuilder";
+import { DEFAULT_OPENROUTER_FALLBACK_MODELS, DEFAULT_OPENROUTER_MODEL } from "./modelDefaults";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_FREE_MODEL = "arcee-ai/trinity-mini:free";
-const FREE_MODEL_FALLBACKS = [
-  DEFAULT_FREE_MODEL,
-  "arcee-ai/trinity-mini:free",
-  "qwen/qwen3-32b:free",
-  "openrouter/auto",
-] as const;
 
 /** Tool registry: add new tools here and implement parsing in LLM response + executeTool/messengerProduct. */
 const TOOL_REGISTRY = [
@@ -54,7 +48,7 @@ function uniqueModels(models: Array<string | undefined | null>): string[] {
 }
 
 function buildModelFallbackChain(preferredModel?: string): string[] {
-  return uniqueModels([preferredModel, ...FREE_MODEL_FALLBACKS]);
+  return uniqueModels([preferredModel, ...DEFAULT_OPENROUTER_FALLBACK_MODELS]);
 }
 
 function parseOpenRouterError(errText: string): { code?: number; message?: string } {
@@ -221,7 +215,7 @@ export const runRealTest = action({
     if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
     const config = await ctx.runQuery(api.ai_config.getConfig, {}) as { systemPrompt?: string; model?: string } | null;
     const systemPrompt = config?.systemPrompt ?? "You are a helpful sales assistant.";
-    const model = config?.model ?? DEFAULT_FREE_MODEL;
+    const model = config?.model ?? DEFAULT_OPENROUTER_MODEL;
     const userMessage = (args.message ?? "مرحبا، ما المنتجات المتوفرة؟").trim();
     const messages = [
       { role: "system" as const, content: systemPrompt },
@@ -422,7 +416,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     const config = await ctx.runQuery(internal.ai_config.getInternalConfig, { 
       phoneNumberId: chat?.phoneNumberId 
     });
-    const model = config?.model || process.env.OPENROUTER_MODEL || DEFAULT_FREE_MODEL;
+    const model = config?.model || process.env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
     const numberProfile = chat?.phoneNumberId
       ? await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
@@ -1202,7 +1196,7 @@ export const updateSummary = internalAction({
         try {
             const { response } = await callOpenRouterWithFallback({
                 apiKey,
-                preferredModel: args.model || "arcee-ai/trinity-mini:free",
+                preferredModel: args.model || DEFAULT_OPENROUTER_MODEL,
                 body: {
                     messages: [{ role: "user", content: summaryPrompt }],
                 },

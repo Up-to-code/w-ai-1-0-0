@@ -90,6 +90,46 @@ export const saveTokens = mutation({
     },
 });
 
+export const saveTokensFromWebhook = internalMutation({
+    args: {
+        merchantId: v.string(),
+        accessToken: v.string(),
+        refreshToken: v.string(),
+        expiresAt: v.number(),
+        storeName: v.optional(v.string()),
+        storeUrl: v.optional(v.string()),
+    },
+    handler: async (ctx, args) => {
+        const existing = await ctx.db
+            .query("sallaIntegrations")
+            .withIndex("by_merchant", (q) => q.eq("merchantId", args.merchantId))
+            .first();
+
+        const patch = {
+            accessToken: args.accessToken,
+            refreshToken: args.refreshToken,
+            expiresAt: args.expiresAt,
+            storeName: args.storeName,
+            storeUrl: args.storeUrl,
+            tokenStatus: "connected" as const,
+            lastTokenErrorCode: undefined,
+            lastTokenErrorMessage: undefined,
+            lastTokenErrorAt: undefined,
+        };
+
+        if (existing) {
+            await ctx.db.patch(existing._id, patch);
+            return existing._id;
+        }
+
+        return await ctx.db.insert("sallaIntegrations", {
+            merchantId: args.merchantId,
+            connectedAt: Date.now(),
+            ...patch,
+        });
+    },
+});
+
 // Disconnect Salla
 export const disconnect = mutation({
     args: {},
@@ -223,6 +263,62 @@ export const refreshToken = action({
             expiresIn: tokens.expires_in || 1209600,
         });
 
+        return { success: true };
+    },
+});
+
+export const handleAuthorizeWebhook = internalAction({
+    args: {
+        merchantId: v.string(),
+        accessToken: v.string(),
+        refreshToken: v.string(),
+        expiresAt: v.number(),
+    },
+    handler: async (ctx, args) => {
+        let storeName: string | undefined;
+        let storeUrl: string | undefined;
+
+        try {
+            const merchantResponse = await fetch(`${SALLA_API_BASE}/store/info`, {
+                headers: {
+                    Authorization: `Bearer ${args.accessToken}`,
+                },
+            });
+
+            if (merchantResponse.ok) {
+                const data = await merchantResponse.json();
+                storeName = data.data?.name;
+                storeUrl = data.data?.domain;
+            }
+        } catch (error) {
+            console.warn("[Salla] Failed to enrich authorize webhook with store info:", error);
+        }
+
+        await ctx.runMutation("salla:saveTokensFromWebhook" as any, {
+            merchantId: args.merchantId,
+            accessToken: args.accessToken,
+            refreshToken: args.refreshToken,
+            expiresAt: args.expiresAt,
+            storeName,
+            storeUrl,
+        });
+
+        return { success: true };
+    },
+});
+
+export const handleUninstallWebhook = internalMutation({
+    args: {
+        merchantId: v.string(),
+    },
+    handler: async (ctx, args) => {
+        const integration = await ctx.db
+            .query("sallaIntegrations")
+            .withIndex("by_merchant", (q) => q.eq("merchantId", args.merchantId))
+            .first();
+        if (integration) {
+            await ctx.db.delete(integration._id);
+        }
         return { success: true };
     },
 });

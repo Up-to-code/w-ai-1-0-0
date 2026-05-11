@@ -3,15 +3,9 @@ import { v } from "convex/values";
 import { api, internal } from "./_generated/api";
 import { isToolAllowed, normalizeToolsEnabled } from "./agentsUtils";
 import { buildConversationContext } from "./contextBuilder";
+import { DEFAULT_OPENROUTER_FALLBACK_MODELS, DEFAULT_OPENROUTER_MODEL } from "./modelDefaults";
 
 const OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions";
-const DEFAULT_OPENROUTER_FREE_FALLBACK_MODELS = [
-  "arcee-ai/trinity-mini:free",
-  "qwen/qwen3-32b:free",
-  "meta-llama/llama-3.3-70b-instruct:free",
-  "deepseek/deepseek-r1-0528:free",
-  "openrouter/auto",
-] as const;
 
 function parseFallbackModelsFromEnv(raw: string | undefined): string[] {
   if (!raw) return [];
@@ -23,7 +17,7 @@ function parseFallbackModelsFromEnv(raw: string | undefined): string[] {
 
 function buildModelFallbackChain(primaryModel: string): string[] {
   const configured = parseFallbackModelsFromEnv(process.env.OPENROUTER_FALLBACK_MODELS);
-  const combined = [primaryModel, ...configured, ...DEFAULT_OPENROUTER_FREE_FALLBACK_MODELS];
+  const combined = [primaryModel, ...configured, ...DEFAULT_OPENROUTER_FALLBACK_MODELS];
   const unique: string[] = [];
   const seen = new Set<string>();
   for (const model of combined) {
@@ -45,7 +39,7 @@ function isRateLimitedResponse(responseStatus: number, errorPayload: unknown): b
 }
 
 function isRetryableOpenRouterFailure(responseStatus: number, errorPayload: unknown): boolean {
-  if (responseStatus === 429 || responseStatus >= 500) return true;
+  if (responseStatus === 404 || responseStatus === 429 || responseStatus >= 500) return true;
   if (!errorPayload || typeof errorPayload !== "object") return false;
   const payload = errorPayload as { error?: { code?: number; message?: string; metadata?: { raw?: string } } };
   const code = payload.error?.code;
@@ -53,9 +47,10 @@ function isRetryableOpenRouterFailure(responseStatus: number, errorPayload: unkn
   const raw = payload.error?.metadata?.raw || "";
   // Retry for common upstream/provider failures and key-level spend-limit blocks.
   return (
+    code === 404 ||
     code === 402 ||
     code === 429 ||
-    /rate.?limit|temporarily rate-limited|overloaded|provider returned error|spend limit exceeded|temporarily unavailable/i.test(
+    /no endpoints found|rate.?limit|temporarily rate-limited|overloaded|provider returned error|spend limit exceeded|temporarily unavailable/i.test(
       `${message} ${raw}`
     )
   );
@@ -202,7 +197,7 @@ export const runRealTest = action({
     if (!apiKey) throw new Error("Missing OPENROUTER_KEY");
     const config = await ctx.runQuery(api.ai_config.getConfig, {}) as { systemPrompt?: string; model?: string } | null;
     const systemPrompt = config?.systemPrompt ?? "You are a helpful sales assistant.";
-    const model = config?.model ?? "arcee-ai/trinity-mini:free";
+    const model = config?.model ?? DEFAULT_OPENROUTER_MODEL;
     const userMessage = (args.message ?? "مرحبا، ما المنتجات المتوفرة؟").trim();
     const messages = [
       { role: "system" as const, content: systemPrompt },
@@ -463,7 +458,7 @@ function getContextualResponse(userId: string, intentResult: any, productCount: 
     const config = await ctx.runQuery(internal.ai_config.getInternalConfig, { 
       phoneNumberId: chat?.phoneNumberId 
     });
-    const model = config?.model || process.env.OPENROUTER_MODEL || "openrouter/auto";
+    const model = config?.model || process.env.OPENROUTER_MODEL || DEFAULT_OPENROUTER_MODEL;
     const systemPrompt = config?.systemPrompt || "You are a helpful sales assistant.";
     const numberProfile = chat?.phoneNumberId
       ? await ctx.runQuery(internal.whatsappNumbers.getByBusinessNumberId, {
@@ -1006,11 +1001,12 @@ Description: ${p.description.substring(0, 150)}...
               // ignore parse errors
             }
             const isRetryable = isRetryableOpenRouterFailure(response.status, parsed);
-            console.error(`[Agent] OpenRouter Error (${candidateModel}):`, errText);
             if (isRetryable) {
+              console.warn(`[Agent] OpenRouter retryable failure (${candidateModel}); trying fallback.`, errText);
               hadRetryableError = true;
               continue;
             }
+            console.error(`[Agent] OpenRouter Error (${candidateModel}):`, errText);
             return;
         }
 
@@ -1322,7 +1318,7 @@ export const updateSummary = internalAction({
                     "X-Title": "W-AI Summary Agent",
                 },
                 body: JSON.stringify({
-                    model: "arcee-ai/trinity-mini:free", // Use small fast model for summary
+                    model: DEFAULT_OPENROUTER_MODEL,
                     messages: [{ role: "user", content: summaryPrompt }],
                 })
             });

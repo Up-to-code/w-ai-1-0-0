@@ -1,7 +1,7 @@
 import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { api, internal } from "./_generated/api";
-import { extractSallaEventType, resolveSallaWebhookToken } from "./sallaWebhookUtils";
+import { extractSallaAuthorizePayload, extractSallaEventType, extractSallaMerchantId, resolveSallaWebhookToken } from "./sallaWebhookUtils";
 import { logDebug, logError } from "./logging";
 
 const http = httpRouter();
@@ -187,6 +187,21 @@ http.route({
       processingStatus: "received",
       note: "/salla/nt",
     });
+
+    try {
+      const authorizePayload = extractSallaAuthorizePayload(body);
+      if (authorizePayload) {
+        await ctx.runAction(internal.salla.handleAuthorizeWebhook, authorizePayload);
+      } else if (eventType === "app.uninstalled") {
+        const merchantId = extractSallaMerchantId(body);
+        if (merchantId) {
+          await ctx.runMutation(internal.salla.handleUninstallWebhook, { merchantId });
+        }
+      }
+    } catch (error) {
+      logError("[Salla NT] Processing error:", error);
+      return new Response("Internal Server Error", { status: 500 });
+    }
 
     return new Response(JSON.stringify({ ok: true }), {
       status: 200,

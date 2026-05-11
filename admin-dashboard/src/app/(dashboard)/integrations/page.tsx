@@ -7,6 +7,7 @@ import { useQuery, useMutation, useAction } from "convex/react"
 import { api } from "@/mock/convex-api"
 import type { Id } from "@/mock/dataModel"
 import { useWorkspace } from "@/contexts/WorkspaceContext"
+import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -69,7 +70,7 @@ export default function IntegrationsPage() {
     const [agentEnabled, setAgentEnabled] = useState(false)
     const [agentName, setAgentName] = useState("Assistant")
     const [agentPrompt, setAgentPrompt] = useState("")
-    const [agentModel, setAgentModel] = useState("arcee-ai/trinity-mini:free")
+    const [agentModel, setAgentModel] = useState("google/gemini-2.5-flash-lite:nitro")
     const [agentRecommendProducts, setAgentRecommendProducts] = useState(true)
     const [agentToolsEnabled, setAgentToolsEnabled] = useState<string[]>([
         "send_text",
@@ -165,7 +166,7 @@ export default function IntegrationsPage() {
         setAgentEnabled(agentConfig.isActive)
         setAgentName(agentConfig.agentName ?? "Assistant")
         setAgentPrompt(agentConfig.systemPrompt ?? "")
-        setAgentModel(agentConfig.model ?? "arcee-ai/trinity-mini:free")
+        setAgentModel(agentConfig.model ?? "google/gemini-2.5-flash-lite:nitro")
         setAgentRecommendProducts(agentConfig.recommendProducts ?? true)
         setAgentToolsEnabled(agentConfig.toolsEnabled ?? [])
         setAgentOpenRouterKey((agentConfig as { openRouterApiKeyConfigured?: boolean }).openRouterApiKeyConfigured ? "__CONFIGURED__" : "")
@@ -173,11 +174,17 @@ export default function IntegrationsPage() {
 
     const handleConnect = () => {
         setIsConnecting(true)
+        const appId = process.env.NEXT_PUBLIC_SALLA_APP_ID
         const clientId = process.env.NEXT_PUBLIC_SALLA_CLIENT_ID
         const redirectUri = process.env.NEXT_PUBLIC_SALLA_REDIRECT_URI
 
+        if (appId) {
+            window.location.href = `https://s.salla.sa/apps/install/${appId}`
+            return
+        }
+
         if (!clientId || !redirectUri) {
-            console.error("Missing Salla OAuth configuration")
+            toast.error("إعدادات ربط سلة غير مكتملة. أضف NEXT_PUBLIC_SALLA_APP_ID أو إعدادات OAuth العامة.")
             setIsConnecting(false)
             return
         }
@@ -379,7 +386,7 @@ export default function IntegrationsPage() {
                         isActive: agentEnabled,
                         agentName: agentName.trim() || "Assistant",
                         systemPrompt: agentPrompt.trim() || "You are a helpful sales assistant.",
-                        model: agentModel.trim() || "arcee-ai/trinity-mini:free",
+                        model: agentModel.trim() || "google/gemini-2.5-flash-lite:nitro",
                         recommendProducts: agentRecommendProducts,
                         toolsEnabled: agentToolsEnabled,
                         ...(agentOpenRouterKey !== "__CONFIGURED__" && { openRouterApiKey: agentOpenRouterKey }),
@@ -450,6 +457,10 @@ export default function IntegrationsPage() {
 
     const isConnected = Boolean(connection?.connected)
     const sallaStatus = connection?.status ?? "disconnected"
+    const sallaConnectConfigured = Boolean(
+        process.env.NEXT_PUBLIC_SALLA_APP_ID ||
+        (process.env.NEXT_PUBLIC_SALLA_CLIENT_ID && process.env.NEXT_PUBLIC_SALLA_REDIRECT_URI)
+    )
     const sallaStatusLabel =
         sallaStatus === "connected"
             ? "متصل"
@@ -542,7 +553,7 @@ export default function IntegrationsPage() {
                                     <Button
                                         className="w-full h-11 rounded-xl bg-[#004D3D] hover:bg-[#003D2D] text-white"
                                         onClick={handleConnect}
-                                        disabled={isConnecting}
+                                        disabled={isConnecting || !sallaConnectConfigured}
                                     >
                                         {isConnecting ? (
                                             <RefreshCw className="h-5 w-5 animate-spin mr-2" />
@@ -557,7 +568,7 @@ export default function IntegrationsPage() {
                             <Button
                                 className="w-full h-12 rounded-xl bg-[#004D3D] hover:bg-[#003D2D] text-white shadow-lg shadow-[#004D3D]/20 transition-all active:scale-95"
                                 onClick={handleConnect}
-                                disabled={isConnecting}
+                                disabled={isConnecting || !sallaConnectConfigured}
                             >
                                 {isConnecting ? (
                                     <RefreshCw className="h-5 w-5 animate-spin mr-2" />
@@ -566,6 +577,11 @@ export default function IntegrationsPage() {
                                 )}
                                 ربط متجر سلة الآن
                             </Button>
+                        )}
+                        {!sallaConnectConfigured && (
+                            <p className="text-xs text-amber-700 dark:text-amber-300">
+                                ربط سلة غير مفعّل في هذه البيئة. أضف `NEXT_PUBLIC_SALLA_APP_ID` أو `NEXT_PUBLIC_SALLA_CLIENT_ID` مع `NEXT_PUBLIC_SALLA_REDIRECT_URI`.
+                            </p>
                         )}
                         <div className="pt-4 border-t border-border/50 flex items-center justify-between">
                             <span className="text-xs text-muted-foreground">التكامل الرسمي عبر Salla App Store</span>
@@ -1025,7 +1041,7 @@ export default function IntegrationsPage() {
                                 </div>
                                 <div className="space-y-2">
                                     <Label>Model (LLM)</Label>
-                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} placeholder="arcee-ai/trinity-mini:free" />
+                                    <Input value={agentModel} onChange={(e) => setAgentModel(e.target.value)} placeholder="google/gemini-2.5-flash-lite:nitro" />
                                     <p className="text-xs text-muted-foreground">OpenRouter model ID. Overrides env default.</p>
                                 </div>
                             </div>
