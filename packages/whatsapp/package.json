@@ -1,0 +1,48 @@
+{
+  "name": "@qentrah/whatsapp",
+  "version": "0.1.1",
+  "description": "Framework-agnostic TypeScript utilities for WhatsApp Cloud API messages, media, templates, webhooks, and campaigns.",
+  "type": "module",
+  "license": "MIT",
+  "homepage": "https://github.com/Up-to-code/qentrah-whatsapp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Up-to-code/qentrah-whatsapp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Up-to-code/qentrah-whatsapp/issues"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepack": "npm run build",
+    "test": "vitest run --config vitest.config.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "keywords": [
+    "whatsapp",
+    "whatsapp-cloud-api",
+    "meta",
+    "webhooks",
+    "typescript"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^4.0.0"
+  }
+}
