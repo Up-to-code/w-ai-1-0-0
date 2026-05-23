@@ -20,6 +20,15 @@ type TypedWhatsAppError = Error & {
   retryable?: boolean;
 };
 
+type MetaTemplateRecord = {
+  id?: unknown;
+  name?: unknown;
+  language?: unknown;
+  category?: unknown;
+  status?: unknown;
+  components?: unknown;
+};
+
 async function withAppSecretProof(ctx: any, url: string, accessToken: string): Promise<string> {
   const appSecret = process.env.WHATSAPP_APP_SECRET;
   if (!appSecret?.trim()) return url;
@@ -47,6 +56,13 @@ function normalizeTemplateLanguageKey(value: unknown): string {
   return "";
 }
 
+function normalizeTemplateStatus(value: unknown): "APPROVED" | "REJECTED" | "PENDING" {
+  const status = String(value || "").trim().toUpperCase();
+  if (status === "APPROVED") return "APPROVED";
+  if (status === "REJECTED") return "REJECTED";
+  return "PENDING";
+}
+
 function extractTemplateBodyContent(components: unknown): string | undefined {
   if (!Array.isArray(components)) return undefined;
   const body = components.find((component) => (component as { type?: string })?.type === "BODY") as
@@ -57,6 +73,38 @@ function extractTemplateBodyContent(components: unknown): string | undefined {
     return text.length > 0 ? text : undefined;
   }
   return undefined;
+}
+
+async function fetchMetaTemplateByNameAndLanguage(
+  ctx: Parameters<typeof withAppSecretProof>[0],
+  config: { accessToken: string; wabaId: string },
+  name: string,
+  language: string
+): Promise<MetaTemplateRecord | null> {
+  const detailUrl = await withAppSecretProof(
+    ctx,
+    `${WHATSAPP_API_URL}/${config.wabaId}/message_templates?name=${encodeURIComponent(name)}`,
+    config.accessToken
+  );
+  const detailRes = await fetch(detailUrl, {
+    method: "GET",
+    headers: { Authorization: `Bearer ${config.accessToken}` },
+  });
+  const detailData = await detailRes.json();
+
+  if (!detailRes.ok) {
+    logWarn("[WhatsApp] Failed to fetch duplicate template details from Meta", detailData);
+    return null;
+  }
+
+  const requestedLanguage = normalizeTemplateLanguageKey(language);
+  const templates = Array.isArray(detailData?.data) ? (detailData.data as MetaTemplateRecord[]) : [];
+  return (
+    templates.find(
+      (template) =>
+        template?.name === name && normalizeTemplateLanguageKey(template?.language) === requestedLanguage
+    ) ?? null
+  );
 }
 
 function makeTypedWhatsAppError(
@@ -370,6 +418,52 @@ export const createTemplate = action({
       const code = err?.code;
       // Meta template creation errors: 100 = duplicate, 131047 = invalid param/format, etc.
       if (code === 100 || (typeof msg === "string" && (msg.toLowerCase().includes("duplicate") || msg.toLowerCase().includes("already exists")))) {
+        const existingTemplate = await fetchMetaTemplateByNameAndLanguage(
+          ctx,
+          { accessToken, wabaId },
+          args.name,
+          args.language
+        );
+
+        if (existingTemplate) {
+          const components = Array.isArray(existingTemplate.components)
+            ? existingTemplate.components
+            : args.components;
+          const existingLanguage =
+            typeof existingTemplate.language === "string" && existingTemplate.language.trim().length > 0
+              ? existingTemplate.language.trim()
+              : args.language;
+          const existingCategory =
+            typeof existingTemplate.category === "string" && existingTemplate.category.trim().length > 0
+              ? existingTemplate.category.trim()
+              : args.category;
+          const metaTemplateId =
+            typeof existingTemplate.id === "string" && existingTemplate.id.trim().length > 0
+              ? existingTemplate.id.trim()
+              : undefined;
+          const status = normalizeTemplateStatus(existingTemplate.status);
+
+          await ctx.runMutation(internal.templates.upsert, {
+            phoneNumberId: args.phoneNumberId,
+            name: args.name,
+            language: existingLanguage,
+            category: existingCategory,
+            status,
+            content: extractTemplateBodyContent(components),
+            components,
+            metaTemplateId,
+          });
+
+          return {
+            id: metaTemplateId,
+            name: args.name,
+            language: existingLanguage,
+            status,
+            existing: true,
+            synced: true,
+          };
+        }
+
         throw new Error(`Template name "${args.name}" with language "${args.language}" already exists in your WABA. Use a different name or language, or sync templates to see existing ones.`);
       }
       if (code === 131047 || (typeof msg === "string" && msg.toLowerCase().includes("parameter") && msg.toLowerCase().includes("format"))) {
